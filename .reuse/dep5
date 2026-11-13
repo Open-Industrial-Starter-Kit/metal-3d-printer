@@ -1,0 +1,33 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: OISK-Metal-3D-Printer
+Upstream-Contact: Daniele Ingrassia <daniele@inmachines.net>
+Source: https://github.com/Open-Lab-Starter-Kit/OISK-Metal-3D-Printer.git
+
+#########################
+# OISK Metal 3D Printer
+#########################
+
+Files:
+    cad/**
+    settings/**
+    OISK_Metal_3D_Printer_BOM_Preliminary.xlsx
+Copyright:
+    Daniele Ingrassia <daniele@inmachines.net>
+    Tobias Redlich <tobias.redlich@hsu-hh.de>
+License: CERN-OHL-S-2.0
+
+Files:
+    media/**
+    firmware/**
+    README.md
+    .gitignore
+Copyright:
+    Daniele Ingrassia <daniele@inmachines.net>
+    Tobias Redlich <tobias.redlich@hsu-hh.de>
+License: CC-BY-SA-4.0
+
+Files:
+    LICENSE_CC_BY_SA_4.0.txt
+    LICENSE_CERN_OHL_S_V2.txt
+Copyright: NONE
+License: CC0-1.0
