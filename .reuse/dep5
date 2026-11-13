@@ -9,6 +9,7 @@ Source: https://github.com/Open-Lab-Starter-Kit/OISK-Metal-3D-Printer.git
 
 Files:
     cad/**
+    pcb/**
     settings/**
     OISK_Metal_3D_Printer_BOM_Preliminary.xlsx
 Copyright:

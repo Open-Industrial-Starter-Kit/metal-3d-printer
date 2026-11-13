@@ -32,7 +32,7 @@ Specifications
 - build chamber: fully enclosed, nitrogen atmosphere, chamber O₂ typically below 0.5% after purge
 - thermal architecture: passive - no build-plate heater, no chamber pre-heat, no active cooling
 - housing: stainless steel cabinet with viewing window, aluminium profile frame
-- controller: in-house, Teensy 4.1 and RP2040, grblHAL
+- controller: in-house - current prototype on Teensy 4.1 and RP2040 with grblHAL; Control Board V2 with 3 × RP2350B designed and fabricated
 - validated material: 316L (1.4404) stainless steel, gas atomised, 10-45 µm
 - software: OLOS - Open Lab Operating System
 
@@ -78,6 +78,38 @@ The machine is installed inside a dedicated containment tent that confines the f
 <img src="media/OISK_Metal_3D_Printer_Containment_Tent.jpg" width="40%"> <img src="media/OISK_Metal_3D_Printer_Air_Filter.jpg" width="27%"> <img src="media/OISK_Metal_3D_Printer_Operator_Station.jpg" width="29%">
 
 <div align="center"><i>Containment tent with nitrogen generator and buffer tank (left), air filter unit (centre), operator station inside the tent (right)</i></div>
+
+Control Electronics
+--
+
+The machine is driven by the **Metal 3D Printer Control Board V2**, a single board that combines three subsystems usually sold as separate industrial boxes: a grblHAL motion controller, a fiber-laser interface and a galvo scanner interface. The work is split across **three RP2350B microcontrollers** - CPU-A for motion, CPU-B as supervisor and communications, CPU-C for the galvo and the fiber laser.
+
+<img src="media/OISK_Metal_3D_Printer_Control_Board.jpg" width="43%"> <img src="media/OISK_Metal_3D_Printer_Control_Board_Detail.jpg" width="55%">
+
+<div align="center"><i>Metal 3D Printer Control Board V2</i></div>
+
+<br>
+
+<div align="center"><img src="pcb/MetalPrinter_V2_IO_Annotated.png" width="100%"></div>
+
+<div align="center"><i>Inputs, outputs and power connectors of the Control Board V2</i></div>
+
+| Item | Value |
+| --- | --- |
+| Main supply | 24 V DC, 10 A, dual fused, with current monitoring |
+| Controllers | 3 × RP2350B, 4 MB flash each, USB-C each; 8 MB PSRAM on CPU-C |
+| Motion | 5 axes (X, Y, Z, A, B), buffered 5 V STEP/DIR/EN for external stepper drivers |
+| End stops | 6 isolated channels (X, Y, Z, A, B, Door), NC/NO selectable |
+| Laser #1 | 24 V diode channel - relay-switched power plus 5 V logic PWM |
+| Laser #2 | Raycus RFL-C200A fiber laser over DB25 - analog power, modulation, enables, interlock relays, status inputs, RS-232 |
+| Galvo | XY2-100 over DB15, with relay-switched ±15 V head supply |
+| Networking | Ethernet, RS-422, RS-485, RS-232, I²C, 3 UART links |
+| Sensors | Chamber oxygen (I²C), PM2.5/PM10 dust, NTC temperature, input current monitor |
+| Storage and UI | microSD, RGB status LED, GPIO/ADC breakout headers |
+
+The oxygen and dust sensor inputs are specific to metal printing: the chamber has to be kept inert and low in oxygen, and fine metal powder has to be monitored in and around the machine.
+
+Schematic, user manual, hardware documentation, BOM, Altium sources and manufacturing data are in **[pcb](pcb)**.
 
 Process Settings
 --
@@ -130,10 +162,13 @@ Files
 --
 
 - **[CAD](cad)** - Fusion 360 and STEP models of the machine (see [cad/README.md](cad/README.md) for how to reassemble the split archives)
+- **[PCB](pcb)** - Control Board V2: schematic, user manual, hardware documentation, BOM, Altium sources and manufacturing data
 - **[Settings](settings/OISK_Metal_3D_Printer_Settings.xlsx)** - machine, controller and process settings
-- **[BOM](OISK_Metal_3D_Printer_BOM_Preliminary.xlsx)** - *preliminary*
+- **[BOM](OISK_Metal_3D_Printer_BOM_Preliminary.xlsx)** - machine BOM, *preliminary*
+- **[PCB BOM](pcb/BOM/MetalPrinterV2_BOM_2026-06-15.xlsx)** - Control Board V2, 142 line items
 - **[Firmware](firmware)** - *in preparation*
-- **Wiring Schematic** - *in preparation*
+- **[PCB Schematic](pcb/MetalPrinter_V2_Schematic.pdf)** - Control Board V2, 9 sheets
+- **Machine Wiring Schematic** - *in preparation*
 
 Roadmap
 --
@@ -188,10 +223,3 @@ Hardware design, CAD and PCB files, BOM, settings and other technical or design 
 Assembly manual, pictures, videos, presentations, description text and other type of media are released under the following license:
 
 - Creative-Commons-Attribution-ShareAlike 4.0 International - **[CC BY-SA 4.0](LICENSE_CC_BY_SA_4.0.txt)**
-
-Copyright
---
-
-- Daniele Ingrassia, InMachines Ingrassia GmbH
-
-- Tobias Redlich, Helmut-Schmidt-Universität/Universität der Bundeswehr Hamburg
