@@ -184,6 +184,16 @@ Files
 - **[PCB Schematic](pcb/MetalPrinter_V2_Schematic.pdf)** - Control Board V2, 9 sheets
 - **Machine Wiring Schematic** - *in preparation*
 
+Status
+--
+
+Current work on the machine:
+
+- currently testing the galvo firmware code
+- integrating the communication of the 3 CPU firmware
+- modifying the hardware to support the latest version of the PCB
+- upcoming test with the galvo and the fiber laser source
+
 Roadmap
 --
 
