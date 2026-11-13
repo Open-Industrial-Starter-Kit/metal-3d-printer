@@ -219,6 +219,10 @@ The machine is part of the **Open Industrial Starter Kit (OISK)** group of open 
 
 OISK is developed by **[InMachines Ingrassia GmbH](https://www.inmachines.net/)** for the **[Dtec project](https://dtecbw.de/home/forschung/hsu/projekt-fabcity)** at **[Fab City Hamburg](https://www.fabcity.hamburg/en/)**.
 
+OISK Partners:
+<br><br>
+<img src="https://irp.cdn-website.com/2b5ccdcd/dms3rep/multi/OLSK_partners.png" width="80%">
+
 Contact
 --
 
