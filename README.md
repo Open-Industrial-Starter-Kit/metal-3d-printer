@@ -32,7 +32,7 @@ Specifications
 - build chamber: fully enclosed, nitrogen atmosphere, chamber O₂ typically below 0.5% after purge
 - thermal architecture: passive - no build-plate heater, no chamber pre-heat, no active cooling
 - housing: stainless steel cabinet with viewing window, aluminium profile frame
-- controller: in-house - current prototype on Teensy 4.1 and RP2040 with grblHAL; Control Board V2 with 3 × RP2350B designed and fabricated
+- controller: Metal 3D Printer Control Board V2 - 3 × RP2350B (motion, supervisor, galvo and laser), grblHAL motion control
 - validated material: 316L (1.4404) stainless steel, gas atomised, 10-45 µm
 - software: OLOS - Open Lab Operating System
 
@@ -108,6 +108,20 @@ The machine is driven by the **Metal 3D Printer Control Board V2**, a single boa
 | Storage and UI | microSD, RGB status LED, GPIO/ADC breakout headers |
 
 The oxygen and dust sensor inputs are specific to metal printing: the chamber has to be kept inert and low in oxygen, and fine metal powder has to be monitored in and around the machine.
+
+### Schematic
+
+<img src="pcb/screenshots/Schematic_01_System_Overview.png" width="49%"> <img src="pcb/screenshots/Schematic_07_CPU_A_Motion.png" width="49%">
+
+<div align="center"><i>System overview sheet with the three CPUs, power and motion blocks (left) and the CPU-A motion controller (right)</i></div>
+
+<br>
+
+<img src="pcb/screenshots/Schematic_05_Galvo_XY2_100.png" width="49%"> <img src="pcb/screenshots/Schematic_06_Fiber_Laser.png" width="49%">
+
+<div align="center"><i>Galvo scanner interface, XY2-100 over DB15 (left) and the Raycus fiber laser control interface over DB25 (right)</i></div>
+
+<br>
 
 Schematic, user manual, hardware documentation, BOM, Altium sources and manufacturing data are in **[pcb](pcb)**.
 
@@ -185,8 +199,6 @@ Publication
 --
 
 - T. Redlich, D. Ingrassia, M. Moritz, M. Omer, *Towards an Open Source Metal 3D Printer: A Dual-Configuration LPBF Concept Based on Benchmarking and Design Analysis*, Procedia CIRP, Vol. 142 (2026) - open access
-
-- D. Tiwari, *Process Parameter Development for Laser Powder Bed Fusion of 316L Stainless Steel on the OISK Open-Source Platform*, Bachelor Thesis, Rhine-Waal University of Applied Sciences, Faculty of Technology and Bionics, 21.10.2026
 
 Author
 --

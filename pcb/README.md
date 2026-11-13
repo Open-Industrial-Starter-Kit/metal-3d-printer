@@ -19,6 +19,19 @@ industrial boxes: a grblHAL motion controller, a fiber-laser interface and a gal
 | **[Manufacturing](Manufacturing)** | Gerbers, drill files and pick-and-place data |
 | **[Step](Step)** | 3D STEP model of the assembled board |
 
+## Schematic
+
+<img src="screenshots/Schematic_01_System_Overview.png" width="49%"> <img src="screenshots/Schematic_07_CPU_A_Motion.png" width="49%">
+
+*System overview sheet with the three CPUs, power and motion blocks (left) and the CPU-A motion controller (right)*
+
+<img src="screenshots/Schematic_05_Galvo_XY2_100.png" width="49%"> <img src="screenshots/Schematic_06_Fiber_Laser.png" width="49%">
+
+*Galvo scanner interface, XY2-100 over DB15 (left) and the Raycus fiber laser control interface over DB25 (right)*
+
+The images above are four of the nine sheets. The complete set is in
+**[MetalPrinter_V2_Schematic.pdf](MetalPrinter_V2_Schematic.pdf)**.
+
 ## Architecture
 
 The work is split across **three RP2350B microcontrollers**, each with its own USB-C port:
@@ -71,9 +84,9 @@ or right click the `.001` part and choose *7-Zip > Extract Here*, which joins th
 
 ## Status
 
-The board is designed, fabricated and populated. Its integration into the machine is on the
-[roadmap](../README.md#roadmap) - the process campaign documented in [settings](../settings) was run
-on the previous controller generation (Teensy 4.1 and RP2040).
+The board is designed, fabricated and populated. The grblHAL motion and laser configuration
+published in [settings](../settings) was exported before this board revision; the values are the
+configuration to reproduce and carry over to grblHAL on CPU-A.
 
 Third-party vendor manuals that were part of the design folder - the laser module and fiber laser user
 guides - are not redistributed here. Obtain them from the respective manufacturers.
