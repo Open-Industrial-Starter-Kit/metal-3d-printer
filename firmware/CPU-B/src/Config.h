@@ -1,0 +1,664 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+#include <stdint.h>
+
+//PCB
+// Installed PCB revision: set exactly one to true. Usable in #if (true/false evaluate to 1/0 in C++).
+#define PCB_VERSION_4_7 false
+#define PCB_VERSION_4_8 true
+
+#if PCB_VERSION_4_7 == PCB_VERSION_4_8
+  #error "Exactly one of PCB_VERSION_4_7 / PCB_VERSION_4_8 must be true"
+#endif
+
+//DEBUG
+#define DEFAULT_DEBUGGING_BASE 0
+#define DEFAULT_DEBUGGING_SPINDLE 0
+#define DEFAULT_DEBUGGING_STATUS 0
+#define DEFAULT_DEBUGGING_MACRO_BUFFER 0
+#define DEFAULT_DEBUGGING_SD_CARD 1
+#define DEFAULT_DEBUGGING_JSON 1
+#define DEFAULT_DEBUGGING_ESP32 1
+#define DEFAULT_DEBUGGING_EEPROM 1
+#define DEFAULT_DEBUGGING_JOB 0
+#define DEFAULT_BENCHMARKING 0
+#define DEFAULT_BENCHMARK_MINIMUM_MS 1
+
+
+typedef struct {
+
+  bool debuggingBase;
+  bool debuggingSpindle;
+  bool debuggingStatus;
+  bool debuggingMacroBuffer;
+  bool debuggingSDCard;
+  bool debuggingJson;
+  bool debuggingESP32;
+  bool debuggingEEPROM;
+  bool debuggingJob;
+  bool benchmarking;
+  int benchmarkMinimumMs;
+  char checkChar = '\0'; //this char is used to check if the struct has been initialized or not
+
+}DebuggingSettings;
+
+
+
+//GRBL
+#define GRBL_RESET_STRING "Grbl 1.1"
+#define GRBL_DEFAULT_HOMING true
+#define GCODE_RAPID_FEED_RATE_MM_PER_MIN 2000.0f
+#define DRY_RUN_FEED_RATE_MM_PER_MIN 3000
+#define MAX_WORK_DIMENSION_XY_MM 150.0f
+#define MAX_WORK_DIMENSION_Z_MM 70.0f
+#define SOFT_LIMIT_MIN_X_MM 0.0f
+#define SOFT_LIMIT_MAX_X_MM 143.0f
+#define SOFT_LIMIT_MIN_Y_MM -145.0f
+#define SOFT_LIMIT_MAX_Y_MM 0.0f
+#define SOFT_LIMIT_MIN_Z_MM -70.0f
+#define SOFT_LIMIT_MAX_Z_MM 0.0f
+#define AUTO_HOMING_ON_STARTUP false
+#define AUTO_HOMING_DELAY_MS 1000
+
+//SERIAL
+#define SERIAL_CONNECTION_TIMEOUT 2000
+#define SERIAL_BUFFER_SIZE 5000
+#define USB_BAUD_RATE 2000000
+#define CPUA_BAUD_RATE 115200
+#define ESP32_BAUD_RATE 2000000
+#define SERIAL2_TX_PIN 8
+#define SERIAL2_RX_PIN 9
+#define DISTANCE_LASER_SENSOR_TX_PIN 4
+#define DISTANCE_LASER_SENSOR_RX_PIN 5
+#define DISTANCE_LASER_SENSOR_DIR_PIN 26
+#define DISTANCE_LASER_SENSOR_BAUD_RATE 9600
+#define DISTANCE_LASER_SENSOR_MODBUS_SLAVE_ID 1
+// ---- Which distance laser sensor is fitted -------------------------------------------------------
+//
+// The two models are NOT interchangeable at runtime: they answer on different Modbus registers, with
+// different value widths, units and out-of-range markers. Pointing one build at the other model gets
+// an illegal-data-address exception on every read, so initialisation never completes and everything
+// downstream reports distanceLaserSensorNotInitialized. Hence a build-time choice.
+//
+//   LASER_SENSOR_OLD  Single 16-bit register at 100, 10 um per count, out-of-range marker 32767.
+//                     Reads an INVERTED distance: the value grows as the target gets CLOSER. Measured
+//                     over the bed, Z homed (big gap) reads -25.44 mm and the head down near the bed
+//                     (small gap) reads +29.45 mm, tracking Z about 1:1, so the usable span straddles
+//                     zero and NEGATIVE READINGS ARE VALID.
+//
+//   LASER_SENSOR_NEW  GRK-xxx-RS485 CMOS laser displacement sensor. One 32-bit signed value across
+//                     registers 0x0001..0x0002 (hi << 16 | lo), 1 um per count, out-of-range marker
+//                     9999900 um (0x0098961C) plus a "beyond +/-9999 mm is invalid" rule.
+//                     NOT Modbus-ready out of the box -- in the sensor's PRO menu, "Pro" must be
+//                     "bUS" (default "nor" is a free protocol and never answers), "bRd" must be 96
+//                     for 9600 baud (default 115.2k), and "Addr" must match the slave id above.
+//                     Frame format is fixed 8N1.
+//
+// Both are plain macros rather than an enum, because the branches below are preprocessor #if -- the
+// preprocessor treats unknown identifiers as 0, so enum names would silently compare equal.
+#define LASER_SENSOR_OLD 0
+#define LASER_SENSOR_NEW 1
+
+#define INSTALLED_DISTANCE_LASER_SENSOR LASER_SENSOR_NEW
+
+#if INSTALLED_DISTANCE_LASER_SENSOR == LASER_SENSOR_NEW
+
+  #define DISTANCE_LASER_SENSOR_MODBUS_INPUT_REGISTER 0x0001
+  #define DISTANCE_LASER_SENSOR_MODBUS_REGISTER_COUNT 2
+  #define DISTANCE_LASER_SENSOR_LSB_UM 1L
+  #define DISTANCE_LASER_SENSOR_INVALID_UM 9999900L
+  #define DISTANCE_LASER_SENSOR_MAX_ABS_VALID_UM 9999000L
+
+  // !! SET THESE FOR THE INSTALLED GRK MODEL !!
+  // A plausibility window on top of the sensor's own validity rule. Readings outside it are discarded
+  // as out of range, so a window left over from another model rejects everything and looks exactly
+  // like a dead sensor. Read distanceLaserMm at a few Z heights over the bed and set the window
+  // around what you actually observe.
+  #define DISTANCE_LASER_SENSOR_MIN_VALID_MM -34.0f
+  #define DISTANCE_LASER_SENSOR_MAX_VALID_MM  34.0f
+
+#elif INSTALLED_DISTANCE_LASER_SENSOR == LASER_SENSOR_OLD
+
+  #define DISTANCE_LASER_SENSOR_MODBUS_INPUT_REGISTER 100
+  #define DISTANCE_LASER_SENSOR_MODBUS_REGISTER_COUNT 1
+  #define DISTANCE_LASER_SENSOR_LSB_UM 10L
+  // This model marks out of range by returning exactly 32767 in its single register. Expressed in the
+  // same micrometre units as the value itself so the read path can treat both models identically.
+  #define DISTANCE_LASER_SENSOR_INVALID_UM 327670L
+  #define DISTANCE_LASER_SENSOR_MAX_ABS_VALID_UM 327660L
+
+  // Verified span is about -30..+30 mm; +/-34 brackets it with a little slack. Validation used to be
+  // one-sided (upper bound only), which let junk below -34 mm through as a real measurement.
+  #define DISTANCE_LASER_SENSOR_MIN_VALID_MM -34.0f
+  #define DISTANCE_LASER_SENSOR_MAX_VALID_MM  34.0f
+
+#else
+  #error "INSTALLED_DISTANCE_LASER_SENSOR must be LASER_SENSOR_OLD or LASER_SENSOR_NEW"
+#endif
+
+// Settle time around the RS485 direction switch. SoftwareSerial writes block, so the last bit is
+// already out when postTransmission runs; on a HardwareSerial port a flush() would be required there
+// first or the CRC bytes get cut off.
+#define DISTANCE_LASER_SENSOR_DIR_SETTLE_US 50
+#define DISTANCE_LASER_SENSOR_MAX_INIT_RETRIES 5
+#define DISTANCE_LASER_SENSOR_INIT_DELAY_MS 1500
+#define LASER_OFFSET_ZERO_X_BACK_MM 41.67f
+#define LASER_OFFSET_ZERO_Y_BACK_MM 9.41f
+#define LASER_OFFSET_ZERO_FEED_RATE_MM_MIN 2000
+// Laser edge probe — coarse scan (streaming G90 increments)
+#define LASER_EDGE_PROBE_COARSE_FEED_RATE_MM_MIN  300
+#define LASER_EDGE_PROBE_COARSE_INCREMENT_MM      10.0f  // coarse step size per streamed increment (mm)
+#define LASER_EDGE_PROBE_COARSE_TRIGGER_RANGE_MM   4.0f  // send next increment when within this range of current target (mm)
+#define LASER_EDGE_PROBE_MAX_TRAVEL_MM            150.0f // max coarse travel per direction (mm)
+#define LASER_EDGE_PROBE_THRESHOLD_MM              1.2f  // edge detection threshold (mm of step from the baseline, either direction)
+// Laser edge probe — fine scan (single continuous slow pass with feed-hold stop)
+#define LASER_EDGE_PROBE_FINE_FEED_RATE_MM_MIN    50     // fine pass feed rate (mm/min)
+#define LASER_EDGE_PROBE_FINE_BACKOFF_MM           4.0f
+#define LASER_EDGE_PROBE_FINE_MAX_TRAVEL_MM       20.0f  // max fine scan range per direction (mm)
+#define LASER_EDGE_PROBE_EDGE_OFFSET_MM            0.5f  // calibration offset applied opposite to the scan direction (mm)
+#define LASER_EDGE_PROBE_RETURN_FEED_RATE_MM_MIN  2000   // short positioning feed rate (mm/min)
+#define LASER_EDGE_PROBE_FINE_RETURN_FEED_RATE_MM_MIN 750 // return-to-origin feed rate between directions (mm/min)
+#define LASER_EDGE_PROBE_SETTLE_DELAY_MS          500    // non-blocking settle delay after stop/idle transitions (ms)
+
+// Height map (laser-based, relative measurements)
+//
+// LINE SCAN is the active acquisition mode: one G1 per grid row while the laser is polled
+// continuously, instead of stopping at every grid point. Set HEIGHT_MAP_USE_LEGACY_GRID_SCAN to 1 to
+// reinstate the old point-by-point scan (stop, settle, average 3 reads); both code paths are kept in
+// handleHeightMapScan() behind this switch.
+#define HEIGHT_MAP_USE_LEGACY_GRID_SCAN 0
+
+// Coarse/fine now set the ROW PITCH (Y) and the cell width (X). The sample interval ALONG a row is
+// set by the Modbus read rate, not by this: ~0.075 mm at 300 mm/min with a ~15 ms read, so every cell
+// collapses tens of independent reads rather than the 3 the legacy scan took.
+#define HEIGHT_MAP_COARSE_SPACING_MM 4.0f
+#define HEIGHT_MAP_FINE_SPACING_MM 2.0f
+// Sized for the machine envelope (SOFT_LIMIT_MAX_X_MM 143 mm, -SOFT_LIMIT_MIN_Y_MM 145 mm) at the
+// finest pitch: ceil(145 / 2) + 1 = 74 points per axis. 96 leaves headroom down to a ~1.5 mm pitch and
+// keeps heightMapRelativeMm at 96*96*4 = 36 KB, where the old 200 (a 400 mm axis the machine does not
+// have) cost 156 KB of permanently reserved RAM.
+#define HEIGHT_MAP_MAX_POINTS_PER_AXIS 96
+// Positioning feed rate between rows and for the return move.
+#define HEIGHT_MAP_SCAN_FEED_RATE_MM_MIN 1000
+// Row scan feed rate. Deliberately slow: the along-row sample spacing is (read time * feed), so this
+// is what buys the samples each cell averages over. At 200 mm/min and a ~19 us Modbus read that is
+// ~0.065 mm between samples, about 30 per 2 mm cell. Lower it further to trade scan time for a
+// quieter map; the scan duration scales inversely.
+#define HEIGHT_MAP_LINE_SCAN_FEED_RATE_MM_MIN 200
+// Per-cell statistics. Samples binned into one grid cell are sorted, trimmed by
+// HEIGHT_MAP_CELL_TRIM_PERCENT at BOTH ends, and averaged (25% = interquartile mean). Trimming is what
+// makes a cell stable: a specular glint or a dropout lands at an extreme and is discarded outright,
+// where a plain mean would drag the cell toward it and lift the tool off the work.
+#define HEIGHT_MAP_CELL_MAX_SAMPLES 128
+#define HEIGHT_MAP_CELL_MIN_SAMPLES 5
+#define HEIGHT_MAP_CELL_TRIM_PERCENT 25
+// A cell that never reached HEIGHT_MAP_CELL_MIN_SAMPLES is left EMPTY and filled afterwards from its
+// valid neighbours over this many propagation passes. The legacy scan instead copied the previous
+// point's value, which silently produced a flat patch that looked perfectly plausible in the 3D view;
+// filled cells are now counted and reported through getHeightMapStatus.
+#define HEIGHT_MAP_GAP_FILL_PASSES 4
+// How far the job XY zero may move before the map is dropped as stale. The map is anchored in job
+// coordinates, so any real re-zero slides it off the material; this only exists to absorb the noise
+// floor of re-parsing the same WCO out of consecutive GRBL status reports, which is none in practice.
+#define HEIGHT_MAP_WCO_CHANGE_TOLERANCE_MM 0.01f
+// How far the job's toolpath may poke outside the scanned rectangle before startJob refuses to run
+// with compensation. Only absorbs float rounding: when the map is anchored on the file's own bounds
+// the two rectangles match exactly, and any real gap means the map is over the wrong area.
+#define HEIGHT_MAP_JOB_COVERAGE_TOLERANCE_MM 0.05f
+// A scan refuses to start unless its first reading sits this close to the middle of the sensor's
+// range. The sensor spans about +/-30 mm and the reading tracks Z about 1:1, so requiring
+// |reading| <= 25 leaves ~5 mm of headroom at BOTH ends for the surface's own variation. Scanning
+// near a range limit is what makes isolated cells read wildly wrong while the rest of the map looks
+// perfectly fine -- with Z homed the sensor already reads -25.4, i.e. straight at the edge.
+// To satisfy it, jog Z until the laser reads near 0 (roughly 25 mm down from Z home) before scanning.
+#define HEIGHT_MAP_START_READING_MAX_ABS_MM 25.0f
+// A cell whose post-trim spread exceeds this is counted as noisy and reported. A cell spans only a
+// couple of mm, so real surface variation inside one is microns; anything this wide is the sensor
+// failing to resolve that spot. The COUNT is what matters diagnostically: a handful of noisy cells
+// clustered at the scan edge is the scan overhanging the stock, while noisy cells spread across the
+// middle is the sensor struggling with the material itself.
+#define HEIGHT_MAP_CELL_NOISY_SPREAD_MM 0.05f
+// The Z datum is measured STANDING STILL at job XY zero before the sweep starts, this many reads
+// spaced by HEIGHT_MAP_SAMPLE_RETRY_DELAY_MS, collapsed with the same trimmed mean a cell uses.
+// It used to be taken from the map's own origin cell, which is a half-width row end carrying about
+// half the samples of any other cell -- the weakest cell in the map, acting as the reference for
+// every value in it. Measuring at job zero also means Z is touched off at job zero, where the
+// operator naturally would, instead of at a corner they have to look up.
+#define HEIGHT_MAP_BASELINE_SAMPLE_COUNT 15
+
+// Legacy point-by-point scan only (HEIGHT_MAP_USE_LEGACY_GRID_SCAN 1).
+#define HEIGHT_MAP_SCAN_SETTLE_DELAY_MS 500
+#define HEIGHT_MAP_SAMPLE_COUNT 3
+// Position tolerance (mm) for confirming the head has ARRIVED before sampling / before starting a row.
+// Guards against acting on a stale "Idle" status; in line scan mode a stale Idle would start the row
+// timing clock before the head is at the row start and skew every dead-reckoned X in that row.
+#define HEIGHT_MAP_ARRIVE_TOLERANCE_MM 0.2f
+#define HEIGHT_MAP_WAIT_OK_STALE_MS 1500
+#define HEIGHT_MAP_SAMPLE_RETRY_COUNT 5
+#define HEIGHT_MAP_SAMPLE_RETRY_DELAY_MS 150
+// Post-scan outlier filter: a cell that deviates from its 8-neighbour median by more than this is
+// treated as a spike (reflective copper, trace edge, bad read) and replaced with that median.
+// Deliberately loose. Spike rejection has moved INTO the cell: every cell is already a trimmed mean of
+// tens of readings, which discards glints and dropouts at the source, where this filter can only
+// second-guess a finished cell against its neighbours and would flatten real surface features
+// (steps, edges, wood grain, a warped board's curvature) if set near the noise floor. At 0.5 mm it
+// only catches a catastrophically wrong cell that survived the per-cell trim. Lower it towards
+// ~0.05 mm to have it police the map aggressively; set to 0 to disable the filter entirely.
+#define HEIGHT_MAP_OUTLIER_THRESHOLD_MM 0.5f
+
+// Point cloud scan (laser-based, absolute work coordinates saved to SD as PLY)
+#define POINT_CLOUD_SPACING_ULTRAFINE_MM  0.2f
+#define POINT_CLOUD_SPACING_FINE_MM       0.5f
+#define POINT_CLOUD_SPACING_MEDIUM_MM     1.0f
+#define POINT_CLOUD_SPACING_COARSE_MM     2.0f
+#define POINT_CLOUD_MAX_SCAN_DIMENSION_X_MM 90.0f
+#define POINT_CLOUD_MAX_SCAN_DIMENSION_Y_MM 135.0f
+#define POINT_CLOUD_MAX_POINTS_PER_AXIS   676   // ceil(135mm / 0.2mm) + 1
+#define POINT_CLOUD_SCAN_FEED_RATE_MM_MIN 1000
+#define POINT_CLOUD_SCAN_SETTLE_DELAY_MS  500
+#define POINT_CLOUD_SAMPLE_COUNT          3
+#define POINT_CLOUD_WAIT_OK_STALE_MS      1500
+#define POINT_CLOUD_FILENAME_SUFFIX       ".ply"
+#define POINT_CLOUD_SYNC_INTERVAL         50
+// Row sweep feed rate. Sets the along-row point spacing, since that is (Modbus read time * feed):
+// ~0.065 mm at 200 mm/min. Lowered 300 -> 200 to match the height map sweep and give a denser, quieter
+// cloud; scan duration scales inversely.
+#define POINT_CLOUD_LINE_SCAN_FEED_RATE_MM_MIN 200
+
+//timers
+// Watchdog window for the USB serial client. ANY incoming serial byte resets it
+// (readFromUSB refreshes serialLastApiPingMs on every byte), so gcode/status polls/
+// commands all count as keep-alive, not just SERIAL_PING. Raised 2500->10000 so a
+// quiet gap (SD-card job with no polling, or a slow move while the streamer waits for
+// buffer space) no longer trips a spurious safety pause.
+#define SERIAL_API_PING_TIMEOUT_MS 10000
+#define WEBSOCKET_API_PING_TIMEOUT_MS 5000
+// Press-and-hold jogging keep-alive: the app streams incremental "jog" steps while the
+// button is held and sends "jogCancel" on release. If no jog activity is seen for this
+// long (lost release message or dropped link), the firmware auto-cancels the jog (0x85).
+// Keep this comfortably above the app's jog-step streaming interval to avoid false stops.
+#define JOG_KEEPALIVE_TIMEOUT_MS 350
+#define ESP32C3_WEBSOCKET_FORCE_CLOSE_TIMEOUT_MS 2000
+#define FILE_TRANSFER_CHUNK_TIMEOUT_MS 5000
+#define FILE_DOWNLOAD_CHUNK_TIMEOUT_MS 25000
+// startFileDownload only counts the file's lines (for totalFileLines) when the file is at most this
+// big. Counting reads the whole file in one blocking loop (about 2 s per MB), during which USB and
+// WebSocket are not serviced; 32 KB keeps that under ~70 ms. Bigger files reply with
+// totalFileLines = 0 (unknown) and clients use downloadedBytes / fileSize for progress instead.
+#define DOWNLOAD_LINE_COUNT_MAX_FILE_SIZE_BYTES 32768L
+// How many times a download chunk's SD read is retried before the transfer is
+// aborted. This covers transient SD glitches and is safe because readDownloadChunk
+// only fails before advancing the file position.
+#define DOWNLOAD_CHUNK_READ_MAX_ATTEMPTS 3
+// On a WebSocket send failure the chunk is NOT re-sent in place (that handshake is
+// non-idempotent and re-issuing it back-to-back desyncs the link). Instead the
+// download file is rewound to the start of the chunk so the client can re-request
+// it on a fresh call. This caps how many consecutive send failures are tolerated for
+// the same chunk before the whole transfer is abandoned, to bound a dead link.
+#define DOWNLOAD_CHUNK_SEND_MAX_FAILURES 5
+
+//BUFFERS
+#define LINE_BUFFER_CHARACTERS 5000
+// Longest line expected from CPUA. grblHAL status reports with 4 axes go past 100 characters when
+// the periodic WCO:/Ov: fields are appended, so keep plenty of margin.
+#define CPUA_LINE_BUFFER_CHARACTERS 256
+#define MACRO_BUFFER_LINES 100
+#define MACRO_LINE_BUFFER_CHARS 200
+#define MACRO_SPEED_SLOW "G1 F250"
+#define MACRO_SPEED_MEDIUM "G1 F500"
+#define MACRO_SPEED_FAST "G1 F1000"
+#define FILE_CHUNK_LINES_BUFFER 5000
+#define DOWNLOAD_FILE_CHUNK_BUFFER 1500
+
+
+
+//EEPROM
+#define EEPROM_SIZE 2048
+
+//ESP32C3
+#define ESP32C3_CHECK_DELAY 100
+#define ESP32C3_CONNECT_WIFI_TIMEOUT_S "5"
+#define DEFAULT_ENABLE_ESP32_PASSTHROUGH true
+#define ESP32C3_RESTART_DELAY_MS 3000
+#define ESP32C3_WEBSOCKET_SEND_TIMEOUT_MS 4000
+#define ESP32C3_RESPONSE_BUFFER_SIZE 512
+#define ESP32C3_WEBSOCKET_MESSAGE_BUFFER_SIZE 8192
+#define ESP32C3_COMMAND_BUFFER_SIZE 600
+#define ESP32C3_AP_MAX_CONNECTIONS 1
+#define ESP32C3_AP_CHANNEL "1"
+#define ESP32C3_AP_ENCRYPTION "3"
+#define DEFAULT_ESP32C3_AP_SSID_PREFIX "PiccolaCNC_"
+#define DEFAULT_ESP32C3_AP_PASSWORD "minicnc123"
+#define DEFAULT_HOTSPOT_ENABLED true
+#define DEFAULT_ESP32C3_CLIENT_SSID "Client SSID"
+#define DEFAULT_ESP32C3_CLIENT_PASSWORD "Client Password"
+#define DEFAULT_ESP32C3_WEBSOCKET_SERVER_PREFIX "ws://"
+#define DEFAULT_ESP32C3_MOBILE_WEBSOCKET_SERVER_SUFFIX ":8765"
+#define ESP32C3_WEBSOCKET_MESSAGE_PREFIX "WS_DATA:"
+#define ESP32C3_WEBSOCKET_CLOSED_PREFIX "WS_CLOSED:"
+#define ESP32C3_WEBSOCKET_MESSAGE_MINIMUN_LENGTH 6
+#define ESP32C3_BLE_SCAN_DURATION_S "3"
+#define DEFAULT_ESP32C3_BLE_SCAN_NAME_FILTER "minicnc_"
+#define MOBILE_WEBSOCKET_RETRY_INTERVAL_MS 4000
+#define MOBILE_WEBSOCKET_CONNECTING_TIMEOUT_MS 10000
+#define BLE_SCAN_SESSION_TIMEOUT_MS 10000
+
+//remember to do 
+//AT+CWAUTOCONN=0  
+//AT+UART_DEF=2000000,8,1,0,1 
+//ATE0  
+//AT+CWAUTOCONN=0
+//as general config of the ESP32C3
+//to disable the auto connection to wifi networks, since we will manage the wifi connection from the CPUB and we don't want the ESP32C3 to automatically connect to a wifi network and interfere with our management of the wifi connection
+
+ 
+
+#define ACCESS_POINT_SSID_CHARS 100
+#define ACCESS_POINT_PASSWORD_CHARS 100
+
+//wifi settings struct
+typedef struct {
+
+  char apSsid[ACCESS_POINT_SSID_CHARS];
+  char apPassword[ACCESS_POINT_PASSWORD_CHARS];
+  char clientSsid[ACCESS_POINT_SSID_CHARS];
+  char clientPassword[ACCESS_POINT_PASSWORD_CHARS];
+  bool hotspotEnabled;
+  char checkChar;;
+
+} WifiSettings;
+
+//Sync actions
+//definition of the struct that will keep track of the sync actions
+#define SYNC_ACTION_CHARS 50
+
+typedef struct {
+
+  char type[SYNC_ACTION_CHARS];
+  float positionX;
+  float positionY;
+  float positionZ;
+  float positionRange;
+  int pollingInterval;
+
+} SyncAction;
+
+//CPUA
+#define DEFAULT_ENABLE_CPUA_PASSTHROUGH true
+#define DEFAULT_INITIAL_HOMING false
+
+//IO
+#define GREEN_LED_OUTPUT_PIN 21
+#define BLUE_LED_OUTPUT_PIN 22
+#define RED_LED_OUTPUT_PIN 20
+#define BLINK_LED_PIN 25
+#define ENABLE_X_PIN 2
+#define ENABLE_Y_PIN 3
+#define ENABLE_Z_PIN 10
+#define ENABLE_A_PIN 11
+#define LASER_SENSOR_ENABLE_PIN 27
+#define DOOR_SENSOR_PIN 23
+// PiccolaCNC: pins declared for future use only — NOT yet configured (no pinMode) or used anywhere.
+#define WIFI_ENABLE_PIN 29
+#define SPINDLE_RLY_MIRROR_PIN 7
+#define POWER_RLY_MIRROR_PIN 6
+#define INPUT_MONITOR_PIN 28
+
+//Brushless motor accessory
+// Brake line of the brushless motor accessory. Configured as INPUT_PULLUP: the MCU does not
+// drive it, it leaves it high-Z with the internal pull-up so an unconnected accessory reads
+// HIGH (idle).
+#define BRUSHLESS_MOTOR_BRAKE_PIN 24
+// Direction level applied at boot before EEPROM is read, and the fallback when EEPROM holds nothing
+// valid. Changed at runtime through setBrushlessMotorSettings, which persists it.
+#define BRUSHLESS_MOTOR_DIRECTION_REVERSED_DEFAULT true
+// Direction line of the brushless motor accessory. Configured as OUTPUT and driven LOW in
+// setup(), so the direction is defined from boot instead of floating on the internal pull-up.
+#define BRUSHLESS_MOTOR_DIR_PIN 15
+
+// Door/lid sensor logic levels (active-high on OPEN): the input reads LOW when the door
+// is CLOSED and HIGH when the door is OPEN. Configured as INPUT_PULLUP: a closed door holds
+// the pin LOW to GND (default/idle state); opening releases it and the internal pull-up
+// drives it HIGH (the trigger).
+#define DOOR_SENSOR_OPEN_STATE   HIGH
+#define DOOR_SENSOR_CLOSED_STATE LOW
+// Debounce (ms): the door input must read OPEN this long before it counts, to reject brief
+// electrical glitches (e.g. spindle inrush) that previously caused spurious pauses on this pin.
+#define DOOR_SENSOR_DEBOUNCE_MS 100
+
+//Housing / door sensor
+// Default housing state used only when no value is stored in EEPROM yet:
+// by default we assume NO housing is installed.
+#define DEFAULT_HOUSING_INSTALLED false
+// When the housing is installed and the door opens with the SPINDLE OFF: true = allow motion to
+// continue, false = pause (same as door closed). Spindle-ON + door-open always pauses regardless.
+#define DEFAULT_ALLOW_MOTION_WHEN_DOOR_OPEN false
+
+//Spindle
+// Compile-time selection of the installed spindle variant (SPINDLE_24V / SPINDLE_48V,
+// see enum SpindleType in Constants.h). Exposed read-only through the JSON API
+// (getSpindleType); the calling application takes further actions based on it.
+#define INSTALLED_SPINDLE_TYPE SPINDLE_48V
+
+// Read-only G53 Y target used by the move-to-rotary-position macro, per spindle variant.
+// The macro uses the value matching INSTALLED_SPINDLE_TYPE.
+#define MOVE_TO_ROTARY_Y_24V -60.78f
+#define MOVE_TO_ROTARY_Y_48V -55.442f  // Brushed 48V
+
+//Current sensor (INA220/INA219 compatible)
+#define CURRENT_SENSOR_SDA_PIN 12
+#define CURRENT_SENSOR_SCL_PIN 13
+#define CURRENT_SENSOR_I2C_ADDRESS 0x40
+
+//TIMINGS
+#define START_DELAY 1500 //this delay is needed to allow other devices of the PCB to boot correctly
+#define LASER_SENSOR_ENABLE_RESPONSE_DELAY_MS 1500
+#define LED_BLINK_INTERVAL 750
+#define ASK_STATUS_INTERVAL 200
+
+//Probe Z0 macro (probeSetJobZ0Macro)
+//Default touch-point offset: the probed surface is defined as this work Z (touch
+//plate / reference thickness, mm). EEPROM-settable at runtime via setProbeHeight;
+//this define is only the factory default used when nothing is stored yet.
+#define DEFAULT_PROBE_HEIGHT_MM 14.0f
+//After probing, the macro retracts to (offset + this margin) mm.
+#define PROBE_HEIGHT_RETRACT_MARGIN_MM 3.0f
+
+//Spindle
+#define MINIMUM_SPINDLE_RPM 2000
+// Floor for the spindle OVERRIDE, in RPM of actual spindle speed.
+//
+// GRBL scales the programmed S word by the override percentage and then clamps the result to $31
+// (1500 rpm as this machine's CPUA is built), which is well under the speed this spindle holds
+// cleanly. It does not stall politely down there -- it loses torque, and the first place that shows
+// is the cut. An override step that would land under this is therefore refused outright, so the
+// override cannot take the spindle below it whatever S the job asked for.
+//
+// The floor is a percentage that MOVES with the job: at S12000 the override may go down to 25%, at
+// S4000 only to 75%, and at or below this RPM it may not be reduced at all.
+//
+// This governs the OVERRIDE only. A job that programs S below this still runs at what it asked for
+// -- that is the job's decision and GRBL's $31 clamp; the override simply cannot make it worse.
+#define SPINDLE_OVERRIDE_MIN_EFFECTIVE_RPM 3000
+#define MANUAL_SPINDLE_RAMP_RPM_INCREMENT 1000
+#define MANUAL_SPINDLE_RAMP_TOTAL_TIME_MS 2000
+// Spindle recycle step pacing: the DROP (down to floor) uses a shorter interval, the
+// RAMP (back up to target) a longer one.
+#define RESUME_SPINDLE_DROP_STEP_INTERVAL_MS 250
+#define RESUME_SPINDLE_OVERRIDE_STEP_INTERVAL_MS 350
+// On resume: motion restarts ('~') and the spindle restarts at full at once,
+// then the override is paced DOWN to this floor and back UP to the captured
+// target ("recycle"), so the override ends explicitly driven to 100%.
+#define RESUME_SPINDLE_RESTORE_FLOOR_PERCENT 30
+// After the recycle ramp reaches the target override, the resume enters a closed-loop
+// CONFIRM stage: it verifies GRBL actually reports the spindle override at target (the
+// "Ov:" status field) and, if GRBL is short/over by a full coarse step (a coalesced or
+// dropped override byte), nudges it back toward target. Once GRBL is read at target, the
+// resume waits this settle time before completing, so it ends reliably at max speed.
+#define RESUME_SPINDLE_CONFIRM_SETTLE_MS 700
+// Safety bound so CONFIRM can never hang if GRBL never reports the target (e.g. it stops
+// emitting the "Ov:" field). After this long the resume completes anyway.
+#define RESUME_SPINDLE_CONFIRM_TIMEOUT_MS 4000
+// Resume feed (motion) ramp: the spindle takes time to reach RPM after a resume, so motion
+// must not cut at full feed meanwhile. grblHAL does NOT honor feed-override changes during
+// HOLD, but it DOES honor them while moving, and the value persists through a hold. So the
+// API pause ramps the feed override DOWN to the floor BEFORE holding; motion then resumes at
+// that low feed and this ramp brings it back up while the spindle spins up. (If feed is not
+// already low at resume — e.g. a door/watchdog pause that held immediately — the resume ramp
+// drops it first, then ramps up, as a fallback.)
+#define RESUME_FEED_START_PERCENT 10     // feed override floor; the API pause drops to this BEFORE holding
+#define RESUME_FEED_DROP_STEP_MS 20      // fast pacing of the feed-override drop (one -10% per step)
+#define RESUME_FEED_RAMP_TOTAL_MS 6000   // time to ramp feed override from floor back up to target
+// A spindle ramp triggered by an M3 IN A JOB first lets GRBL's planner drain, so the machine is
+// stopped while the spindle comes up and motion only restarts once it is at speed. An "ok" means a
+// line was accepted, not executed, so without this the queued moves keep running through the ramp.
+// Bounded: the job is held while it waits, so a machine that never reports Idle (alarm, stalled
+// status feed) must not strand it -- after this long the ramp proceeds regardless.
+#define SPINDLE_RAMP_JOB_DRAIN_TIMEOUT_MS 4000
+
+// After the LAST ramp step is sent, hold the job for this long before letting motion resume. GRBL
+// acknowledges an "M3 S..." as soon as it accepts it, but the spindle still needs physical time to
+// reach that speed -- so without this the job restarted the instant the final S was queued, with the
+// spindle still climbing. Raise it if the spindle is slow to settle at its top speed.
+#define SPINDLE_RAMP_FINAL_SETTLE_MS 1000
+
+#define SPINDLE_INCREMENT_INTERVAL 250
+
+//Json
+#define DEFAULT_ENABLE_JSON_RESPONSE 1
+#define JSON_BUFFER_SIZE 8192
+
+//Machine name
+#define MACHINE_NAME_MAX_CHARS 30
+#define MACHINE_NAME_CHARS (MACHINE_NAME_MAX_CHARS + 1)
+#define DEFAULT_MACHINE_NAME "Piccola CNC #1"
+
+//Tool length probe
+// Reference Z: machine Z coordinate of the probe plate top surface when resting on the bed,
+// measured with a zero-length reference (bare collet).
+#define BED_PROBE_REFERENCE_Z_MM  -48.0f
+#define TOOL_LENGTH_PROBE_DISTANCE_MM 60
+#define TOOL_LENGTH_PROBE_FEED_RATE_MM_MIN 50
+#define TOOL_LENGTH_PROBE_RETRACT_MM 5
+
+typedef struct {
+
+  bool enableJsonResponse;
+  char checkChar; //this char is used to check if the struct has been initialized or not
+
+} JsonSettings;
+
+typedef struct {
+
+  char machineName[MACHINE_NAME_CHARS];
+  char checkChar; //this char is used to check if the struct has been initialized or not
+
+} MachineNameSettings;
+
+typedef struct {
+
+  float refZ;
+  char checkChar; //this char is used to check if the struct has been initialized or not
+
+} ToolLengthReferenceSettings;
+
+typedef struct {
+
+  float xBackMm;
+  float yBackMm;
+  char checkChar; //this char is used to check if the struct has been initialized or not
+
+} LaserOffsetZeroSettings;
+
+typedef struct {
+
+  bool housingInstalled;
+  bool allowMotionWhenDoorOpen; // housing installed + door open + spindle OFF: allow motion (true) or pause (false)
+  char checkChar; //this char is used to check if the struct has been initialized or not
+
+} HousingSettings;
+
+typedef struct {
+
+  float heightMm;
+  char checkChar; //this char is used to check if the struct has been initialized or not
+
+} ProbeHeightSettings;
+
+typedef struct {
+
+  // Level driven on BRUSHLESS_MOTOR_DIR_PIN. false = LOW (the default the pin is initialised to),
+  // true = HIGH. Which physical rotation each level produces depends on the accessory's wiring, so
+  // the API names the level rather than a rotation it cannot know.
+  bool directionReversed;
+  char checkChar; //this char is used to check if the struct has been initialized or not
+
+} BrushlessMotorSettings;
+
+//Machine usage tracking (read-only meter persisted to a hidden SD file)
+// Hidden via a leading-dot filename — the SD listing API already skips dot files,
+// so it never appears in the user's file list / download / delete API.
+#define USAGE_LOG_FILENAME ".usage"
+#define USAGE_FLUSH_INTERVAL_MS 300000UL   // persist to SD every 5 minutes
+#define USAGE_RECORD_MAGIC 0x414B5553UL    // "AKUS"
+#define USAGE_RECORD_VERSION 2
+
+// Persisted usage record. The file stores two of these back-to-back (slot A/B);
+// each flush writes the inactive slot so a torn write can never destroy the last
+// good record. On boot the valid record (CRC32 ok) with the highest sequence wins.
+typedef struct {
+
+  uint32_t magic;            // USAGE_RECORD_MAGIC
+  uint16_t version;          // USAGE_RECORD_VERSION
+  uint16_t reserved;         // padding / future use
+  uint32_t sequence;         // monotonic write counter; higher = newer
+  uint32_t powerOnSeconds;   // total time powered on
+  uint32_t runSeconds;       // total time machineStatus == Run
+  uint32_t spindleSeconds;   // total time the spindle was spinning
+  uint32_t jobCount;         // total number of jobs launched (lifetime)
+  uint32_t crc32;            // CRC32 over all preceding bytes of this struct
+
+} UsageRecord;
+
+//Job history log — full history kept across multiple hidden, rotated SD files.
+// Each file holds exactly JOBS_PER_LOG_FILE jobs and is named by its 1-based job
+// range, e.g. ".jobs_1-100", ".jobs_101-200", ... (leading dot => hidden, excluded
+// from the file-list API). Each line is "<startTime>,<jobFileName>". Keeping each
+// file small bounds the FAT append cost so launches stay fast no matter how many
+// jobs have run in total.
+#define JOBS_PER_LOG_FILE 100
+#define JOB_LOG_FILENAME_PREFIX ".jobs_"
+#define JOB_LOG_FILENAME_CHARS 40
+// Upper bound for one full log file: JOBS_PER_LOG_FILE * (~24 start time + ',' +
+// 99 max file name + '\n'). Used to size the read buffer for getJobHistory.
+#define JOB_LOG_FILE_MAX_BYTES 13000
+
+//Sync actions, those are the actions that need to be executed in sync specific machine positions
+#define SYNC_ACTION_AMOUNT 20
+
+//SD Card
+#define SD_CS_PIN 17
+#define SD_SPI_SPEED 18000000  // 18MHz
+#define SD_BUFFER_SIZE 16384    // 16KB buffer
+#define SD_MAX_FILES 1000
+#define SD_MAX_FILE_NAME_LENGTH 100
+
+//Files
+#define GCODE_FILE_EXTENSION "gcode"
+#define NC_FILE_EXTENSION "nc"
+#define CNC_FILE_EXTENSION "cnc"
+#define PLY_FILE_EXTENSION "ply"
+
+
+#define SUPPORTED_GCODE_EXTENSIONS_AMOUNT 4
+#define SUPPORTED_GCODE_EXTENSION_CHARS 10 //including the null char at the end of the string
+const char SUPPORTED_GCODE_EXTENSIONS[SUPPORTED_GCODE_EXTENSIONS_AMOUNT][SUPPORTED_GCODE_EXTENSION_CHARS] = {
+
+  GCODE_FILE_EXTENSION,  
+  NC_FILE_EXTENSION,
+  CNC_FILE_EXTENSION
+
+};
+
+#endif
