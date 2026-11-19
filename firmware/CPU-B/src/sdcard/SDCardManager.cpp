@@ -1,4 +1,5 @@
 #include "SDCardManager.h"
+#include <SPI.h>
 #include "../Config.h"
 #include "../Constants.h"
 #include "../util/GCodeBoundsUtil.h"
@@ -17,8 +18,13 @@ bool SDCardManager::connect() {
   if (connected) 
     return true;
   
-  // Initialize SD card with specified CS pin and SPI speed
-  if (!sdCard.begin(SD_CS_PIN, SD_SCK_MHZ(18))) 
+  // The card is on SPI1 on the Control Board V2; SPI0 carries the W5500
+  // Ethernet controller, so the bus has to be named explicitly here.
+  SPI1.setSCK(SD_SCK_PIN);
+  SPI1.setTX(SD_MOSI_PIN);
+  SPI1.setRX(SD_MISO_PIN);
+
+  if (!sdCard.begin(SdSpiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(18), &SPI1)))
     return false;
   
   connected = true;

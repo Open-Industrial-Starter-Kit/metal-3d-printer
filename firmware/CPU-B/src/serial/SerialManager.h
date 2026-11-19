@@ -2,7 +2,6 @@
 #define SERIAL_MANAGER_H
 
 #include <Arduino.h>
-#include <SoftwareSerial.h>
 
 class SerialManager {
 public:
@@ -13,20 +12,14 @@ public:
     bool connectUSB();
     //bool connectUSBNonBlocking();
     bool connectCPUA();
-    bool connectESP32();
-    bool connectDistanceLaserSensor();
 
     //disconnect
     void disconnectUSB();
     void disconnectCPUA();
-    void disconnectESP32();
-    void disconnectDistanceLaserSensor();
 
     //available bytes to read
     int availableFromUSB();
     int availableFromCPUA();
-    int availableFromESP32();
-    int availableFromDistanceLaserSensor();
 
     //CPU A Serial
     size_t CPUASerialWrite(const byte _byte);
@@ -59,14 +52,9 @@ public:
 
     int readFromUSB();
 
-    //ESP32 Serial
-    int readFromESP32();
-    size_t ESP32SerialPrintln(const char* _char);
-    size_t ESP32SerialPrint(const char* _char);
-
-    //Distance laser sensor Serial (SoftwareSerial)
-    int readFromDistanceLaserSensor();
-    SoftwareSerial& getDistanceLaserSensorSerial();
+    // The ESP32-C3 link and the distance laser sensor are not fitted on the
+    // Control Board V2 and their pins carry other functions, so both ports
+    // are gone. Ethernet replaces the ESP32-C3 as the network transport.
 
 
 private:
@@ -74,8 +62,6 @@ private:
     unsigned long connectionStartTime;
     HardwareSerial& USBSerial = Serial;
     HardwareSerial& CPUASerial = Serial1;
-    HardwareSerial& ESP32Serial = Serial2;
-    SoftwareSerial distanceLaserSensorSerial;
     
 };
 

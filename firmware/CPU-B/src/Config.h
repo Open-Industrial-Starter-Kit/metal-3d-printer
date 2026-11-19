@@ -66,12 +66,12 @@ typedef struct {
 #define SERIAL_BUFFER_SIZE 5000
 #define USB_BAUD_RATE 2000000
 #define CPUA_BAUD_RATE 115200
-#define ESP32_BAUD_RATE 2000000
-#define SERIAL2_TX_PIN 8
-#define SERIAL2_RX_PIN 9
-#define DISTANCE_LASER_SENSOR_TX_PIN 4
-#define DISTANCE_LASER_SENSOR_RX_PIN 5
-#define DISTANCE_LASER_SENSOR_DIR_PIN 26
+// Serial2 drove the ESP32-C3 on the Piccola CNC. Not fitted on this board:
+// GP8/GP9 are the RS-422 transceiver GM490_DI/GM490_DO.
+// The distance laser sensor is not fitted either, and its old UART pins
+// GP4/GP5 are the serial link to CPU-C. Its direction pin is parked on a
+// spare so nothing drives SPI1_SCK_B.
+#define DISTANCE_LASER_SENSOR_DIR_PIN 44
 #define DISTANCE_LASER_SENSOR_BAUD_RATE 9600
 #define DISTANCE_LASER_SENSOR_MODBUS_SLAVE_ID 1
 // ---- Which distance laser sensor is fitted -------------------------------------------------------
@@ -388,22 +388,26 @@ typedef struct {
 #define DEFAULT_ENABLE_CPUA_PASSTHROUGH true
 #define DEFAULT_INITIAL_HOMING false
 
-//IO
-#define GREEN_LED_OUTPUT_PIN 21
-#define BLUE_LED_OUTPUT_PIN 22
-#define RED_LED_OUTPUT_PIN 20
+//IO - Control Board V2 CPU-B.
+// The RGB LED is on GP31/GP32/GP33 here (LED_R, LED_G, LED_B).
+#define RED_LED_OUTPUT_PIN 31
+#define GREEN_LED_OUTPUT_PIN 32
+#define BLUE_LED_OUTPUT_PIN 33
 #define BLINK_LED_PIN 25
-#define ENABLE_X_PIN 2
+// The axis enable mirrors, the laser sensor enable and the input monitor
+// belong to Piccola CNC hardware that this machine does not have. They are
+// parked on pins the Control Board V2 leaves spare (BGPn / GPIOn_B) so the
+// code that still writes them cannot fight the Ethernet, SPI1 or RS-485
+// nets that sit on their original pins.
+#define ENABLE_X_PIN 41
 #define ENABLE_Y_PIN 3
 #define ENABLE_Z_PIN 10
 #define ENABLE_A_PIN 11
-#define LASER_SENSOR_ENABLE_PIN 27
-#define DOOR_SENSOR_PIN 23
-// PiccolaCNC: pins declared for future use only — NOT yet configured (no pinMode) or used anywhere.
-#define WIFI_ENABLE_PIN 29
+#define LASER_SENSOR_ENABLE_PIN 43
+#define DOOR_SENSOR_PIN 38
 #define SPINDLE_RLY_MIRROR_PIN 7
 #define POWER_RLY_MIRROR_PIN 6
-#define INPUT_MONITOR_PIN 28
+#define INPUT_MONITOR_PIN 45
 
 //Brushless motor accessory
 // Brake line of the brushless motor accessory. Configured as INPUT_PULLUP: the MCU does not
@@ -415,7 +419,9 @@ typedef struct {
 #define BRUSHLESS_MOTOR_DIRECTION_REVERSED_DEFAULT true
 // Direction line of the brushless motor accessory. Configured as OUTPUT and driven LOW in
 // setup(), so the direction is defined from boot instead of floating on the internal pull-up.
-#define BRUSHLESS_MOTOR_DIR_PIN 15
+// Parked on a spare: GP15 is MAX485_DO on this board, an output of the
+// RS-485 receiver, so driving it would put two drivers on one net.
+#define BRUSHLESS_MOTOR_DIR_PIN 42
 
 // Door/lid sensor logic levels (active-high on OPEN): the input reads LOW when the door
 // is CLOSED and HIGH when the door is OPEN. Configured as INPUT_PULLUP: a closed door holds
@@ -637,8 +643,13 @@ typedef struct {
 //Sync actions, those are the actions that need to be executed in sync specific machine positions
 #define SYNC_ACTION_AMOUNT 20
 
-//SD Card
-#define SD_CS_PIN 17
+//SD Card - on SPI1 on the Control Board V2, with a card detect line.
+// SPI0 is the W5500 Ethernet controller, so the card must not go there.
+#define SD_CS_PIN 29
+#define SD_SCK_PIN 26
+#define SD_MOSI_PIN 27
+#define SD_MISO_PIN 28
+#define SD_CARD_DETECT_PIN 30
 #define SD_SPI_SPEED 18000000  // 18MHz
 #define SD_BUFFER_SIZE 16384    // 16KB buffer
 #define SD_MAX_FILES 1000

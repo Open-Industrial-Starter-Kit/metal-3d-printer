@@ -23,7 +23,7 @@ The hardware these firmwares target is documented in **[../pcb](../pcb)**.
 | Folder | CPU | Toolchain | State |
 | --- | --- | --- | --- |
 | **[CPU-A](CPU-A)** | CPU-A, motion | Pico SDK, CMake | grblHAL, 5 axes, building for the RP2350B |
-| **[CPU-B](CPU-B)** | CPU-B, main controller | PlatformIO, Arduino-Pico | starting point, not yet ported |
+| **[CPU-B](CPU-B)** | CPU-B, main controller | PlatformIO, Arduino-Pico | builds for this board; Ethernet still to do |
 | **[CPU-C](CPU-C)** | CPU-C, galvo and fiber laser | Pico SDK, PIO | XY2-100 PIO programs; rest *in preparation* |
 | **[test](test)** | - | PlatformIO / Pico SDK | small bring-up firmwares, one subsystem each |
 
@@ -62,13 +62,60 @@ step pins have to stay consecutive.
 
 ### CPU-B
 
-PlatformIO project for the Arduino-Pico core. It still targets the Piccola CNC
-hardware - board `rpipico2w`, which is an **RP2350A with CYW43 WiFi**. The
-Control Board V2 carries a plain **RP2350B** with a W5500 Ethernet controller
-instead, so this tree needs a board change and a rework of the networking layer
-before it runs on this machine. Until then use the passthrough test in
-**[test/CPU-B_passthrough](test/CPU-B_passthrough)**, which bridges the CPU-B
-USB-C port to CPU-A and touches nothing else.
+PlatformIO project for the Arduino-Pico core, derived from the Piccola CNC
+CPU-B firmware. Build it with:
+
+```
+cd CPU-B && pio run
+```
+
+The port to this board is being done in three phases. **Phase 1 is complete**:
+the firmware builds for the Control Board V2 and no longer drives any pin that
+belongs to another function.
+
+| Phase | Scope | State |
+| --- | --- | --- |
+| 1 | Strip to this board: no WiFi, no ESP32-C3, no hardware this machine does not have | done |
+| 2 | SD card on SPI1 | pins done, untested on hardware |
+| 3 | W5500 Ethernet as the network transport | not started |
+
+#### What phase 1 changed
+
+- Board target `rpipico2w` (RP2350A with CYW43 WiFi) to `MyRP_2350B`, a plain
+  RP2350B. This board has no radio.
+- Removed the ESP32-C3 driver and the WiFi, BLE and WebSocket layers that ran
+  over it: about 836 lines plus the 843 line `ESP32C3Manager`.
+- Removed the `Serial2` port on GP8/GP9, which is the RS-422 transceiver here,
+  and the distance laser sensor port on GP4/GP5, which is the link to CPU-C.
+- Moved the RGB LED to its real pins, GP31/GP32/GP33.
+- Pointed the SD card at SPI1 with its own chip select, GP29. It was on GP17,
+  which is the W5500 chip select on this board.
+- Parked the outputs belonging to Piccola CNC hardware this machine does not
+  have, among them the axis enable mirrors and the brushless motor direction,
+  on pins the board leaves spare, so nothing can contend with the Ethernet,
+  SPI1 or RS-485 nets that sit on their original pins.
+
+Every pin the firmware declares has been cross-checked against the CPU-B
+netlist of the schematic: 23 pins, no conflicts.
+
+#### What is still Piccola CNC
+
+The JSON API, the serial protocol and the SD card layer are unchanged, which is
+deliberate. The machine logic above them is still that of a CNC router, with a
+spindle, a tool changer, a rotary axis and probing routines that this machine
+does not have. Those are untouched for now: they are inert because their pins
+are parked, and removing them is a separate job from making the firmware safe
+to run.
+
+`sendJsonResponse()` is the single point where a response leaves CPU-B, and it
+selects the transport from `currentInputSource`. Adding the Ethernet path in
+phase 3 means adding a branch there and a receive function that mirrors the old
+WebSocket one: set `currentInputSource`, deserialize into `receivedJsonBuffer`,
+then call `handleJson()` or `handleRawPassthroughLine()`.
+
+For driving grblHAL while CPU-B is still being ported, the passthrough test in
+**[test/CPU-B_passthrough](test/CPU-B_passthrough)** bridges the CPU-B USB-C
+port to CPU-A and touches nothing else.
 
 ## Status
 

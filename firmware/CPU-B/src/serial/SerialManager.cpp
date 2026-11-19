@@ -3,16 +3,16 @@
 #include "../Constants.h"
 #include <Arduino.h>
 
-SerialManager::SerialManager() : distanceLaserSensorSerial(DISTANCE_LASER_SENSOR_RX_PIN, DISTANCE_LASER_SENSOR_TX_PIN) {}
+SerialManager::SerialManager() {}
 
 void SerialManager::init() {
 
     Serial.ignoreFlowControl(true);
     
     Serial1.setFIFOSize(SERIAL_BUFFER_SIZE);
-    Serial2.setFIFOSize(SERIAL_BUFFER_SIZE);
-    Serial2.setTX(SERIAL2_TX_PIN);
-    Serial2.setRX(SERIAL2_RX_PIN);
+
+    // Serial2 drove the ESP32-C3 on GP8/GP9. On the Control Board V2 those pins
+    // are the RS-422 transceiver GM490_DI/GM490_DO, so the port is left alone.
     
 }
 
@@ -60,37 +60,13 @@ bool SerialManager::connectCPUA(){
     return true;
 } 
 
-bool SerialManager::connectESP32(){
-    
-    ESP32Serial.begin(ESP32_BAUD_RATE);
-    connectionStartTime = millis();
 
-    while (!ESP32Serial) {
-
-        if ((millis() - connectionStartTime) > SERIAL_CONNECTION_TIMEOUT) 
-            return false; // Timeout occurred
-        
-        delay(1);
-    
-    }
-    
-    return true;
-} 
-
-bool SerialManager::connectDistanceLaserSensor(){
-
-    distanceLaserSensorSerial.begin(DISTANCE_LASER_SENSOR_BAUD_RATE);
-    return true;
-
-}
 
 void SerialManager::disconnectUSB() {USBSerial.end();}
 
 void SerialManager::disconnectCPUA() {CPUASerial.end();}
 
-void SerialManager::disconnectESP32() {ESP32Serial.end();}
 
-void SerialManager::disconnectDistanceLaserSensor() {distanceLaserSensorSerial.end();}
 
 size_t SerialManager::CPUASerialWrite(byte _byte) {
   
@@ -227,35 +203,10 @@ int SerialManager::readFromCPUA() {
 
 }
 
-int SerialManager::readFromESP32() {
 
-        return ESP32Serial.read();
-    
-}
 
-int SerialManager::readFromDistanceLaserSensor() {
 
-    return distanceLaserSensorSerial.read();
 
-}
-
-SoftwareSerial& SerialManager::getDistanceLaserSensorSerial() {
-
-    return distanceLaserSensorSerial;
-
-}
-
-size_t SerialManager::ESP32SerialPrint(const char* _char) {
-
-    return ESP32Serial.print(_char); 
-
-}
-
-size_t SerialManager::ESP32SerialPrintln(const char* _char) {
-
-    return ESP32Serial.print(_char) + ESP32Serial.println(); ;
-
-}
 
 int SerialManager::availableFromUSB() {
 
@@ -269,14 +220,4 @@ int SerialManager::availableFromCPUA() {
 
 }
 
-int SerialManager::availableFromESP32() {
-    
-    return ESP32Serial.available();
 
-}
-
-int SerialManager::availableFromDistanceLaserSensor() {
-
-    return distanceLaserSensorSerial.available();
-
-}

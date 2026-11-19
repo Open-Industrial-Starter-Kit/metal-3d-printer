@@ -22,7 +22,6 @@
 #include "sdcard/SDCardManager.h"
 #include <ArduinoJson.h>
 #include "util/JSonUtil.h"
-#include "esp32c3/ESP32C3Manager.h"
 #include "eeprom/EEPROMManager.h"
 #include <pico/unique_id.h>
 #include <Wire.h>
@@ -640,7 +639,6 @@ GrblUtil grblUtil;
 GCodeBoundsUtil gcodeBoundsUtil;
 SDCardManager sdCardManager;
 JsonUtil jsonUtil;
-ESP32C3Manager esp32c3Manager;
 EEPROMManager eepromManager;
 Adafruit_INA219 currentSensor(CURRENT_SENSOR_I2C_ADDRESS);
 ModbusMaster distanceLaserSensorModbus;
@@ -2722,12 +2720,9 @@ void setup() {
   //Serial
   serialManager.init();
 
-  serialManager.connectDistanceLaserSensor();
-  distanceLaserSensorModbus.begin(DISTANCE_LASER_SENSOR_MODBUS_SLAVE_ID, serialManager.getDistanceLaserSensorSerial());
-  distanceLaserSensorModbus.preTransmission(preDistanceLaserTransmission);
-  distanceLaserSensorModbus.postTransmission(postDistanceLaserTransmission);
-  // Schedule the initial probe after a 3-second non-blocking delay.
-  requestDistanceLaserSensorInitialization(DISTANCE_LASER_SENSOR_INIT_DELAY_MS, false);
+  // The distance laser sensor is not fitted on the Control Board V2 and its
+  // UART pins GP4/GP5 carry the serial link to CPU-C, so it is never started
+  // here. The probing routines that use it stay in place but idle.
 
   //first connect to USBSerial to make sure the debugging messages are printed during the connection of the other serial ports
   if(serialManager.connectUSB())
@@ -2751,17 +2746,6 @@ void setup() {
     if (debuggingSettings.debuggingBase) { 
       serialManager.USBSerialPrint(FROM_CPUB);
       serialManager.USBSerialPrintln("CPU A Serial connection failed"); 
-    }
-
-  if(serialManager.connectESP32())
-    if (debuggingSettings.debuggingBase) { 
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln("ESP32 Serial connected"); 
-    }  
-  else
-    if (debuggingSettings.debuggingBase) { 
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln("ESP32 Serial connection failed"); 
     }
 
   //Buffers
@@ -2793,7 +2777,6 @@ void setup() {
   // Load the persisted usage meter (hidden SD file) so it resumes from its last value.
   loadMachineUsage();
 
-  esp32c3Manager.init(serialManager);
 
   //get the time from the finish of the init phase
   globalStartTime = millis();
@@ -2852,8 +2835,6 @@ void loop() {
   handleMacros();
   blinkLed();
   askGRBLStatus();
-  handleESP32Connection();
-  handleESP32Comms();
   handleJob();
   updateRotaryAxisDetection();
   handleDistanceLaserSensorInit();
@@ -3136,70 +3117,6 @@ void handleEEPROMSettings(){
 
 }
 
-bool handleESP32Config() {
-
- 
-
-  //here we attempt to connect the ESP32C3 to a WiFi network
-  //if connection fails we still assess the initial execution as successful, since the ESP32C3 can be used in access point mode
-  /*
-  
-  bool connectToWiFi = false;
-  startUpExection = true;
-
-  while(startUpExection){
-
-    if(!connectToWiFi){
-
-      
-
-    if(esp32c3Manager.checkForResponse() == ESP32C3_RESPONSE_READY){
-
-      responseType = esp32c3Manager.getResponseType();
-      arrayUtil.clearCharArray(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-      esp32c3Manager.getResponse(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-
-      startUpExection = false; //we have successfully connected to the WiFi network, we can exit the startup execution phase
-
-       switch (responseType)
-    {
-      case ESP32C3_RESPONSE_TYPE_OK:
-
-        
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("OK response received from ESP32C3");}
-        
-        break;
-      
-      case ESP32C3_RESPONSE_TYPE_UNKNOWN:
-
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("Unknown response received from ESP32C3 ");}
-
-      break;
-      
-      case ESP32C3_RESPONSE_TYPE_ERROR:
-
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("Error response received from ESP32C3 ");}
-
-      break;
-
-      default:
-        break;
-
-    }
-
-  }
-  
-    delay(ESP32C3_CHECK_DELAY);
-
-  }
- */
-  return true;
- 
-
-}
 
 void handleSerialClientWatchdog() {
 
@@ -5177,570 +5094,8 @@ void askGRBLStatus() {
 
 }
 
-void handleESP32Connection(){
 
-  //here we must try to have writing and reading in a non blocking way, since this is called at every loop
-  //we also use a timer to not clog the comms with the ESP32C3
-  if(!timerUtil.ESP32C3CheckTimer())
-   return;
 
-  //buffer variables
-  int responseType;
-  char cmd [ESP32C3_COMMAND_BUFFER_SIZE];
-  char tempResponse[ESP32C3_RESPONSE_BUFFER_SIZE];
-
-   ///////////INITIAL CONFIG///////////////////////////////////////////////////////////////////////////////////////////////////////////
-  if(!initialESP32C3Config){
-
-      if(!atRequested && initialESP32ResponsesReceived == 0){
-
-      atRequested = true;
-      esp32c3Manager.sendATCommand(ESP32C3_AT);
-
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(ESP32C3_AT);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(" sent to ESP32C3");}
-      
-    }
-
-    // Step 1: close WebSocket link 1 if open from a previous session.
-    // ERROR response here is expected (link not open) and is treated as success.
-    if(!wsLink1CloseRequested && initialESP32ResponsesReceived == 1){
-
-      wsLink1CloseRequested = true;
-      esp32c3Manager.sendATCommand(ESP32C3_CLOSE_WEBSOCKET_LINK_1);
-
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(ESP32C3_CLOSE_WEBSOCKET_LINK_1 " sent to ESP32C3 (cleanup)");}
-
-    }
-    
-    if(!accessPointModeRequested && initialESP32ResponsesReceived == 2){
-
-      accessPointModeRequested = true;
-      const char* wifiModeCmd = wifiSettings.hotspotEnabled ? ESP32C3_WIFI_MODE_AP_AND_STATION : ESP32C3_WIFI_MODE_STATION;
-      esp32c3Manager.sendATCommand(wifiModeCmd);
-
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(wifiModeCmd);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(" sent to ESP32C3");}
-
-    }
-
-    if(!startAccessPoint && initialESP32ResponsesReceived == 3){
-
-      startAccessPoint = true;
-
-      if(wifiSettings.hotspotEnabled){
-
-        // Hotspot enabled: configure the access point
-        arrayUtil.clearCharArray(cmd, ESP32C3_COMMAND_BUFFER_SIZE);
-
-        strcat(cmd, ESP32C3_SET_AP);
-        strcat(cmd, "=\"");
-        strcat(cmd, wifiSettings.apSsid);
-        strcat(cmd, "\",\"");
-        strcat(cmd, wifiSettings.apPassword);
-        strcat(cmd, "\",");
-        strcat(cmd, ESP32C3_AP_CHANNEL);
-        strcat(cmd, ",");
-        strcat(cmd, ESP32C3_AP_ENCRYPTION);
-
-        esp32c3Manager.sendATCommand(cmd);
-
-        if(debuggingSettings.debuggingESP32){printWiFiCommandMasked(cmd);}
-
-      }else{
-
-        // Hotspot disabled: skip AP setup, go straight to mobile WebSocket config
-        esp32c3Manager.sendATCommand(ESP32C3_CONFIGURE_MOBILE_WEBSOCKET);
-
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(ESP32C3_CONFIGURE_MOBILE_WEBSOCKET);}
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(" sent to ESP32C3");}
-
-      }
-
-    }
-
-    if(!mobileWebsocketConfigured && initialESP32ResponsesReceived == 4){
-
-      mobileWebsocketConfigured = true;
-
-      if(wifiSettings.hotspotEnabled){
-
-        // Hotspot enabled: mobile WebSocket config at the normal step 4
-        esp32c3Manager.sendATCommand(ESP32C3_CONFIGURE_MOBILE_WEBSOCKET);
-
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint("Mobile WebSocket config command: ");}
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(ESP32C3_CONFIGURE_MOBILE_WEBSOCKET);}
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(" sent to ESP32C3");}
-
-      }else{
-
-        // Hotspot disabled: mobile WebSocket already configured at step 3, now connect to client WiFi
-        arrayUtil.clearCharArray(cmd, ESP32C3_COMMAND_BUFFER_SIZE);
-
-        strcat(cmd, ESP32C3_CONNECT_WIFI);
-        strcat(cmd, "=\"");  
-        strcat(cmd, wifiSettings.clientSsid);
-        strcat(cmd, "\",\"");
-        strcat(cmd, wifiSettings.clientPassword);
-        strcat(cmd, "\"");
-
-        esp32c3Manager.sendATCommand(cmd);
-        clientWiFiConnectionAttempted = true;
-
-        if(debuggingSettings.debuggingESP32){printWiFiCommandMasked(cmd);}
-
-      }
-
-    }
-
-    if(!clientWiFiConnectionAttempted && initialESP32ResponsesReceived == 5){
-
-      arrayUtil.clearCharArray(cmd, ESP32C3_COMMAND_BUFFER_SIZE);
-
-      strcat(cmd, ESP32C3_CONNECT_WIFI);
-      strcat(cmd, "=\"");  
-      strcat(cmd, wifiSettings.clientSsid);
-      strcat(cmd, "\",\"");
-      strcat(cmd, wifiSettings.clientPassword);
-      strcat(cmd, "\"");
-      
-      esp32c3Manager.sendATCommand(cmd);
-      clientWiFiConnectionAttempted = true;
-
-      if(debuggingSettings.debuggingESP32){printWiFiCommandMasked(cmd);}
-
-    }
-
-    if(esp32c3Manager.checkForResponse() == ESP32C3_RESPONSE_READY){
-
-      responseType = esp32c3Manager.getResponseType();
-      arrayUtil.clearCharArray(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-      esp32c3Manager.getResponse(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-
-      switch (responseType)
-      {
-
-      case ESP32C3_RESPONSE_TYPE_OK:
-
-        ++initialESP32ResponsesReceived;
-
-        //if we just completed the WiFi connection step, mark WiFi as connected
-        if(initialESP32ResponsesReceived == initialESP32ExpectedResponses)
-          isClientWiFiConnected = true;
-      
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("OK response received from ESP32C3");}
-
-        break;
-      
-      case ESP32C3_RESPONSE_TYPE_UNKNOWN:
-        resetESP32InitialConfiguration();
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("unknown response received from ESP32C3");}
-        break;
-
-      case ESP32C3_RESPONSE_TYPE_ERROR:
-
-        // Step 1 is WSCLOSE cleanup: ERROR simply means the link was not open — treat as success and proceed
-        if(initialESP32ResponsesReceived == 1) {
-          ++initialESP32ResponsesReceived;
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("WSCLOSE not open (expected), proceeding with init...");}
-        //if the error is about the client wifi connection, we retry the connection
-        } else if(clientWiFiConnectionAttempted && initialESP32ResponsesReceived == initialESP32ExpectedResponses - 1) {
-          clientWiFiConnectionAttempted = false; //reset to retry WiFi connection on the next loop
-          if(!wifiSettings.hotspotEnabled)
-            mobileWebsocketConfigured = false; // also reset the step flag so CWJAP is re-sent at step 6
-        } else
-          resetESP32InitialConfiguration();
-        
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("error response received from ESP32C3, retrying WiFi connection...");}
-        break;
-
-      default:
-        break;
-      }
-    
-    }
-
-    if(initialESP32ResponsesReceived == initialESP32ExpectedResponses){
-
-      initialESP32C3Config = true; //we have received all the expected responses from the ESP32, we can exit the startup execution phase
-
-      // Discard any bytes accumulated in the pending buffer during the init sequence
-      // (e.g. the "WIFI DISCONNECT" intermediate line that AT+CWJAP always emits when
-      // leaving the previous AP association). If left in the buffer they would be
-      // processed by checkForWebSocketMessage() as a live disconnect event, resetting
-      // isClientWiFiConnected and re-triggering the init loop indefinitely.
-      esp32c3Manager.clearPendingBuffer();
-      
-       if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-       if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("ESP32C3 initial configuration completed");}
-
-    }
-      
-    
-  }
-
-  //here return in case the initial configuration is not complete
-  if(!initialESP32C3Config)
-   return;
-
-  if(handleForcedWebSocketClose())
-    return;
-
-  if(isMobileWebSocketConnected && hasWebSocketPingTimedOut(mobileWebSocketLastApiPingMs)) {
-    pendingForcedWebSocketCloseLinkId = 1;
-    pendingForcedWebSocketCloseStartMs = 0;
-    if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-    if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("Mobile websocketPing timeout, forcing close...");}
-    return;
-  }
-
-  const bool hasActiveWebSocketConnection = isMobileWebSocketConnected;
-  const bool isAnyWebSocketConnecting = isMobileWebSocketConnecting;
-  const bool mobileWebSocketReadyToConnect = isClientWiFiConnected
-    && bleScanComplete
-    && mobileServerName[0] != NULL_CHAR;
-
-  if(hasActiveWebSocketConnection)
-    return;
-
-
-  /////////////BLE SCAN (runs once after WiFi connects, before WebSocket; re-runs whenever the no-connection retry flow resumes)////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  if(!hasActiveWebSocketConnection && !isAnyWebSocketConnecting && !bleScanComplete && isClientWiFiConnected && millis() >= mobileWebSocketNextRetryMs) {
-
-    // Timeout guard: if the scan session has been stuck for too long, reset and retry
-    if(bleDeInitRequested && millis() - bleScanSessionStartMs > BLE_SCAN_SESSION_TIMEOUT_MS) {
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("BLE scan session timed out, will retry...");}
-      isBleActive = false;
-      resetMobileBleScanState();
-      return;
-    }
-
-    isBleActive = true; // block websocket comms while BLE scan is in progress
-
-    if(!bleDeInitRequested) {
-      bleScanSessionStartMs = millis();
-      bleDeInitRequested = true;
-      esp32c3Manager.sendATCommand(ESP32C3_BLE_DEINIT);
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("BLE deinit sent to ESP32C3");}
-    }
-
-    if(bleDeInitRequested && !bleDeInitComplete) {
-      if(esp32c3Manager.checkForResponse() == ESP32C3_RESPONSE_READY) {
-        arrayUtil.clearCharArray(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-        esp32c3Manager.getResponse(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-        bleDeInitComplete = true; // proceed regardless of OK or ERROR
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("BLE deinit complete, sending init...");}
-      }
-      return;
-    }
-
-    if(bleDeInitComplete && !bleInitRequested) {
-      bleInitRequested = true;
-      esp32c3Manager.sendATCommand(ESP32C3_BLE_INIT);
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("BLE init sent to ESP32C3");}
-    }
-
-    if(bleInitRequested && !bleInitComplete) {
-      if(esp32c3Manager.checkForResponse() == ESP32C3_RESPONSE_READY) {
-        responseType = esp32c3Manager.getResponseType();
-        arrayUtil.clearCharArray(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-        esp32c3Manager.getResponse(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-        if(responseType == ESP32C3_RESPONSE_TYPE_OK) {
-          bleInitComplete = true;
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("BLE initialized, starting scan...");}
-        } else {
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("BLE init failed, will retry...");}
-          isBleActive = false;
-          resetMobileBleScanState();
-        }
-      }
-      return;
-    }
-
-    if(bleInitComplete && !bleScanParamsRequested) {
-      bleScanParamsRequested = true;
-      esp32c3Manager.sendATCommand(ESP32C3_BLE_SCAN_PARAMS);
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(ESP32C3_BLE_SCAN_PARAMS);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(" sent to ESP32C3");}
-    }
-
-    if(bleScanParamsRequested && !bleScanParamsComplete) {
-      if(esp32c3Manager.checkForResponse() == ESP32C3_RESPONSE_READY) {
-        responseType = esp32c3Manager.getResponseType();
-        arrayUtil.clearCharArray(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-        esp32c3Manager.getResponse(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-        if(responseType == ESP32C3_RESPONSE_TYPE_OK) {
-          bleScanParamsComplete = true;
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("BLE scan parameters configured");}
-        } else {
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("BLE scan parameter setup failed, will retry...");}
-          isBleActive = false;
-          resetMobileBleScanState();
-        }
-      }
-      return;
-    }
-
-    if(bleScanParamsComplete && !bleScanRequested) {
-      char bleScanCmd[ESP32C3_COMMAND_BUFFER_SIZE];
-      arrayUtil.clearCharArray(bleScanCmd, ESP32C3_COMMAND_BUFFER_SIZE);
-      strcat(bleScanCmd, ESP32C3_BLE_SCAN_START);
-      strcat(bleScanCmd, ESP32C3_BLE_SCAN_DURATION_S);
-      strcat(bleScanCmd, ESP32C3_BLE_SCAN_FILTER_NAME);
-      strcat(bleScanCmd, DEFAULT_ESP32C3_BLE_SCAN_NAME_FILTER);
-      strcat(bleScanCmd, ESP32C3_BLE_SCAN_DUPLICATE_CHECK);
-      bleScanRequested = true;
-      esp32c3Manager.sendATCommand(bleScanCmd);
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(bleScanCmd);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(" sent to ESP32C3");}
-    }
-
-    if(bleScanRequested && !bleScanComplete) {
-      if(esp32c3Manager.checkForBLEScanResponseAndCaptureName(debuggingSettings.debuggingESP32, mobileServerName, ESP32C3_MOBILE_SERVER_NAME_BUFFER_SIZE, DEFAULT_ESP32C3_BLE_SCAN_NAME_FILTER) == ESP32C3_RESPONSE_READY) {
-        bleScanComplete = true;
-        isBleActive = false;
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-        if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("BLE scan complete");}
-        if(mobileServerName[0] == NULL_CHAR) {
-          // No mobile server found in this scan — reset scan state to retry on next iterations
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("No mobile server found in BLE scan, retrying...");}
-          resetMobileBleScanState();
-        } else {
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint("Mobile server name found: ");}
-          if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(mobileServerName);}
-        }
-      }
-      return;
-    }
-
-    return; // still waiting for WiFi or scan step to progress
-  }
-
-
-  /////////////MOBILE WEBSOCKET CONNECTION (mobileWebsocketConnection)////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  //if we are not connected to the mobile websocket server and we are not trying to connect, we try to connect here
-  //we require a valid mobile server name from the BLE scan before attempting the connection
-  if(!hasActiveWebSocketConnection && !isAnyWebSocketConnecting && mobileWebSocketReadyToConnect){
-
-    char mobileCmd [ESP32C3_COMMAND_BUFFER_SIZE];
-    arrayUtil.clearCharArray(mobileCmd, ESP32C3_COMMAND_BUFFER_SIZE);
-
-    // replace underscores with dots to convert the BLE server name to an IP address
-    char mobileServerIp[ESP32C3_MOBILE_SERVER_NAME_BUFFER_SIZE];
-    arrayUtil.clearCharArray(mobileServerIp, ESP32C3_MOBILE_SERVER_NAME_BUFFER_SIZE);
-
-    if(!buildMobileServerIpFromBleName(mobileServerName, mobileServerIp, sizeof(mobileServerIp)) || !isValidIPv4Address(mobileServerIp)) {
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint("Invalid mobile server name/IP from BLE scan: suffix=");}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(mobileServerName);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(" parsedIp=");}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(mobileServerIp);}
-
-      resetMobileBleScanState();
-      return;
-    }
-
-    strcat(mobileCmd, ESP32C3_OPEN_MOBILE_WEBSOCKET);
-    strcat(mobileCmd, ",\"");
-    strcat(mobileCmd, DEFAULT_ESP32C3_WEBSOCKET_SERVER_PREFIX);
-    strcat(mobileCmd, mobileServerIp);
-    strcat(mobileCmd, DEFAULT_ESP32C3_MOBILE_WEBSOCKET_SERVER_SUFFIX);
-    strcat(mobileCmd, "\"");
-
-    //attempt here to connect to mobile websocket
-    if(esp32c3Manager.sendATCommand(mobileCmd)) {
-      isMobileWebSocketConnecting = true;
-      mobileWebSocketConnectingStartMs = millis();
-
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint("Mobile WebSocket open command: ");}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(mobileCmd);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint("Connecting to Mobile WebSocket: ");}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(DEFAULT_ESP32C3_WEBSOCKET_SERVER_PREFIX);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(mobileServerIp);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(DEFAULT_ESP32C3_MOBILE_WEBSOCKET_SERVER_SUFFIX);}
-    }
-
-  }
-
-  //here we check if there is a response from the ESP32C3 about mobile websocket connection
-  if(!isMobileWebSocketConnected && isMobileWebSocketConnecting){
-
-    if(millis() - mobileWebSocketConnectingStartMs > MOBILE_WEBSOCKET_CONNECTING_TIMEOUT_MS){
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("Mobile WebSocket connection attempt timed out, re-scanning BLE...");}
-      isMobileWebSocketConnecting = false;
-      resetMobileBleScanState();
-    }else if(esp32c3Manager.checkForResponse() == ESP32C3_RESPONSE_READY){
-
-      responseType = esp32c3Manager.getResponseType();
-      arrayUtil.clearCharArray(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-      esp32c3Manager.getResponse(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-
-    switch (responseType)
-    {
-    case ESP32C3_RESPONSE_TYPE_OK:
-
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("Mobile WebSocket connection established");}
-
-      isMobileWebSocketConnected = true;
-      isMobileWebSocketConnecting = false;
-      mobileWebSocketLastApiPingMs = millis();
-
-      break;
-
-    case ESP32C3_RESPONSE_TYPE_ERROR:
-    {
-      char lastEsp32IntermediateResponse[ESP32C3_RESPONSE_BUFFER_SIZE];
-      char parsedMobileServerIp[ESP32C3_MOBILE_SERVER_NAME_BUFFER_SIZE];
-      arrayUtil.clearCharArray(lastEsp32IntermediateResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-      arrayUtil.clearCharArray(parsedMobileServerIp, ESP32C3_MOBILE_SERVER_NAME_BUFFER_SIZE);
-      bool hasIntermediateResponse = esp32c3Manager.getLastIntermediateResponse(lastEsp32IntermediateResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-      bool mobileLinkAlreadyEstablished = hasIntermediateResponse && esp32ResponseReportsAlreadyEstablished(lastEsp32IntermediateResponse);
-      buildMobileServerIpFromBleName(mobileServerName, parsedMobileServerIp, sizeof(parsedMobileServerIp));
-
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint("Error while establishing Mobile WebSocket connection, re-scanning BLE: ");}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(tempResponse);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint("Mobile WSOPEN target suffix=");}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(mobileServerName);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(" parsedIp=");}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(parsedMobileServerIp);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(" url=");}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(DEFAULT_ESP32C3_WEBSOCKET_SERVER_PREFIX);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(parsedMobileServerIp);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(DEFAULT_ESP32C3_MOBILE_WEBSOCKET_SERVER_SUFFIX);}
-      if(debuggingSettings.debuggingESP32 && hasIntermediateResponse){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32 && hasIntermediateResponse){serialManager.USBSerialPrint("Last ESP32 line before WSOPEN ERROR: ");}
-      if(debuggingSettings.debuggingESP32 && hasIntermediateResponse){serialManager.USBSerialPrintln(lastEsp32IntermediateResponse);}
-      if(debuggingSettings.debuggingESP32 && !hasIntermediateResponse){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32 && !hasIntermediateResponse){serialManager.USBSerialPrintln("No intermediate ESP32 line was captured before WSOPEN ERROR");}
-      if(debuggingSettings.debuggingESP32 && mobileLinkAlreadyEstablished){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32 && mobileLinkAlreadyEstablished){serialManager.USBSerialPrintln("ESP32 reports mobile link 1 is still established; scheduling forced WSCLOSE=1 before retry");}
-      if(debuggingSettings.debuggingESP32 && !mobileLinkAlreadyEstablished){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32 && !mobileLinkAlreadyEstablished){serialManager.USBSerialPrintln("Mobile WSOPEN failed; forcing WSCLOSE=1 to recover any stale ESP32 link state before retry");}
-
-      isMobileWebSocketConnected = false;
-      isMobileWebSocketConnecting = false;
-
-      // Always force-close link 1 on WSOPEN error so stale ESP32 link state
-      // cannot block future reconnect attempts.
-      scheduleForcedWebSocketClose(1);
-
-      break;
-    }
-
-    default:
-      break;
-    }
-
-    }
-
-  }
-
-
-}
-
-void handleESP32Comms(){
-
-  // Do not consume serial bytes while a BLE scan is in progress (shares the same serial port)
-  if(isBleActive)
-    return;
-
-  // Always drain the serial buffer and process spontaneous ESP32 events (WiFi disconnect,
-  // WebSocket close) even when mobile is not connected — otherwise the pending buffer fills
-  // up and WiFi-disconnect events are never detected during the BLE scan pursuit phase.
-  esp32c3Manager.setWebSocketRxDebug(debuggingSettings.debuggingESP32 && isFileTransferInProgress); // diagnostic: log WS frame reassembly only during an upload
-  int wsMessageResult = esp32c3Manager.checkForWebSocketMessage();
-  const bool bufferedWebSocketEvent = esp32c3Manager.wasLastWebSocketMessageBuffered();
-
-  if(wsMessageResult == ESP32C3_MOBILE_WEBSOCKET_MESSAGE_RECEIVED && isMobileWebSocketConnected){
-
-    // Mobile websocket message (link_id=1)
-    arrayUtil.clearCharArray(mobileWebSocketMessageBuffer, ESP32C3_WEBSOCKET_MESSAGE_BUFFER_SIZE);
-
-    if(esp32c3Manager.getWebSocketMessagePayload(mobileWebSocketMessageBuffer, ESP32C3_WEBSOCKET_MESSAGE_BUFFER_SIZE)){
-
-      handleMobileWebsocketMessage();
-
-    }else{
-
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("Error while parsing Mobile WebSocket message payload from ESP32C3");}
-
-    }
-
-  }else if(wsMessageResult == ESP32C3_MOBILE_WEBSOCKET_DISCONNECTED && isMobileWebSocketConnected){
-
-    if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-    if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(bufferedWebSocketEvent ? "Buffered WS_CLOSED:1 observed while AT command was pending" : "Live WS_CLOSED:1 observed from ESP32C3");}
-    if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("");}
-
-    isMobileWebSocketConnected = false;
-    isMobileWebSocketConnecting = false;
-    mobileWebSocketLastApiPingMs = 0;
-    esp32c3Manager.clearPendingBuffer(); // drop any partially-reassembled message so it can't carry into the next connection
-    restartWebSocketConnectionPursuitIfIdle();
-
-    if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-    if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("Mobile WebSocket connection lost, resuming mobile connection attempts");}
-
-  }else if(wsMessageResult == ESP32C3_WIFI_DISCONNECTED){
-
-    resetESP32WiFiConnection();
-
-    if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-    if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("WiFi disconnected, will retry connection");}
-
-  }
-
-}
-
-void handleMobileWebsocketMessage(){
-
-  mobileWebSocketLastApiPingMs = millis();
-
-  mobileWebSocketMessageBufferPos = 0;
-
-  while(mobileWebSocketMessageBuffer[mobileWebSocketMessageBufferPos] != NULL_CHAR && mobileWebSocketMessageBufferPos < ESP32C3_WEBSOCKET_MESSAGE_BUFFER_SIZE){
-
-    bufferCharUSB = mobileWebSocketMessageBuffer[mobileWebSocketMessageBufferPos];
-    ++mobileWebSocketMessageBufferPos;
-
-    if (bufferCharUSB == NEWLINE) {
-
-      handleMobileWebsocketLine();
-      resetMobileWebSocketMessageBuffer();
-
-    }
-
-  }
-
-}
 
 // ─── Height map Z compensation ─────────────────────────────────────────────
 
@@ -6595,13 +5950,18 @@ void resetFileDownloadState() {
 
 }
 
+// Single point where a JSON response leaves CPU-B. The transport is chosen
+// from currentInputSource, so adding the W5500 Ethernet path later means
+// adding a branch here and nothing else.
 bool sendJsonResponse() {
 
-  if (currentInputSource == INPUT_SOURCE_MOBILE_WEBSOCKET)
-    return esp32c3Manager.sendWebSocketMessage(jsonResponseCharBuffer, 1);
-  else {
-    serialManager.USBSerialPrintln(jsonResponseCharBuffer);
-    return true;
+  switch (currentInputSource) {
+
+    case INPUT_SOURCE_USB:
+    default:
+      serialManager.USBSerialPrintln(jsonResponseCharBuffer);
+      return true;
+
   }
 
 }
@@ -8337,30 +7697,6 @@ void handleUSBLine() {
   
 }
 
-void handleMobileWebsocketLine() {
-
-  if (debuggingSettings.debuggingBase) { serialManager.USBSerialPrintln("Line read from Mobile WebSocket"); }
-  if (debuggingSettings.debuggingBase) { serialManager.USBSerialPrint("MobileWebSocketLineBuffer: "); }
-  if (debuggingSettings.debuggingBase) { serialManager.USBSerialPrintln(mobileWebSocketMessageBuffer); }
-
-  currentInputSource = INPUT_SOURCE_MOBILE_WEBSOCKET;
-
-  receivedJsonBuffer.clear();
-  DeserializationError error = deserializeJson(receivedJsonBuffer, mobileWebSocketMessageBuffer);
-
-  if(error == DeserializationError::Ok) {
-
-    handleJson();
-
-  }else{
-
-    handleRawPassthroughLine(mobileWebSocketMessageBuffer);
-
-  }
-
-  clearResponseJsonBuffer();
-
-}
 
 void handleCPUALine() {
 
@@ -8695,7 +8031,6 @@ void handleJson(){
     }
 
     timerUtil.resetWebSocketPingTimer();
-    resetCurrentWebSocketPingWatchdog();
 
     break;
 
@@ -12741,8 +12076,6 @@ void handleJsonSet(){
 
         }
 
-      //here we apply the new settings by resetting the ESP32C3 initial configuration
-      resetESP32InitialConfiguration();
 
     }else{
 
@@ -13275,8 +12608,6 @@ void handleJsonSet(){
 
       }
 
-      //apply the new hotspot settings to the ESP32C3 on the fly
-      resetESP32InitialConfiguration();
 
     break;
 
@@ -15011,75 +14342,11 @@ void writeMACROLine(const char _array[]) {
 }
 
 
-void resetMobileWebSocketMessageBuffer() {
-
-  arrayUtil.clearCharArray(mobileWebSocketMessageBuffer, ESP32C3_WEBSOCKET_MESSAGE_BUFFER_SIZE);
-  mobileWebSocketMessageBufferPos = 0;
-
-}
-
-void resetMobileBleScanState() {
-
-  bleDeInitRequested = false;
-  bleDeInitComplete = false;
-  bleInitRequested = false;
-  bleInitComplete = false;
-  bleScanParamsRequested = false;
-  bleScanParamsComplete = false;
-  bleScanRequested = false;
-  bleScanComplete = false;
-  arrayUtil.clearCharArray(mobileServerName, ESP32C3_MOBILE_SERVER_NAME_BUFFER_SIZE);
-  mobileWebSocketNextRetryMs = millis() + MOBILE_WEBSOCKET_RETRY_INTERVAL_MS;
-  mobileWebSocketLastApiPingMs = 0;
-
-  // Reset any pending AT command that may never have received a response,
-  // so that the next sendATCommand() call is not silently blocked.
-  esp32c3Manager.abortPendingCommand();
-
-}
-
-void restartWebSocketConnectionPursuitIfIdle() {
-
-  if(isMobileWebSocketConnected)
-    return;
-
-  resetMobileBleScanState();
-  mobileWebSocketNextRetryMs = 0;
-
-}
 
 
-void resetESP32WiFiConnection() {
 
-  isClientWiFiConnected = false;
-  isMobileWebSocketConnected = false;
-  isMobileWebSocketConnecting = false;
-  isBleActive = false;
-  pendingForcedWebSocketCloseLinkId = -1;
-  pendingForcedWebSocketCloseStartMs = 0;
-  clientWiFiConnectionAttempted = false;
 
-  // Resume the ESP32 setup flow at the WiFi join step so a disconnect
-  // triggers a fresh AT+CWJAP attempt instead of leaving the state machine idle.
-  initialESP32ResponsesReceived = initialESP32ExpectedResponses - 1;
-  // When hotspot is disabled, CWJAP is sent at step 4 (gated by mobileWebsocketConfigured).
-  // Reset that flag so the step fires again on reconnect.
-  if(!wifiSettings.hotspotEnabled)
-    mobileWebsocketConfigured = false;
-  initialESP32C3Config = false;
 
-  resetMobileBleScanState();
-
-}
-
-bool hasWebSocketPingTimedOut(unsigned long lastPingMs) {
-
-  if(lastPingMs == 0)
-    return false;
-
-  return (millis() - lastPingMs) >= WEBSOCKET_API_PING_TIMEOUT_MS;
-
-}
 
 bool hasSerialPingTimedOut() {
 
@@ -15100,106 +14367,9 @@ void resetCurrentSerialPingWatchdog() {
 
 }
 
-void resetCurrentWebSocketPingWatchdog() {
 
-  if(currentInputSource == INPUT_SOURCE_MOBILE_WEBSOCKET)
-    mobileWebSocketLastApiPingMs = millis();
 
-}
 
-bool handleForcedWebSocketClose() {
-
-  if(pendingForcedWebSocketCloseLinkId < 0)
-    return false;
-
-  if(pendingForcedWebSocketCloseStartMs == 0) {
-    char closeCmd[32];
-    arrayUtil.clearCharArray(closeCmd, sizeof(closeCmd));
-    strcat(closeCmd, ESP32C3_CLOSE_WEBSOCKET);
-    strcat(closeCmd, "1");
-
-    if(esp32c3Manager.sendATCommand(closeCmd)) {
-      pendingForcedWebSocketCloseStartMs = millis();
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint("Forced websocket close command sent: ");}
-      if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln(closeCmd);}
-    }
-
-    return true;
-  }
-
-  if(millis() - pendingForcedWebSocketCloseStartMs > ESP32C3_WEBSOCKET_FORCE_CLOSE_TIMEOUT_MS) {
-    esp32c3Manager.abortPendingCommand();
-    finalizeForcedWebSocketClose();
-    if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-    if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrintln("Forced websocket close command timed out; local state reset");}
-    return true;
-  }
-
-  if(esp32c3Manager.checkForResponse() == ESP32C3_RESPONSE_READY) {
-    int responseType = esp32c3Manager.getResponseType();
-    char tempResponse[ESP32C3_RESPONSE_BUFFER_SIZE];
-    arrayUtil.clearCharArray(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-    esp32c3Manager.getResponse(tempResponse, ESP32C3_RESPONSE_BUFFER_SIZE);
-
-    finalizeForcedWebSocketClose();
-
-    if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint(FROM_CPUB);}
-    if(debuggingSettings.debuggingESP32){serialManager.USBSerialPrint("Forced websocket close completed with response: ");}
-    if(debuggingSettings.debuggingESP32){
-      if(responseType == ESP32C3_RESPONSE_TYPE_OK)
-        serialManager.USBSerialPrintln("OK");
-      else if(responseType == ESP32C3_RESPONSE_TYPE_ERROR)
-        serialManager.USBSerialPrintln("ERROR");
-      else
-        serialManager.USBSerialPrintln(tempResponse);
-    }
-  }
-
-  return true;
-
-}
-
-//Debug print of an AT command that carries a WiFi password (AT+CWSAP / AT+CWJAP, password in the second
-//quoted field), with the password replaced by asterisks so it never ends up in console logs.
-void printWiFiCommandMasked(const char* atCommand) {
-
-  serialManager.USBSerialPrint(FROM_CPUB);
-
-  int quoteCount = 0;
-
-  for (int i = 0; atCommand[i] != NULL_CHAR; ++i) {
-
-    if (atCommand[i] == '"') {
-      ++quoteCount;
-      if (quoteCount == 3)
-        serialManager.USBSerialPrint("\"********");
-      else if (quoteCount != 4)
-        serialManager.USBSerialWrite((byte)atCommand[i]);
-      else
-        serialManager.USBSerialWrite((byte)'"');
-      continue;
-    }
-
-    if (quoteCount != 3)
-      serialManager.USBSerialWrite((byte)atCommand[i]);
-  }
-
-  serialManager.USBSerialPrintln(" sent to ESP32C3");
-}
-
-void finalizeForcedWebSocketClose() {
-
-  isMobileWebSocketConnected = false;
-  isMobileWebSocketConnecting = false;
-  mobileWebSocketLastApiPingMs = 0;
-
-  restartWebSocketConnectionPursuitIfIdle();
-
-  pendingForcedWebSocketCloseLinkId = -1;
-  pendingForcedWebSocketCloseStartMs = 0;
-
-}
 
 void resetCPUALine() {
 
@@ -15691,28 +14861,3 @@ void blinkLed() {
   }
 }
 
-void resetESP32InitialConfiguration() {
-
-  initialESP32ExpectedResponses = wifiSettings.hotspotEnabled ? 6 : 5;
-
-  // If an AT command is in-flight (e.g. BLE scan), abort it now
-  // so sendATCommand() is not silently blocked throughout the re-init sequence.
-  esp32c3Manager.abortPendingCommand();
-
-  atRequested = false;
-  wsLink1CloseRequested = false;
-  accessPointModeRequested = false;
-  startAccessPoint = false;
-  mobileWebsocketConfigured = false;
-  clientWiFiConnectionAttempted = false;
-  initialESP32C3Config = false;
-  isMobileWebSocketConnected = false;
-  isMobileWebSocketConnecting = false;
-  isClientWiFiConnected = false;
-  isBleActive = false;
-
-  resetMobileBleScanState();
-
-  initialESP32ResponsesReceived = 0;
-
-}
