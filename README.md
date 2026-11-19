@@ -67,9 +67,9 @@ Specifications
 The Machine in Operation
 --
 
-<div align="center"><img src="media/OISK_Metal_3D_Printer_Process_Chamber.jpg" width="80%"></div>
+<img src="media/OISK_Metal_3D_Printer_Chamber_Gantry.jpg" width="49%"> <img src="media/OISK_Metal_3D_Printer_Build_Bed.jpg" width="49%">
 
-<div align="center"><i>The process chamber: gantry, laser head, build bed, powder reservoir and recoater</i></div>
+<div align="center"><i>The process chamber with the XY gantry and the 60 W blue diode laser head (left) and the build bed with the reserve and printing cylinders, the 316L powder and the recoater blade (right)</i></div>
 
 <br>
 
@@ -249,3 +249,7 @@ Hardware design, CAD and PCB files, BOM, settings and other technical or design 
 Assembly manual, pictures, videos, presentations, description text and other type of media are released under the following license:
 
 - Creative-Commons-Attribution-ShareAlike 4.0 International - **[CC BY-SA 4.0](LICENSE_CC_BY_SA_4.0.txt)**
+
+The CPU-A firmware in [firmware/CPU-A](firmware/CPU-A) is a vendored copy of [grblHAL](https://github.com/grblHAL) and keeps its own upstream licensing:
+
+- GNU General Public License v3.0 or later - **[GPL-3.0-or-later](LICENSES/GPL-3.0-or-later.txt)**, see [firmware/CPU-A/COPYING](firmware/CPU-A/COPYING) for the components inside it under BSD-3-Clause, MIT and the FatFs license

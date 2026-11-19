@@ -32,3 +32,22 @@ Files:
     LICENSE_CERN_OHL_S_V2.txt
 Copyright: NONE
 License: CC0-1.0
+
+#########################
+# Vendored firmware sources
+#########################
+
+# grblHAL RP2040/RP2350 driver and plugins, vendored from https://github.com/grblHAL
+# for CPU-A of the Control Board V2. Kept under its own upstream licensing, NOT
+# under the CC-BY-SA-4.0 that applies to the rest of firmware/.
+Files: firmware/CPU-A/**
+Copyright:
+    Terje Io and the grblHAL contributors
+    Daniele Ingrassia <daniele@inmachines.net>
+License: GPL-3.0-or-later
+Comment:
+    See firmware/CPU-A/COPYING for the full upstream notice. Individual files
+    inside this tree carry their own licenses: littlefs, the WIZnet W5x00 low
+    level driver and parts of the USB serial support are BSD-3-Clause, FatFs is
+    under the FatFs license, and some flash support is MIT (MicroPython).
+    Files added for the OISK Metal 3D Printer are marked in their own headers.
