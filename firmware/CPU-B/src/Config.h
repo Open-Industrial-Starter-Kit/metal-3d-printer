@@ -19,7 +19,7 @@
 #define DEFAULT_DEBUGGING_MACRO_BUFFER 0
 #define DEFAULT_DEBUGGING_SD_CARD 1
 #define DEFAULT_DEBUGGING_JSON 1
-#define DEFAULT_DEBUGGING_ESP32 1
+#define DEFAULT_DEBUGGING_NETWORK 1
 #define DEFAULT_DEBUGGING_EEPROM 1
 #define DEFAULT_DEBUGGING_JOB 0
 #define DEFAULT_BENCHMARKING 0
@@ -34,7 +34,7 @@ typedef struct {
   bool debuggingMacroBuffer;
   bool debuggingSDCard;
   bool debuggingJson;
-  bool debuggingESP32;
+  bool debuggingNetwork;
   bool debuggingEEPROM;
   bool debuggingJob;
   bool benchmarking;
@@ -66,7 +66,7 @@ typedef struct {
 #define SERIAL_BUFFER_SIZE 5000
 #define USB_BAUD_RATE 2000000
 #define CPUA_BAUD_RATE 115200
-// Serial2 drove the ESP32-C3 on the Piccola CNC. Not fitted on this board:
+// Serial2 drove an external WiFi module. Not fitted on this board:
 // GP8/GP9 are the RS-422 transceiver GM490_DI/GM490_DO.
 // The distance laser sensor is not fitted either, and its old UART pins
 // GP4/GP5 are the serial link to CPU-C. Its direction pin is parked on a
@@ -279,7 +279,6 @@ typedef struct {
 // long (lost release message or dropped link), the firmware auto-cancels the jog (0x85).
 // Keep this comfortably above the app's jog-step streaming interval to avoid false stops.
 #define JOG_KEEPALIVE_TIMEOUT_MS 350
-#define ESP32C3_WEBSOCKET_FORCE_CLOSE_TIMEOUT_MS 2000
 #define FILE_TRANSFER_CHUNK_TIMEOUT_MS 5000
 #define FILE_DOWNLOAD_CHUNK_TIMEOUT_MS 25000
 // startFileDownload only counts the file's lines (for totalFileLines) when the file is at most this
@@ -316,48 +315,27 @@ typedef struct {
 //EEPROM
 #define EEPROM_SIZE 2048
 
-//ESP32C3
-#define ESP32C3_CHECK_DELAY 100
-#define ESP32C3_CONNECT_WIFI_TIMEOUT_S "5"
-#define DEFAULT_ENABLE_ESP32_PASSTHROUGH true
-#define ESP32C3_RESTART_DELAY_MS 3000
-#define ESP32C3_WEBSOCKET_SEND_TIMEOUT_MS 4000
-#define ESP32C3_RESPONSE_BUFFER_SIZE 512
-#define ESP32C3_WEBSOCKET_MESSAGE_BUFFER_SIZE 8192
-#define ESP32C3_COMMAND_BUFFER_SIZE 600
-#define ESP32C3_AP_MAX_CONNECTIONS 1
-#define ESP32C3_AP_CHANNEL "1"
-#define ESP32C3_AP_ENCRYPTION "3"
-#define DEFAULT_ESP32C3_AP_SSID_PREFIX "PiccolaCNC_"
-#define DEFAULT_ESP32C3_AP_PASSWORD "minicnc123"
+//NETWORK
+// This machine has no radio. The network transport is the W5500 Ethernet
+// controller on SPI0, which is not implemented yet.
+//
+// The NetworkSettings block below is kept even though nothing uses it at
+// runtime: every EEPROM region is addressed as a running sum that starts with
+// sizeof(NetworkSettings), so dropping it would move every other settings
+// block and invalidate what is already stored on a board. It is the natural
+// place for the Ethernet settings (DHCP, static IP, port) when those land.
+#define NETWORK_CHECK_DELAY 100
+#define DEFAULT_NETWORK_RESPONSE_BUFFER_SIZE 512
+#define DEFAULT_NETWORK_AP_SSID_PREFIX "MetalPrinter_"
+#define DEFAULT_NETWORK_AP_PASSWORD "metalprinter"
 #define DEFAULT_HOTSPOT_ENABLED true
-#define DEFAULT_ESP32C3_CLIENT_SSID "Client SSID"
-#define DEFAULT_ESP32C3_CLIENT_PASSWORD "Client Password"
-#define DEFAULT_ESP32C3_WEBSOCKET_SERVER_PREFIX "ws://"
-#define DEFAULT_ESP32C3_MOBILE_WEBSOCKET_SERVER_SUFFIX ":8765"
-#define ESP32C3_WEBSOCKET_MESSAGE_PREFIX "WS_DATA:"
-#define ESP32C3_WEBSOCKET_CLOSED_PREFIX "WS_CLOSED:"
-#define ESP32C3_WEBSOCKET_MESSAGE_MINIMUN_LENGTH 6
-#define ESP32C3_BLE_SCAN_DURATION_S "3"
-#define DEFAULT_ESP32C3_BLE_SCAN_NAME_FILTER "minicnc_"
-#define MOBILE_WEBSOCKET_RETRY_INTERVAL_MS 4000
-#define MOBILE_WEBSOCKET_CONNECTING_TIMEOUT_MS 10000
-#define BLE_SCAN_SESSION_TIMEOUT_MS 10000
-
-//remember to do 
-//AT+CWAUTOCONN=0  
-//AT+UART_DEF=2000000,8,1,0,1 
-//ATE0  
-//AT+CWAUTOCONN=0
-//as general config of the ESP32C3
-//to disable the auto connection to wifi networks, since we will manage the wifi connection from the CPUB and we don't want the ESP32C3 to automatically connect to a wifi network and interfere with our management of the wifi connection
-
- 
+#define DEFAULT_NETWORK_CLIENT_SSID "Client SSID"
+#define DEFAULT_NETWORK_CLIENT_PASSWORD "Client Password"
 
 #define ACCESS_POINT_SSID_CHARS 100
 #define ACCESS_POINT_PASSWORD_CHARS 100
 
-//wifi settings struct
+//network settings struct, see the NETWORK note above
 typedef struct {
 
   char apSsid[ACCESS_POINT_SSID_CHARS];
@@ -367,7 +345,7 @@ typedef struct {
   bool hotspotEnabled;
   char checkChar;;
 
-} WifiSettings;
+} NetworkSettings;
 
 //Sync actions
 //definition of the struct that will keep track of the sync actions
@@ -395,7 +373,7 @@ typedef struct {
 #define BLUE_LED_OUTPUT_PIN 33
 #define BLINK_LED_PIN 25
 // The axis enable mirrors, the laser sensor enable and the input monitor
-// belong to Piccola CNC hardware that this machine does not have. They are
+// belong to CNC router hardware that this machine does not have. They are
 // parked on pins the Control Board V2 leaves spare (BGPn / GPIOn_B) so the
 // code that still writes them cannot fight the Ethernet, SPI1 or RS-485
 // nets that sit on their original pins.
@@ -538,7 +516,7 @@ typedef struct {
 //Machine name
 #define MACHINE_NAME_MAX_CHARS 30
 #define MACHINE_NAME_CHARS (MACHINE_NAME_MAX_CHARS + 1)
-#define DEFAULT_MACHINE_NAME "Piccola CNC #1"
+#define DEFAULT_MACHINE_NAME "Metal 3D Printer #1"
 
 //Tool length probe
 // Reference Z: machine Z coordinate of the probe plate top surface when resting on the bed,

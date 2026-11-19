@@ -11,7 +11,7 @@ void SerialManager::init() {
     
     Serial1.setFIFOSize(SERIAL_BUFFER_SIZE);
 
-    // Serial2 drove the ESP32-C3 on GP8/GP9. On the Control Board V2 those pins
+    // Serial2 drove an external WiFi module on GP8/GP9. On this board those pins
     // are the RS-422 transceiver GM490_DI/GM490_DO, so the port is left alone.
     
 }

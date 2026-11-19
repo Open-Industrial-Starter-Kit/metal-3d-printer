@@ -49,10 +49,6 @@ JsonValueCommandType JsonUtil::getJsonCommandType(JsonDocument json) {
             return ENABLE_CPUA_PASSTHROUGH;
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_DISABLE_CPUA_PASSTHROUGH_STR) == 0)
             return DISABLE_CPUA_PASSTHROUGH;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_ENABLE_ESP32_PASSTHROUGH_STR) == 0)
-            return ENABLE_ESP32_PASSTHROUGH;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_DISABLE_ESP32_PASSTHROUGH_STR) == 0)
-            return DISABLE_ESP32_PASSTHROUGH;
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_MOVE_TO_ROTARY_POSITION_MACRO_STR) == 0)
             return MOVE_TO_ROTARY_POSITION_MACRO;
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_INSTALL_ROTARY_MACRO_STR) == 0)
@@ -218,8 +214,6 @@ JsonValueGetType JsonUtil::getJsonGetType(JsonDocument json) {
             return GET_CURRENT_SPINDLE_RPM;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_CPUA_PASSTHROUGH_STATUS_STR) == 0)
             return GET_CPUA_PASSTHROUGH_STATUS;
-        else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_ESP32_PASSTHROUGH_STATUS_STR) == 0)
-            return GET_ESP32_PASSTHROUGH_STATUS;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_JSON_SETTINGS_STR) == 0)
             return GET_JSON_SETTINGS;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_FEED_RATE_OVERRIDE_STR) == 0)
@@ -293,8 +287,8 @@ JsonValueSetType JsonUtil::getJsonSetType(JsonDocument json) {
             return SET_DEBUGGING_SD_CARD;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_JSON_STR) == 0)
             return SET_DEBUGGING_JSON;
-        else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_ESP32_STR) == 0)
-            return SET_DEBUGGING_ESP32;
+        else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_NETWORK_STR) == 0)
+            return SET_DEBUGGING_NETWORK;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_EEPROM_STR) == 0)
             return SET_DEBUGGING_EEPROM;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_JOB_STR) == 0)

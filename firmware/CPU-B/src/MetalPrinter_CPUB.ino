@@ -51,7 +51,6 @@ bool startUpExection = true;
 bool spindleEnabled = false;
 bool isManualSpindleRampActive = false;
 bool enableCPUAPassthrough = DEFAULT_ENABLE_CPUA_PASSTHROUGH;
-bool enableESP32Passthrough = DEFAULT_ENABLE_ESP32_PASSTHROUGH;
 bool initialHoming = DEFAULT_INITIAL_HOMING;
 float toolLength = 0.0f;
 
@@ -96,8 +95,6 @@ uint8_t distanceLaserSensorInitRetries = 0;
 bool isRotaryAxisConnected = false;
 
 //mobileWebsocketConnection status
-bool isMobileWebSocketConnected = false;
-bool isMobileWebSocketConnecting = false;
 bool isClientWiFiConnected = false;
 bool isClientWiFiConnecting = false;
 
@@ -192,30 +189,6 @@ unsigned long jobStartMs = 0;
 bool isMacroRunning = false;
 int macroLineIndex = 0;
 
-//ESP32C3 initial config variables
-bool initialESP32C3Config = false;
-bool atRequested = false;
-bool wsLink1CloseRequested = false; // close any previously-open WebSocket link 1 before reconfiguring
-bool accessPointModeRequested = false;
-bool startAccessPoint = false;
-bool clientWiFiConnectionAttempted = false;
-
-bool mobileWebsocketConfigured = false;
-
-//BLE scan variables
-bool bleDeInitRequested = false;
-bool bleDeInitComplete = false;
-bool bleInitRequested = false;
-bool bleInitComplete = false;
-bool bleScanParamsRequested = false;
-bool bleScanParamsComplete = false;
-bool bleScanRequested = false;
-bool bleScanComplete = false;
-
-
-int initialESP32ResponsesReceived = 0;
-int initialESP32ExpectedResponses = 6; // 6 with hotspot enabled, 5 without (1 WSCLOSE cleanup + WebSocket config + WiFi steps)
-
 //other variables
 char bufferCharUSB = NULL_CHAR;
 char bufferCharCPUA = NULL_CHAR;
@@ -226,20 +199,11 @@ char gcodeLineBuffer[LINE_BUFFER_CHARACTERS];
 char openedReadFileName[SD_MAX_FILE_NAME_LENGTH];
 char transferFileName[SD_MAX_FILE_NAME_LENGTH];
 char downloadFileName[SD_MAX_FILE_NAME_LENGTH];
-char mobileWebSocketMessageBuffer[ESP32C3_WEBSOCKET_MESSAGE_BUFFER_SIZE];
-char mobileServerName[ESP32C3_MOBILE_SERVER_NAME_BUFFER_SIZE] = {0};
-bool isBleActive = false;
-unsigned long mobileWebSocketNextRetryMs = 0;
-unsigned long mobileWebSocketConnectingStartMs = 0;
-unsigned long bleScanSessionStartMs = 0;
 unsigned long serialLastApiPingMs = 0;
-unsigned long mobileWebSocketLastApiPingMs = 0;
 unsigned long fileTransferLastChunkActivityMs = 0;
 unsigned long fileDownloadLastChunkActivityMs = 0;
 unsigned long manualSpindleRampLastStepMs = 0;
 unsigned long manualSpindleRampIntervalMs = 0;
-int pendingForcedWebSocketCloseLinkId = -1;
-unsigned long pendingForcedWebSocketCloseStartMs = 0;
 uint16_t transferFileYear = 0;
 uint8_t transferFileMonth = 0;
 uint8_t transferFileDay = 0;
@@ -297,7 +261,7 @@ float wcoY = 0.0;
 float wcoZ = 0.0;
 float wcoA = 0.0;
 
-WifiSettings wifiSettings;
+NetworkSettings networkSettings;
 DebuggingSettings debuggingSettings;
 JsonSettings jsonSettings;
 MachineNameSettings machineNameSettings;
@@ -614,7 +578,6 @@ uint8_t pointCloudFileSecond = 0;
 //COUNTERS
 int USBLinePos = 0;
 int CPUALinePos = 0;
-int mobileWebSocketMessageBufferPos = 0;
 //when we are executing the macros for the tool change, we need wait for an ok from GRBL before proceeding further
 //this counter keeps the number of oks we need to wait before sending the next line
 int waitForOk = 0;
@@ -2066,7 +2029,7 @@ bool savePointCloudPlyHeader() {
   char line[128];
   sdCardManager.writeTextLine("ply");
   sdCardManager.writeTextLine("format ascii 1.0");
-  sdCardManager.writeTextLine("comment AkkuraMini point cloud");
+  sdCardManager.writeTextLine("comment OISK Metal 3D Printer point cloud");
   snprintf(line, sizeof(line), "comment file=%s density=%s spacingXY=%.3f gridX=%u gridY=%u",
     pointCloudFilename, pointCloudDensityStr, pointCloudSpacingMm,
     pointCloudGridPointsX, pointCloudGridPointsY);
@@ -2636,7 +2599,7 @@ void setup() {
   debuggingSettings.debuggingMacroBuffer = DEFAULT_DEBUGGING_MACRO_BUFFER;
   debuggingSettings.debuggingSDCard = DEFAULT_DEBUGGING_SD_CARD;
   debuggingSettings.debuggingJson = DEFAULT_DEBUGGING_JSON;
-  debuggingSettings.debuggingESP32 = DEFAULT_DEBUGGING_ESP32;
+  debuggingSettings.debuggingNetwork = DEFAULT_DEBUGGING_NETWORK;
   debuggingSettings.debuggingEEPROM = DEFAULT_DEBUGGING_EEPROM;
   debuggingSettings.debuggingJob = DEFAULT_DEBUGGING_JOB;
   debuggingSettings.benchmarking = DEFAULT_BENCHMARKING;
@@ -2648,23 +2611,21 @@ void setup() {
   jsonSettings.checkChar = EEPROM_CHECK_CHAR; //this char is used to check if the struct has been initialized or not, since we will read it from the EEPROM and if it's not initialized it will be filled with null chars
 
   //init default wifi settings, they will be overwritten by the settings from the EEPROM if they are present, otherwise the default settings will be saved to the EEPROM for future use
-  arrayUtil.clearCharArray(wifiSettings.apSsid, ACCESS_POINT_SSID_CHARS);
-  arrayUtil.clearCharArray(wifiSettings.apPassword, ACCESS_POINT_PASSWORD_CHARS);
-  arrayUtil.clearCharArray(wifiSettings.clientSsid, ACCESS_POINT_SSID_CHARS);
-  arrayUtil.clearCharArray(wifiSettings.clientPassword, ACCESS_POINT_PASSWORD_CHARS);
+  arrayUtil.clearCharArray(networkSettings.apSsid, ACCESS_POINT_SSID_CHARS);
+  arrayUtil.clearCharArray(networkSettings.apPassword, ACCESS_POINT_PASSWORD_CHARS);
+  arrayUtil.clearCharArray(networkSettings.clientSsid, ACCESS_POINT_SSID_CHARS);
+  arrayUtil.clearCharArray(networkSettings.clientPassword, ACCESS_POINT_PASSWORD_CHARS);
   arrayUtil.clearCharArray(machineNameSettings.machineName, MACHINE_NAME_CHARS);
   arrayUtil.clearCharArray(firmwareVersion, FIRMWARE_VERSION_CHARS);
-  arrayUtil.clearCharArray(mobileWebSocketMessageBuffer, ESP32C3_WEBSOCKET_MESSAGE_BUFFER_SIZE); //clear the buffer for mobile websocket messages
-  arrayUtil.clearCharArray(mobileServerName, ESP32C3_MOBILE_SERVER_NAME_BUFFER_SIZE); //clear the mobile server name buffer
   arrayUtil.clearCharArray(jsonResponseCharBuffer, JSON_BUFFER_SIZE); //clear the buffer for the json responses that we will send to the websocket clients, this is needed to avoid sending old data in case we have a json response that is smaller than the previous one stored in the buffer, since we will only overwrite the portion of the buffer corresponding to the new json response, if the new json response is smaller than the previous one we need to clear the buffer to avoid sending old data in the portion of the buffer that is not overwritten by the new json response
   
-  strcat(wifiSettings.apSsid, DEFAULT_ESP32C3_AP_SSID_PREFIX); // use prefix + device ID as default AP name
-  strcat(wifiSettings.apSsid, boardDeviceId);
-  strcat(wifiSettings.apPassword, DEFAULT_ESP32C3_AP_PASSWORD);
-  strcat(wifiSettings.clientSsid, DEFAULT_ESP32C3_CLIENT_SSID);
-  strcat(wifiSettings.clientPassword, DEFAULT_ESP32C3_CLIENT_PASSWORD);
-  wifiSettings.hotspotEnabled = DEFAULT_HOTSPOT_ENABLED;
-  wifiSettings.checkChar = EEPROM_CHECK_CHAR; //this char is used to check if the struct has been initialized or not, since we will read it from the EEPROM and if it's not initialized it will be filled with null chars
+  strcat(networkSettings.apSsid, DEFAULT_NETWORK_AP_SSID_PREFIX); // use prefix + device ID as default AP name
+  strcat(networkSettings.apSsid, boardDeviceId);
+  strcat(networkSettings.apPassword, DEFAULT_NETWORK_AP_PASSWORD);
+  strcat(networkSettings.clientSsid, DEFAULT_NETWORK_CLIENT_SSID);
+  strcat(networkSettings.clientPassword, DEFAULT_NETWORK_CLIENT_PASSWORD);
+  networkSettings.hotspotEnabled = DEFAULT_HOTSPOT_ENABLED;
+  networkSettings.checkChar = EEPROM_CHECK_CHAR; //this char is used to check if the struct has been initialized or not, since we will read it from the EEPROM and if it's not initialized it will be filled with null chars
   strcat(machineNameSettings.machineName, DEFAULT_MACHINE_NAME);
   machineNameSettings.checkChar = EEPROM_CHECK_CHAR;
   toolLengthReferenceSettings.refZ      = BED_PROBE_REFERENCE_Z_MM;
@@ -2918,19 +2879,18 @@ void handleEEPROMSettings(){
   }
 
 
-  //wifiSettings
-  WifiSettings tmpWifiSettings;
-  tmpWifiSettings = eepromManager.readWiFiSettings();
+  //networkSettings
+  NetworkSettings tmpWifiSettings;
+  tmpWifiSettings = eepromManager.readNetworkSettings();
     
   if(tmpWifiSettings.checkChar == EEPROM_CHECK_CHAR){
 
-    wifiSettings = tmpWifiSettings;
+    networkSettings = tmpWifiSettings;
 
     // Guard against uninitialized hotspotEnabled byte from older EEPROM layouts:
     // any value other than 0 (false) is treated as enabled (true).
-    if(wifiSettings.hotspotEnabled != false) wifiSettings.hotspotEnabled = true;
+    if(networkSettings.hotspotEnabled != false) networkSettings.hotspotEnabled = true;
 
-    initialESP32ExpectedResponses = wifiSettings.hotspotEnabled ? 6 : 5;
 
     if(debuggingSettings.debuggingEEPROM) { 
       serialManager.USBSerialPrint(FROM_CPUB);
@@ -2944,7 +2904,7 @@ void handleEEPROMSettings(){
       serialManager.USBSerialPrintln("No WiFi settings found in EEPROM, using default settings"); 
     }
     
-    eepromManager.saveWiFiSettings(wifiSettings);
+    eepromManager.saveNetworkSettings(networkSettings);
 
   }
 
@@ -3555,25 +3515,6 @@ bool isValidIPv4Address(const char* ipAddress) {
 
 }
 
-bool esp32ResponseReportsAlreadyEstablished(const char* responseLine) {
-
-  if (responseLine == nullptr || responseLine[0] == NULL_CHAR)
-    return false;
-
-  char normalizedResponse[ESP32C3_RESPONSE_BUFFER_SIZE];
-  arrayUtil.clearCharArray(normalizedResponse, sizeof(normalizedResponse));
-  strncpy(normalizedResponse, responseLine, sizeof(normalizedResponse) - 1);
-  normalizedResponse[sizeof(normalizedResponse) - 1] = NULL_CHAR;
-
-  for (size_t index = 0; normalizedResponse[index] != NULL_CHAR; ++index)
-    normalizedResponse[index] = static_cast<char>(tolower(static_cast<unsigned char>(normalizedResponse[index])));
-
-  return strstr(normalizedResponse, "already established") != nullptr
-    || strstr(normalizedResponse, "already connected") != nullptr
-    || strstr(normalizedResponse, "link is connected") != nullptr
-    || strstr(normalizedResponse, "has connected") != nullptr;
-
-}
 
 long getExecutableFileLineCount(const char* filename, long totalLines) {
 
@@ -3592,12 +3533,6 @@ long getExecutableFileLineCount(const char* filename, long totalLines) {
 
 }
 
-void scheduleForcedWebSocketClose(int linkId) {
-
-  pendingForcedWebSocketCloseLinkId = linkId;
-  pendingForcedWebSocketCloseStartMs = 0;
-
-}
 
 bool tryParseGCodeWordLongValue(const char* lineBuffer, char word, long* value) {
 
@@ -5707,7 +5642,7 @@ void buildTransferMetadataLine(char* buffer, size_t bufferSize) {
     snprintf(
       buffer,
       bufferSize,
-      ";MINICNC_BOUNDS EXACT=%d UNITS=MM MINX=%.3f MAXX=%.3f SIZEX=%.3f MINY=%.3f MAXY=%.3f SIZEY=%.3f MINZ=%.3f MAXZ=%.3f SIZEZ=%.3f DURATION_SEC=%lu",
+      ";OISK_BOUNDS EXACT=%d UNITS=MM MINX=%.3f MAXX=%.3f SIZEX=%.3f MINY=%.3f MAXY=%.3f SIZEY=%.3f MINZ=%.3f MAXZ=%.3f SIZEZ=%.3f DURATION_SEC=%lu",
       gcodeBoundsUtil.isExact() ? 1 : 0,
       gcodeBoundsUtil.getMinX(),
       gcodeBoundsUtil.getMaxX(),
@@ -5724,7 +5659,7 @@ void buildTransferMetadataLine(char* buffer, size_t bufferSize) {
     snprintf(
       buffer,
       bufferSize,
-      ";MINICNC_BOUNDS EXACT=0 UNITS=MM EMPTY=1 DURATION_SEC=%lu",
+      ";OISK_BOUNDS EXACT=0 UNITS=MM EMPTY=1 DURATION_SEC=%lu",
       gcodeBoundsUtil.getEstimatedDurationSecondsRounded()
     );
   }
@@ -8139,36 +8074,6 @@ void handleJsonCommand(){
 
     break;
   
-  case ENABLE_ESP32_PASSTHROUGH:
-
-    enableESP32Passthrough = true;
-    
-    if(jsonSettings.enableJsonResponse){
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-      
-    break;
-
-  case DISABLE_ESP32_PASSTHROUGH:
-
-    enableESP32Passthrough = false;
-
-    if(jsonSettings.enableJsonResponse){
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-      
-    break;
-
   case ENABLE_LASER_SENSOR:
 
     requestDistanceLaserSensorInitialization(DISTANCE_LASER_SENSOR_INIT_DELAY_MS, true);
@@ -12055,17 +11960,17 @@ void handleJsonSet(){
     if(!receivedJsonBuffer[JSON_KEY_AP_WIFI_SSID_STR].isNull() && !receivedJsonBuffer[JSON_KEY_AP_WIFI_PASSWORD_STR].isNull()
     && !receivedJsonBuffer[JSON_KEY_CLIENT_WIFI_SSID_STR].isNull() && !receivedJsonBuffer[JSON_KEY_CLIENT_WIFI_PASSWORD_STR].isNull()){
       
-        arrayUtil.clearCharArray(wifiSettings.apSsid, ACCESS_POINT_SSID_CHARS);
-        arrayUtil.clearCharArray(wifiSettings.apPassword, ACCESS_POINT_PASSWORD_CHARS);
-        arrayUtil.clearCharArray(wifiSettings.clientSsid, ACCESS_POINT_SSID_CHARS);
-        arrayUtil.clearCharArray(wifiSettings.clientPassword, ACCESS_POINT_PASSWORD_CHARS);
+        arrayUtil.clearCharArray(networkSettings.apSsid, ACCESS_POINT_SSID_CHARS);
+        arrayUtil.clearCharArray(networkSettings.apPassword, ACCESS_POINT_PASSWORD_CHARS);
+        arrayUtil.clearCharArray(networkSettings.clientSsid, ACCESS_POINT_SSID_CHARS);
+        arrayUtil.clearCharArray(networkSettings.clientPassword, ACCESS_POINT_PASSWORD_CHARS);
 
-        strcat(wifiSettings.apSsid, receivedJsonBuffer[JSON_KEY_AP_WIFI_SSID_STR].as<const char*>());
-        strcat(wifiSettings.apPassword, receivedJsonBuffer[JSON_KEY_AP_WIFI_PASSWORD_STR].as<const char*>());
-        strcat(wifiSettings.clientSsid, receivedJsonBuffer[JSON_KEY_CLIENT_WIFI_SSID_STR].as<const char*>());
-        strcat(wifiSettings.clientPassword, receivedJsonBuffer[JSON_KEY_CLIENT_WIFI_PASSWORD_STR].as<const char*>());
+        strcat(networkSettings.apSsid, receivedJsonBuffer[JSON_KEY_AP_WIFI_SSID_STR].as<const char*>());
+        strcat(networkSettings.apPassword, receivedJsonBuffer[JSON_KEY_AP_WIFI_PASSWORD_STR].as<const char*>());
+        strcat(networkSettings.clientSsid, receivedJsonBuffer[JSON_KEY_CLIENT_WIFI_SSID_STR].as<const char*>());
+        strcat(networkSettings.clientPassword, receivedJsonBuffer[JSON_KEY_CLIENT_WIFI_PASSWORD_STR].as<const char*>());
 
-        eepromManager.saveWiFiSettings(wifiSettings);
+        eepromManager.saveNetworkSettings(networkSettings);
   
         if(jsonSettings.enableJsonResponse){
 
@@ -12280,11 +12185,11 @@ void handleJsonSet(){
 
       break;
 
-      case SET_DEBUGGING_ESP32:
+      case SET_DEBUGGING_NETWORK:
 
-      if(!receivedJsonBuffer[JSON_KEY_DEBUGGING_ESP32_STR].isNull()){
+      if(!receivedJsonBuffer[JSON_KEY_DEBUGGING_NETWORK_STR].isNull()){
 
-        debuggingSettings.debuggingESP32 = receivedJsonBuffer[JSON_KEY_DEBUGGING_ESP32_STR].as<bool>();
+        debuggingSettings.debuggingNetwork = receivedJsonBuffer[JSON_KEY_DEBUGGING_NETWORK_STR].as<bool>();
         eepromManager.saveDebuggingSettings(debuggingSettings);
 
         if(jsonSettings.enableJsonResponse){
@@ -12557,13 +12462,13 @@ void handleJsonSet(){
 
           }
 
-          arrayUtil.clearCharArray(wifiSettings.apSsid, ACCESS_POINT_SSID_CHARS);
-          arrayUtil.clearCharArray(wifiSettings.apPassword, ACCESS_POINT_PASSWORD_CHARS);
+          arrayUtil.clearCharArray(networkSettings.apSsid, ACCESS_POINT_SSID_CHARS);
+          arrayUtil.clearCharArray(networkSettings.apPassword, ACCESS_POINT_PASSWORD_CHARS);
 
-          strncpy(wifiSettings.apSsid, requestedApSsid, ACCESS_POINT_SSID_CHARS - 1);
-          wifiSettings.apSsid[ACCESS_POINT_SSID_CHARS - 1] = NULL_CHAR;
-          strncpy(wifiSettings.apPassword, requestedApPassword, ACCESS_POINT_PASSWORD_CHARS - 1);
-          wifiSettings.apPassword[ACCESS_POINT_PASSWORD_CHARS - 1] = NULL_CHAR;
+          strncpy(networkSettings.apSsid, requestedApSsid, ACCESS_POINT_SSID_CHARS - 1);
+          networkSettings.apSsid[ACCESS_POINT_SSID_CHARS - 1] = NULL_CHAR;
+          strncpy(networkSettings.apPassword, requestedApPassword, ACCESS_POINT_PASSWORD_CHARS - 1);
+          networkSettings.apPassword[ACCESS_POINT_PASSWORD_CHARS - 1] = NULL_CHAR;
 
         }
 
@@ -12572,7 +12477,7 @@ void handleJsonSet(){
       // Update hotspotEnabled if the key is present (may be sent alone or alongside SSID/password)
       if(!receivedJsonBuffer[JSON_KEY_HOTSPOT_ENABLED_STR].isNull()){
 
-        wifiSettings.hotspotEnabled = receivedJsonBuffer[JSON_KEY_HOTSPOT_ENABLED_STR].as<bool>();
+        networkSettings.hotspotEnabled = receivedJsonBuffer[JSON_KEY_HOTSPOT_ENABLED_STR].as<bool>();
 
       }
 
@@ -12593,16 +12498,16 @@ void handleJsonSet(){
 
       }
 
-      wifiSettings.checkChar = EEPROM_CHECK_CHAR;
-      eepromManager.saveWiFiSettings(wifiSettings);
+      networkSettings.checkChar = EEPROM_CHECK_CHAR;
+      eepromManager.saveNetworkSettings(networkSettings);
 
       if(jsonSettings.enableJsonResponse){
 
         clearResponseJsonBuffer();
         responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-        responseJsonBuffer[JSON_RESPONSE_KEY_AP_WIFI_SSID_STR] = wifiSettings.apSsid;
-        responseJsonBuffer[JSON_KEY_AP_WIFI_PASSWORD_STR] = wifiSettings.apPassword;
-        responseJsonBuffer[JSON_KEY_HOTSPOT_ENABLED_STR] = wifiSettings.hotspotEnabled;
+        responseJsonBuffer[JSON_RESPONSE_KEY_AP_WIFI_SSID_STR] = networkSettings.apSsid;
+        responseJsonBuffer[JSON_KEY_AP_WIFI_PASSWORD_STR] = networkSettings.apPassword;
+        responseJsonBuffer[JSON_KEY_HOTSPOT_ENABLED_STR] = networkSettings.hotspotEnabled;
         serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
         sendJsonResponse();
 
@@ -13488,17 +13393,17 @@ void handleJsonGet(){
 
   case GET_WIFI_SETTINGS:
 
-    if(wifiSettings.apSsid[0] != NULL_CHAR){
+    if(networkSettings.apSsid[0] != NULL_CHAR){
 
       if(jsonSettings.enableJsonResponse) {
 
         clearResponseJsonBuffer();
         responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-        responseJsonBuffer[JSON_KEY_AP_WIFI_SSID_STR] = wifiSettings.apSsid;
-        responseJsonBuffer[JSON_KEY_AP_WIFI_PASSWORD_STR] = wifiSettings.apPassword;
-        responseJsonBuffer[JSON_KEY_CLIENT_WIFI_SSID_STR] = wifiSettings.clientSsid;
-        responseJsonBuffer[JSON_KEY_CLIENT_WIFI_PASSWORD_STR] = wifiSettings.clientPassword;
-        responseJsonBuffer[JSON_KEY_HOTSPOT_ENABLED_STR] = wifiSettings.hotspotEnabled;
+        responseJsonBuffer[JSON_KEY_AP_WIFI_SSID_STR] = networkSettings.apSsid;
+        responseJsonBuffer[JSON_KEY_AP_WIFI_PASSWORD_STR] = networkSettings.apPassword;
+        responseJsonBuffer[JSON_KEY_CLIENT_WIFI_SSID_STR] = networkSettings.clientSsid;
+        responseJsonBuffer[JSON_KEY_CLIENT_WIFI_PASSWORD_STR] = networkSettings.clientPassword;
+        responseJsonBuffer[JSON_KEY_HOTSPOT_ENABLED_STR] = networkSettings.hotspotEnabled;
         serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
         sendJsonResponse();
         
@@ -13533,7 +13438,7 @@ void handleJsonGet(){
       responseJsonBuffer[JSON_KEY_DEBUGGING_MACRO_BUFFER_STR] = debuggingSettings.debuggingMacroBuffer;
       responseJsonBuffer[JSON_KEY_DEBUGGING_SD_CARD_STR] = debuggingSettings.debuggingSDCard;
       responseJsonBuffer[JSON_KEY_DEBUGGING_JSON_STR] = debuggingSettings.debuggingJson;
-      responseJsonBuffer[JSON_KEY_DEBUGGING_ESP32_STR] = debuggingSettings.debuggingESP32;
+      responseJsonBuffer[JSON_KEY_DEBUGGING_NETWORK_STR] = debuggingSettings.debuggingNetwork;
       responseJsonBuffer[JSON_KEY_DEBUGGING_EEPROM_STR] = debuggingSettings.debuggingEEPROM;
       responseJsonBuffer[JSON_KEY_DEBUGGING_JOB_STR] = debuggingSettings.debuggingJob;
 
@@ -13582,20 +13487,6 @@ void handleJsonGet(){
       clearResponseJsonBuffer();
       responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
       responseJsonBuffer[JSON_KEY_CPUA_PASSTHROUGH_STATUS_STR] = enableCPUAPassthrough;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
-
-  case GET_ESP32_PASSTHROUGH_STATUS:
-
-    if(jsonSettings.enableJsonResponse) {
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_ESP32_PASSTHROUGH_STATUS_STR] = enableESP32Passthrough;
       serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
       sendJsonResponse();
 

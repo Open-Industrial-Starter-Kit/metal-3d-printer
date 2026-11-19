@@ -15,25 +15,25 @@ bool EEPROMManager::clearEEPROM() {
 
 }
 
-WifiSettings EEPROMManager::readWiFiSettings() {
+NetworkSettings EEPROMManager::readNetworkSettings() {
 
-    WifiSettings wifiSettings;
+    NetworkSettings networkSettings;
 
-    arrayUtil.clearCharArray(wifiSettings.apSsid, ACCESS_POINT_SSID_CHARS);
-    arrayUtil.clearCharArray(wifiSettings.apPassword, ACCESS_POINT_PASSWORD_CHARS);
+    arrayUtil.clearCharArray(networkSettings.apSsid, ACCESS_POINT_SSID_CHARS);
+    arrayUtil.clearCharArray(networkSettings.apPassword, ACCESS_POINT_PASSWORD_CHARS);
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS, wifiSettings);
+    EEPROM.get(EEPROM_START_ADDRESS, networkSettings);
     EEPROM.end();
 
-    return wifiSettings;
+    return networkSettings;
 
 }
 
-bool EEPROMManager::saveWiFiSettings(WifiSettings wifiSettings) {
+bool EEPROMManager::saveNetworkSettings(NetworkSettings networkSettings) {
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS, wifiSettings);
+    EEPROM.put(EEPROM_START_ADDRESS, networkSettings);
     bool success = EEPROM.commit();
     EEPROM.end();
 
@@ -46,7 +46,7 @@ DebuggingSettings EEPROMManager::readDebuggingSettings() {
     DebuggingSettings debuggingSettings;
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(WifiSettings), debuggingSettings);
+    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings), debuggingSettings);
     EEPROM.end();
 
     return debuggingSettings;
@@ -56,7 +56,7 @@ DebuggingSettings EEPROMManager::readDebuggingSettings() {
 bool EEPROMManager::saveDebuggingSettings(DebuggingSettings debuggingSettings) {
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(WifiSettings), debuggingSettings);
+    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings), debuggingSettings);
     bool success = EEPROM.commit();
     EEPROM.end();
 
@@ -69,7 +69,7 @@ JsonSettings EEPROMManager::readJsonSettings() {
     JsonSettings jsonSettings;
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings), jsonSettings);
+    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings), jsonSettings);
     EEPROM.end();
 
     return jsonSettings;
@@ -79,7 +79,7 @@ JsonSettings EEPROMManager::readJsonSettings() {
 bool EEPROMManager::saveJsonSettings(JsonSettings jsonSettings) {
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings), jsonSettings);
+    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings), jsonSettings);
     bool success = EEPROM.commit();
     EEPROM.end();
 
@@ -93,7 +93,7 @@ MachineNameSettings EEPROMManager::readMachineNameSettings() {
     arrayUtil.clearCharArray(machineNameSettings.machineName, MACHINE_NAME_CHARS);
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings), machineNameSettings);
+    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings), machineNameSettings);
     EEPROM.end();
 
     return machineNameSettings;
@@ -103,7 +103,7 @@ MachineNameSettings EEPROMManager::readMachineNameSettings() {
 bool EEPROMManager::saveMachineNameSettings(MachineNameSettings machineNameSettings) {
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings), machineNameSettings);
+    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings), machineNameSettings);
     bool success = EEPROM.commit();
     EEPROM.end();
 
@@ -116,7 +116,7 @@ ToolLengthReferenceSettings EEPROMManager::readToolLengthReferenceSettings() {
     ToolLengthReferenceSettings settings;
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings), settings);
+    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings), settings);
     EEPROM.end();
 
     return settings;
@@ -126,7 +126,7 @@ ToolLengthReferenceSettings EEPROMManager::readToolLengthReferenceSettings() {
 bool EEPROMManager::saveToolLengthReferenceSettings(ToolLengthReferenceSettings settings) {
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings), settings);
+    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings), settings);
     bool success = EEPROM.commit();
     EEPROM.end();
 
@@ -139,7 +139,7 @@ LaserOffsetZeroSettings EEPROMManager::readLaserOffsetZeroSettings() {
     LaserOffsetZeroSettings settings;
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings), settings);
+    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings), settings);
     EEPROM.end();
 
     return settings;
@@ -149,7 +149,7 @@ LaserOffsetZeroSettings EEPROMManager::readLaserOffsetZeroSettings() {
 bool EEPROMManager::saveLaserOffsetZeroSettings(LaserOffsetZeroSettings settings) {
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings), settings);
+    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings), settings);
     bool success = EEPROM.commit();
     EEPROM.end();
 
@@ -162,7 +162,7 @@ HousingSettings EEPROMManager::readHousingSettings() {
     HousingSettings settings;
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings), settings);
+    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings), settings);
     EEPROM.end();
 
     return settings;
@@ -172,7 +172,7 @@ HousingSettings EEPROMManager::readHousingSettings() {
 bool EEPROMManager::saveHousingSettings(HousingSettings settings) {
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings), settings);
+    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings), settings);
     bool success = EEPROM.commit();
     EEPROM.end();
 
@@ -185,7 +185,7 @@ ProbeHeightSettings EEPROMManager::readProbeHeightSettings() {
     ProbeHeightSettings settings;
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings) + sizeof(HousingSettings), settings);
+    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings) + sizeof(HousingSettings), settings);
     EEPROM.end();
 
     return settings;
@@ -195,7 +195,7 @@ ProbeHeightSettings EEPROMManager::readProbeHeightSettings() {
 bool EEPROMManager::saveProbeHeightSettings(ProbeHeightSettings settings) {
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings) + sizeof(HousingSettings), settings);
+    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings) + sizeof(HousingSettings), settings);
     bool success = EEPROM.commit();
     EEPROM.end();
 
@@ -208,7 +208,7 @@ BrushlessMotorSettings EEPROMManager::readBrushlessMotorSettings() {
     BrushlessMotorSettings settings;
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings) + sizeof(HousingSettings) + sizeof(ProbeHeightSettings), settings);
+    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings) + sizeof(HousingSettings) + sizeof(ProbeHeightSettings), settings);
     EEPROM.end();
 
     return settings;
@@ -218,7 +218,7 @@ BrushlessMotorSettings EEPROMManager::readBrushlessMotorSettings() {
 bool EEPROMManager::saveBrushlessMotorSettings(BrushlessMotorSettings settings) {
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(WifiSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings) + sizeof(HousingSettings) + sizeof(ProbeHeightSettings), settings);
+    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings) + sizeof(HousingSettings) + sizeof(ProbeHeightSettings), settings);
     bool success = EEPROM.commit();
     EEPROM.end();
 

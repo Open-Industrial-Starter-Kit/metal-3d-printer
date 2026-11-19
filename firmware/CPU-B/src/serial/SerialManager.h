@@ -52,9 +52,9 @@ public:
 
     int readFromUSB();
 
-    // The ESP32-C3 link and the distance laser sensor are not fitted on the
-    // Control Board V2 and their pins carry other functions, so both ports
-    // are gone. Ethernet replaces the ESP32-C3 as the network transport.
+    // The external WiFi module and the distance laser sensor are not fitted
+    // on the Control Board V2 and their pins carry other functions, so both
+    // ports are gone. Ethernet is the network transport on this board.
 
 
 private:

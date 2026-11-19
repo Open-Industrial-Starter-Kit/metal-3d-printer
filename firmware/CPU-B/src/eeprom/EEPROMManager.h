@@ -10,8 +10,8 @@ public:
     
     bool clearEEPROM();
     
-    WifiSettings readWiFiSettings();
-    bool saveWiFiSettings(WifiSettings wifiSettings);
+    NetworkSettings readNetworkSettings();
+    bool saveNetworkSettings(NetworkSettings networkSettings);
     
     DebuggingSettings readDebuggingSettings();
     bool saveDebuggingSettings(DebuggingSettings debuggingSettings);

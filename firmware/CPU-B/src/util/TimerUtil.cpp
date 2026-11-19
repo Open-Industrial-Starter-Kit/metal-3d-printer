@@ -80,19 +80,19 @@ bool TimerUtil::statusTimer() {
 
 }
 
-bool TimerUtil::ESP32C3CheckTimer() {
+bool TimerUtil::networkCheckTimer() {
 
-  if (startTimeESP32C3Check == 0) {
+  if (startTimeNetworkCheck == 0) {
 
-    startTimeESP32C3Check = millis();
+    startTimeNetworkCheck = millis();
     return false;
 
   }
 
   unsigned long currentTime = millis();
 
-  if ((currentTime - startTimeESP32C3Check) >= ESP32C3_CHECK_DELAY) {
-    startTimeESP32C3Check = currentTime;
+  if ((currentTime - startTimeNetworkCheck) >= NETWORK_CHECK_DELAY) {
+    startTimeNetworkCheck = currentTime;
     return true;
 
   }
@@ -101,9 +101,9 @@ bool TimerUtil::ESP32C3CheckTimer() {
 
 }
 
-void TimerUtil::resetESP32C3CheckTimer() {
+void TimerUtil::resetNetworkCheckTimer() {
 
-  startTimeESP32C3Check = millis();
+  startTimeNetworkCheck = millis();
 
 }
 
@@ -118,7 +118,7 @@ bool TimerUtil::webSocketPingTimer() {
 
   unsigned long currentTime = millis();
 
-  if ((currentTime - startTimeWebSocketPing) >= ESP32C3_CHECK_DELAY) {
+  if ((currentTime - startTimeWebSocketPing) >= NETWORK_CHECK_DELAY) {
     
     startTimeWebSocketPing = currentTime;
     return true;

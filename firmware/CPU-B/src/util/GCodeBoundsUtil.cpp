@@ -12,7 +12,7 @@ GCodeBoundsUtil::GCodeBoundsUtil() {
 }
 
 bool GCodeBoundsUtil::isMetadataLine(const char* line) {
-  static const char metadataPrefix[] = ";MINICNC_BOUNDS";
+  static const char metadataPrefix[] = ";OISK_BOUNDS";
 
   return line != nullptr && strncmp(line, metadataPrefix, strlen(metadataPrefix)) == 0;
 }

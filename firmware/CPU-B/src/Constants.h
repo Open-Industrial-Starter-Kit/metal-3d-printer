@@ -22,7 +22,7 @@
 #define GRBL_RESUME '~'
 #define GRBL_HOLD '!'
 #define GRBL_SAFETY_DOOR 0x84  // grblHAL realtime CMD_SAFETY_DOOR: triggers park (spindle stop + Z raise)
-// Virtual safety door (PiccolaCNC addition to grblHAL, see CMD_VIRTUAL_DOOR_* there). The lid
+// Virtual safety door (our own addition to grblHAL, see CMD_VIRTUAL_DOOR_* there). The lid
 // switch is wired to CPUB, so grblHAL has no door input of its own and cannot refuse a resume.
 // These two bytes drive a software safety_door_ajar LEVEL in grblHAL: while "open" is asserted
 // grblHAL will not start a parking restore at all. Idempotent — re-sending a state is a no-op.
@@ -135,67 +135,14 @@ enum SpindleType {
 #define SPINDLE_TYPE_24V_STR "24V"
 #define SPINDLE_TYPE_48V_STR "48V"
 
-//ESP32C3
 
-#define FROM_ESP32C3 "ESP32C3: " //this is the string that will be prefixed to all the messages coming from the ESP32C3, so we can easily identify them in the USB serial monitor
-#define ESP32C3_RESPONSE_OK "OK"
-#define ESP32C3_RESPONSE_ERROR "ERROR"
 
-#define ESP32C3_RESPONSE_NOT_WAITING 0
-#define ESP32C3_RESPONSE_WAITING 1
-#define ESP32C3_RESPONSE_RECEIVED_CHAR 2
-#define ESP32C3_RESPONSE_READY 3
 
-#define ESP32C3_RESPONSE_TYPE_OK 0
-#define ESP32C3_RESPONSE_TYPE_ERROR 1
-#define ESP32C3_RESPONSE_TYPE_UNKNOWN -1
 
-#define ESP32C3_WEBSOCKET_MESSAGE_NOT_RECEIVED 1
-#define ESP32C3_WIFI_DISCONNECTED 3
-#define ESP32C3_MOBILE_WEBSOCKET_MESSAGE_RECEIVED 4
-#define ESP32C3_MOBILE_WEBSOCKET_DISCONNECTED 5
 
-#define ESP32C3_WIFI_DISCONNECT_PREFIX "WIFI DISCONNECT"
 
-#define ESP32C3_WEBSOCKET_MESSAGE_FOUND 0
-#define ESP32C3_WEBSOCKET_MESSAGE_NOT_FOUND 1
 
-#define ESP32C3_AT "AT"
-#define ESP32C3_RESET "AT+RST"
-#define ESP32C3_DEEP_SLEEP "AT+GSLP"
-#define ESP32C3_ECHO "ATE"
-#define ESP32C3_SLEEP "AT+SLEEP"
-#define ESP32C3_RFPOWER "AT+RFPOWER"
-#define ESP32C3_SYSLOG "AT+SYSLOG"
-#define ESP32C3_WIFI_MODE "AT+CWMODE"
-#define ESP32C3_WIFI_MODE_AP "AT+CWMODE=2"
-#define ESP32C3_WIFI_MODE_STATION "AT+CWMODE=1"
-#define ESP32C3_WIFI_MODE_AP_AND_STATION "AT+CWMODE=3"
-#define ESP32C3_CONNECT_WIFI "AT+CWJAP"
-#define ESP32C3_DISCONNECT_WIFI "AT+CWQAP"
-#define ESP32C3_WIFI_STATUS "AT+CWJAP?"
-#define ESP32C3_WIFI_LIST "AT+CWLAP"
-#define ESP32C3_IP "AT+CIFSR"
-#define ESP32C3_ENABLE_DHCP "AT+CWDHCP"
-#define ESP32C3_DISABLE_DHCP "AT+CWDHCP=0,1"
-#define ESP32C3_AUTOCONNECT "AT+CWAUTOCONN"
-#define ESP32C3_SET_AP "AT+CWSAP"
-#define ESP32C3_CLOSE_WEBSOCKET "AT+WSCLOSE="
-#define ESP32C3_CLOSE_WEBSOCKET_LINK_1 "AT+WSCLOSE=1"
-#define ESP32C3_CONFIGURE_MOBILE_WEBSOCKET "AT+WSCFG=1,3,2,8192"
-#define ESP32C3_OPEN_MOBILE_WEBSOCKET "AT+WSOPEN=1"
-#define ESP32C3_SEND_MOBILE_WEBSOCKET "AT+WSSEND=1,"
 
-//BLE AT commands
-#define ESP32C3_BLE_DEINIT "AT+BLEINIT=0"
-#define ESP32C3_BLE_INIT "AT+BLEINIT=1"
-#define ESP32C3_BLE_SCAN_PARAMS "AT+BLESCANPARAM=1,0,0,100,50"
-#define ESP32C3_BLE_SCAN_START "AT+BLESCAN=1,"
-#define ESP32C3_BLE_SCAN_FILTER_NAME ",2,\""
-#define ESP32C3_BLE_SCAN_DUPLICATE_CHECK "\",1"
-#define ESP32C3_BLE_SCAN_PREFIX "+BLESCAN:"
-#define ESP32C3_BLE_SCAN_DONE "+BLESCANDONE"
-#define ESP32C3_MOBILE_SERVER_NAME_BUFFER_SIZE 64
 
 #define EEPROM_START_ADDRESS 1
 #define EEPROM_CHECK_CHAR 'X' //this is the character that will be written in the first byte of the EEPROM to check if the EEPROM has been initialized or not, since we need to initialize it with the default values only the first time we run the CPUB, and after that we can just read the values from the EEPROM without initializing it again
@@ -237,7 +184,7 @@ enum JsonCallKey {
 #define JSON_KEY_VALUE_STR "value"
 
 //input source tracking
-enum InputSource { INPUT_SOURCE_USB, INPUT_SOURCE_MOBILE_WEBSOCKET };
+enum InputSource { INPUT_SOURCE_USB, INPUT_SOURCE_NETWORK };
 
 //values for JSON_KEY_TYPE
 enum JsonValueType {
@@ -259,8 +206,6 @@ enum JsonValueType {
 enum JsonValueCommandType {
   ENABLE_CPUA_PASSTHROUGH,
   DISABLE_CPUA_PASSTHROUGH,
-  ENABLE_ESP32_PASSTHROUGH,
-  DISABLE_ESP32_PASSTHROUGH,
   MOVE_TO_ROTARY_POSITION_MACRO,
   INSTALL_ROTARY_MACRO,
   FRAME_JOB_MACRO,
@@ -318,8 +263,6 @@ enum JsonValueCommandType {
 #define JSON_VALUE_DELETE_GCODE_FILE_STR "deleteGcodeFile"
 #define JSON_VALUE_ENABLE_CPUA_PASSTHROUGH_STR "enableCPUAPassthrough"
 #define JSON_VALUE_DISABLE_CPUA_PASSTHROUGH_STR "disableCPUAPassthrough"
-#define JSON_VALUE_ENABLE_ESP32_PASSTHROUGH_STR "enableESP32Passthrough"
-#define JSON_VALUE_DISABLE_ESP32_PASSTHROUGH_STR "disableESP32Passthrough"
 #define JSON_VALUE_MOVE_TO_ROTARY_POSITION_MACRO_STR "moveToRotaryPosition"
 #define JSON_VALUE_INSTALL_ROTARY_MACRO_STR "installRotary"
 #define JSON_VALUE_FRAME_JOB_MACRO_STR "frameJob"
@@ -444,7 +387,6 @@ enum JsonValueGetType {
   GET_CURRENT_FEED_RATE,
   GET_CURRENT_SPINDLE_RPM,
   GET_CPUA_PASSTHROUGH_STATUS,
-  GET_ESP32_PASSTHROUGH_STATUS,
   GET_JSON_SETTINGS,
   GET_FEED_RATE_OVERRIDE,
   GET_SPINDLE_OVERRIDE,
@@ -495,7 +437,6 @@ enum JsonValueGetType {
 #define JSON_VALUE_GET_CURRENT_FEED_RATE_STR "currentFeedRate"
 #define JSON_VALUE_GET_CURRENT_SPINDLE_RPM_STR "currentSpindleRPM"
 #define JSON_VALUE_GET_CPUA_PASSTHROUGH_STATUS_STR "getCpuaPassthroughStatus"
-#define JSON_VALUE_GET_ESP32_PASSTHROUGH_STATUS_STR "getEsp32PassthroughStatus"
 #define JSON_VALUE_GET_JSON_SETTINGS_STR "getJsonSettings"
 #define JSON_VALUE_GET_FEED_RATE_OVERRIDE_STR "getFeedRateOverride"
 #define JSON_VALUE_GET_SPINDLE_OVERRIDE_STR "getSpindleOverride"
@@ -528,7 +469,7 @@ enum JsonValueSetType {
   SET_DEBUGGING_MACRO_BUFFER,
   SET_DEBUGGING_SD_CARD,
   SET_DEBUGGING_JSON,
-  SET_DEBUGGING_ESP32,
+  SET_DEBUGGING_NETWORK,
   SET_DEBUGGING_EEPROM,
   SET_DEBUGGING_JOB,
   SET_BENCHMARKING,
@@ -557,7 +498,7 @@ enum JsonValueSetType {
 #define JSON_VALUE_SET_DEBUGGING_MACRO_BUFFER_STR "setDebuggingMacroBuffer"
 #define JSON_VALUE_SET_DEBUGGING_SD_CARD_STR "setDebuggingSDCard"
 #define JSON_VALUE_SET_DEBUGGING_JSON_STR "setDebuggingJson"
-#define JSON_VALUE_SET_DEBUGGING_ESP32_STR "setDebuggingESP32"
+#define JSON_VALUE_SET_DEBUGGING_NETWORK_STR "setDebuggingNetwork"
 #define JSON_VALUE_SET_DEBUGGING_EEPROM_STR "setDebuggingEEPROM"
 #define JSON_VALUE_SET_DEBUGGING_JOB_STR "setDebuggingJob"
 #define JSON_VALUE_SET_BENCHMARKING_STR "setBenchmarking"
@@ -742,13 +683,12 @@ enum JsonValueSetType {
 #define JSON_KEY_DEBUGGING_MACRO_BUFFER_STR "debuggingMacroBuffer"
 #define JSON_KEY_DEBUGGING_SD_CARD_STR "debuggingSDCard"
 #define JSON_KEY_DEBUGGING_JSON_STR "debuggingJson"
-#define JSON_KEY_DEBUGGING_ESP32_STR "debuggingESP32"
+#define JSON_KEY_DEBUGGING_NETWORK_STR "debuggingNetwork"
 #define JSON_KEY_DEBUGGING_EEPROM_STR "debuggingEEPROM"
 #define JSON_KEY_DEBUGGING_JOB_STR "debuggingJob"
 #define JSON_KEY_BENCHMARKING_STR "benchmarking"
 #define JSON_KEY_BENCHMARK_MINIMUM_MS_STR "benchmarkMinimumMs"
 #define JSON_KEY_CPUA_PASSTHROUGH_STATUS_STR "cpuaPassthroughStatus"
-#define JSON_KEY_ESP32_PASSTHROUGH_STATUS_STR "esp32PassthroughStatus"
 
 #define JSON_KEY_JSON_ENABLE_JSON_RESPONSE_STR "enableJsonResponse"
 

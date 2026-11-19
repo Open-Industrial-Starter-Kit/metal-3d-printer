@@ -13,8 +13,8 @@ void resetSpindleTimer();
 bool statusTimer();
 void resetStatusTimer();
 
-bool ESP32C3CheckTimer();
-void resetESP32C3CheckTimer();
+bool networkCheckTimer();
+void resetNetworkCheckTimer();
 
 bool webSocketPingTimer();
 void resetWebSocketPingTimer();
@@ -24,7 +24,7 @@ private:
 unsigned long startTimeBlinkLed = 0.0;
 unsigned long startTimeSpindle = 0.0;
 unsigned long startTimeStatus = 0.0;
-unsigned long startTimeESP32C3Check = 0.0;
+unsigned long startTimeNetworkCheck = 0.0;
 unsigned long startTimeWebSocket = 0.0;
 unsigned long startTimeWebSocketPing = 0.0;
 

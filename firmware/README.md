@@ -98,10 +98,29 @@ belongs to another function.
 Every pin the firmware declares has been cross-checked against the CPU-B
 netlist of the schematic: 23 pins, no conflicts.
 
-#### What is still Piccola CNC
+#### Naming
 
-The JSON API, the serial protocol and the SD card layer are unchanged, which is
-deliberate. The machine logic above them is still that of a CNC router, with a
+The firmware carries no references to the machine it came from. The sketch is
+`MetalPrinter_CPUB.ino`, the default machine name is `Metal 3D Printer #1`, and
+the G-code bounds metadata written into job files is tagged `;OISK_BOUNDS`.
+The WiFi and BLE layer left ~70 dead constants and ~25 dead state variables
+behind; those are gone, and what remained of the network naming is now neutral
+(`NetworkSettings`, `INPUT_SOURCE_NETWORK`, `debuggingNetwork`) ready for the
+Ethernet work.
+
+Two JSON API changes came out of that, both for hardware that no longer exists:
+the `enableESP32Passthrough`, `disableESP32Passthrough` and
+`getEsp32PassthroughStatus` commands are gone, and `setDebuggingESP32` is now
+`setDebuggingNetwork`.
+
+`NetworkSettings` itself is kept even though nothing reads it at runtime. Every
+EEPROM region is addressed as a running sum that starts with its size, so
+removing it would move every other settings block.
+
+#### What is still a CNC router
+
+The JSON API, the macro engine, the serial protocol and the SD card layer are
+unchanged, which is deliberate. The machine logic above them still assumes a
 spindle, a tool changer, a rotary axis and probing routines that this machine
 does not have. Those are untouched for now: they are inert because their pins
 are parked, and removing them is a separate job from making the firmware safe
