@@ -25,6 +25,7 @@ The hardware these firmwares target is documented in **[../pcb](../pcb)**.
 | **[CPU-A](CPU-A)** | CPU-A, motion | Pico SDK, CMake | grblHAL, 5 axes, building for the RP2350B |
 | **[CPU-B](CPU-B)** | CPU-B, main controller | PlatformIO, Arduino-Pico | starting point, not yet ported |
 | CPU-C | CPU-C, galvo and fiber laser | - | *in preparation* |
+| **[test](test)** | - | PlatformIO / Pico SDK | small bring-up firmwares, one subsystem each |
 
 Both trees are the firmwares of the [Piccola CNC](https://www.piccolacnc.com/) taken
 as the starting point for this machine, and are being adapted to the Control
@@ -65,7 +66,9 @@ PlatformIO project for the Arduino-Pico core. It still targets the Piccola CNC
 hardware - board `rpipico2w`, which is an **RP2350A with CYW43 WiFi**. The
 Control Board V2 carries a plain **RP2350B** with a W5500 Ethernet controller
 instead, so this tree needs a board change and a rework of the networking layer
-before it runs on this machine.
+before it runs on this machine. Until then use the passthrough test in
+**[test/CPU-B_passthrough](test/CPU-B_passthrough)**, which bridges the CPU-B
+USB-C port to CPU-A and touches nothing else.
 
 ## Status
 
