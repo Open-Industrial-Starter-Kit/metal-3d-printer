@@ -1,0 +1,51 @@
+;;;;;;;;;;;;;;;;;;;;MASTER CODE (SM0);;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+.program xy2_100
+.side_set 1 opt      ; 1 side-set bits: (bit1 SYNC, bit0 CLK)
+
+.wrap_target
+
+loop_start:
+    mov osr, x
+    set y, 18
+bitloop:
+    out pins, 1         side 0b1 [6]   ; output 1 bit to XDATA,SYNC=1,CLK=1
+    jmp !x,  lastbit    side 0b1       ; if X==0 -> last ,SYNC=1,CLK=1
+    jmp y--, bitloop    side 0b0 [7]   ; decrement and loop ,SYNC=1,CLK=0
+lastbit:
+    out pins, 1         side 0b1 [5]   ; output 1 bit to XDATA,SYNC=0,CLK=1
+    nop                 side 0b0 [3]   ; SYNC=1,CLK=0
+
+
+    ; Try to fetch a new word (nonblocking)
+    pull noblock     ; if FIFO empty, OSR remains unchanged
+    mov x, osr       ; store new word in X (or old word if none)
+
+    jmp loop_start
+
+.wrap
+;;;;;;;;;;;;;;;;;;;;SLAVE CODE (SM1);;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+.program xy2_slave
+.side_set 1 opt
+
+.wrap_target
+
+loop_starts:
+    mov osr, x
+    set y, 18
+bitloops:
+    out pins, 1          side 0b1 [6]   ;
+    jmp !x,  lastbits    side 0b1       ;
+    jmp y--, bitloops    side 0b1 [7]   ;
+lastbits:
+    out pins, 1          side 0b0 [5]   ;
+    nop                  side 0b0 [3]   ;
+
+
+    ; Try to fetch a new word (nonblocking)
+    pull noblock     ; if FIFO empty, OSR remains unchanged
+    mov x, osr       ; store new word in X (or old word if none)
+
+    jmp loop_starts
+
+.wrap
+;;;;;;;;;;;;;;;;;;;;END of the PIO Code;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

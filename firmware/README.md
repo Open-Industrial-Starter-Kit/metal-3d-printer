@@ -24,7 +24,7 @@ The hardware these firmwares target is documented in **[../pcb](../pcb)**.
 | --- | --- | --- | --- |
 | **[CPU-A](CPU-A)** | CPU-A, motion | Pico SDK, CMake | grblHAL, 5 axes, building for the RP2350B |
 | **[CPU-B](CPU-B)** | CPU-B, main controller | PlatformIO, Arduino-Pico | starting point, not yet ported |
-| CPU-C | CPU-C, galvo and fiber laser | - | *in preparation* |
+| **[CPU-C](CPU-C)** | CPU-C, galvo and fiber laser | Pico SDK, PIO | XY2-100 PIO programs; rest *in preparation* |
 | **[test](test)** | - | PlatformIO / Pico SDK | small bring-up firmwares, one subsystem each |
 
 Both trees are the firmwares of the [Piccola CNC](https://www.piccolacnc.com/) taken
