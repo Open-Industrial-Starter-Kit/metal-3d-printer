@@ -59,8 +59,9 @@
 #define Z_ENABLE_PIN            24
 
 // Define homing/hard limit switch input pins.
-#define X_LIMIT_PIN             6 // pre 1.0 -> 5
-#define Y_LIMIT_PIN             5 // pre 1.0 -> 6
+// Control Board V2 uses LIMX=GP5, LIMY=GP6 (Piccola CNC has these swapped).
+#define X_LIMIT_PIN             5
+#define Y_LIMIT_PIN             6
 #define Z_LIMIT_PIN             4 // pre 1.0 -> 3
 #define LIMIT_INMODE            GPIO_MAP
 
@@ -92,7 +93,10 @@
 #define AUXOUTPUT3_PORT         GPIO_OUTPUT  // Spindle enable
 #define AUXOUTPUT3_PIN          33
 #define AUXOUTPUT4_PORT         GPIO_OUTPUT  // Spindle PWM
-#define AUXOUTPUT4_PIN          2//35
+// Control Board V2: Laser1PWM is GP35. Piccola CNC moved this to GP2 because
+// the RP2350A has no GP35, but GP2 is LIMB here and collides with M4_LIMIT_PIN
+// as soon as the B axis is enabled.
+#define AUXOUTPUT4_PIN          35
 #define AUXOUTPUT5_PORT         GPIO_OUTPUT  // Spindle direction
 #define AUXOUTPUT5_PIN          34
 #define AUXOUTPUT6_PORT         GPIO_OUTPUT  // Coolant flood

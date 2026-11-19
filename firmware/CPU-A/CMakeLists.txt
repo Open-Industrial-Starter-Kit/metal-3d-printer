@@ -118,6 +118,9 @@ else()
 target_compile_definitions(grblHAL PUBLIC RP_MCU=2350)
 endif()
 target_compile_definitions(grblHAL PUBLIC RP2040)
+# OISK Metal 3D Printer: X and Y move the laser head, Z the build piston,
+# A the powder reserve piston, B the recoater blade.
+target_compile_definitions(grblHAL PUBLIC N_AXIS=5)
 # Bench testing: drive the grblHAL stream from the CPU-A USB-C port instead of
 # the UART0 link to CPU-B. Leave OFF for the machine build.
 if(ADD_USB_SERIAL)
