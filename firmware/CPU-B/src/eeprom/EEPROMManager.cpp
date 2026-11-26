@@ -3,6 +3,15 @@
 #include "../Config.h"
 #include "../util/ArrayUtil.h"
 
+// EEPROM record layout. Each record is stored back-to-back from EEPROM_START_ADDRESS and is
+// validated on read through its checkChar, so a record that was never written (or whose offset
+// moved because the layout changed) reads as uninitialised and the caller falls back to its
+// defaults. To add a record: append it at the end of the chain, i.e. offset =
+// EEPROM_START_ADDRESS + sizeof(every record already declared above it).
+//
+//   0                                  DebuggingSettings
+//   sizeof(DebuggingSettings)          JsonSettings
+
 bool EEPROMManager::clearEEPROM() {
 
     EEPROM.begin(EEPROM_SIZE);
@@ -15,38 +24,14 @@ bool EEPROMManager::clearEEPROM() {
 
 }
 
-NetworkSettings EEPROMManager::readNetworkSettings() {
 
-    NetworkSettings networkSettings;
-
-    arrayUtil.clearCharArray(networkSettings.apSsid, ACCESS_POINT_SSID_CHARS);
-    arrayUtil.clearCharArray(networkSettings.apPassword, ACCESS_POINT_PASSWORD_CHARS);
-
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS, networkSettings);
-    EEPROM.end();
-
-    return networkSettings;
-
-}
-
-bool EEPROMManager::saveNetworkSettings(NetworkSettings networkSettings) {
-
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS, networkSettings);
-    bool success = EEPROM.commit();
-    EEPROM.end();
-
-    return success;
-
-}
 
 DebuggingSettings EEPROMManager::readDebuggingSettings() {
 
     DebuggingSettings debuggingSettings;
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings), debuggingSettings);
+    EEPROM.get(EEPROM_START_ADDRESS, debuggingSettings);
     EEPROM.end();
 
     return debuggingSettings;
@@ -56,7 +41,7 @@ DebuggingSettings EEPROMManager::readDebuggingSettings() {
 bool EEPROMManager::saveDebuggingSettings(DebuggingSettings debuggingSettings) {
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings), debuggingSettings);
+    EEPROM.put(EEPROM_START_ADDRESS, debuggingSettings);
     bool success = EEPROM.commit();
     EEPROM.end();
 
@@ -69,7 +54,7 @@ JsonSettings EEPROMManager::readJsonSettings() {
     JsonSettings jsonSettings;
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings), jsonSettings);
+    EEPROM.get(EEPROM_START_ADDRESS + sizeof(DebuggingSettings), jsonSettings);
     EEPROM.end();
 
     return jsonSettings;
@@ -79,7 +64,7 @@ JsonSettings EEPROMManager::readJsonSettings() {
 bool EEPROMManager::saveJsonSettings(JsonSettings jsonSettings) {
 
     EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings), jsonSettings);
+    EEPROM.put(EEPROM_START_ADDRESS + sizeof(DebuggingSettings), jsonSettings);
     bool success = EEPROM.commit();
     EEPROM.end();
 
@@ -87,29 +72,7 @@ bool EEPROMManager::saveJsonSettings(JsonSettings jsonSettings) {
 
 }
 
-MachineNameSettings EEPROMManager::readMachineNameSettings() {
 
-    MachineNameSettings machineNameSettings;
-    arrayUtil.clearCharArray(machineNameSettings.machineName, MACHINE_NAME_CHARS);
-
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings), machineNameSettings);
-    EEPROM.end();
-
-    return machineNameSettings;
-
-}
-
-bool EEPROMManager::saveMachineNameSettings(MachineNameSettings machineNameSettings) {
-
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings), machineNameSettings);
-    bool success = EEPROM.commit();
-    EEPROM.end();
-
-    return success;
-
-}
 
 
 

@@ -34,7 +34,6 @@ typedef struct {
   bool debuggingMacroBuffer;
   bool debuggingSDCard;
   bool debuggingJson;
-  bool debuggingNetwork;
   bool debuggingEEPROM;
   bool debuggingJob;
   bool benchmarking;
@@ -194,33 +193,12 @@ typedef struct {
 // This machine has no radio. The network transport is the W5500 Ethernet
 // controller on SPI0, which is not implemented yet.
 //
-// The NetworkSettings block below is kept even though nothing uses it at
 // runtime: every EEPROM region is addressed as a running sum that starts with
-// sizeof(NetworkSettings), so dropping it would move every other settings
 // block and invalidate what is already stored on a board. It is the natural
 // place for the Ethernet settings (DHCP, static IP, port) when those land.
 #define NETWORK_CHECK_DELAY 100
-#define DEFAULT_NETWORK_RESPONSE_BUFFER_SIZE 512
-#define DEFAULT_NETWORK_AP_SSID_PREFIX "MetalPrinter_"
-#define DEFAULT_NETWORK_AP_PASSWORD "metalprinter"
-#define DEFAULT_HOTSPOT_ENABLED true
-#define DEFAULT_NETWORK_CLIENT_SSID "Client SSID"
-#define DEFAULT_NETWORK_CLIENT_PASSWORD "Client Password"
 
-#define ACCESS_POINT_SSID_CHARS 100
-#define ACCESS_POINT_PASSWORD_CHARS 100
 
-//network settings struct, see the NETWORK note above
-typedef struct {
-
-  char apSsid[ACCESS_POINT_SSID_CHARS];
-  char apPassword[ACCESS_POINT_PASSWORD_CHARS];
-  char clientSsid[ACCESS_POINT_SSID_CHARS];
-  char clientPassword[ACCESS_POINT_PASSWORD_CHARS];
-  bool hotspotEnabled;
-  char checkChar;;
-
-} NetworkSettings;
 
 //Sync actions
 //definition of the struct that will keep track of the sync actions
@@ -347,8 +325,6 @@ typedef struct {
 
 //Machine name
 #define MACHINE_NAME_MAX_CHARS 30
-#define MACHINE_NAME_CHARS (MACHINE_NAME_MAX_CHARS + 1)
-#define DEFAULT_MACHINE_NAME "Metal 3D Printer #1"
 
 //Tool length probe
 // Reference Z: machine Z coordinate of the probe plate top surface when resting on the bed,
@@ -361,12 +337,6 @@ typedef struct {
 
 } JsonSettings;
 
-typedef struct {
-
-  char machineName[MACHINE_NAME_CHARS];
-  char checkChar; //this char is used to check if the struct has been initialized or not
-
-} MachineNameSettings;
 
 
 

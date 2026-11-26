@@ -178,8 +178,6 @@ JsonValueGetType JsonUtil::getJsonGetType(JsonDocument json) {
             return OPENED_GCODE_FILE_TOTAL_LINES;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_NEXT_FILE_DOWNLOAD_CHUNK_STR) == 0)
             return NEXT_FILE_DOWNLOAD_CHUNK;
-        else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_WIFI_SETTINGS_STR) == 0)
-            return GET_WIFI_SETTINGS;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_DEBUGGING_SETTINGS_STR) == 0)
             return GET_DEBUGGING_SETTINGS;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_CURRENT_FEED_RATE_STR) == 0)
@@ -198,8 +196,6 @@ JsonValueGetType JsonUtil::getJsonGetType(JsonDocument json) {
             return GET_ELECTRICAL_CURRENT;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_LASER_SENSOR_ENABLED_STR) == 0)
             return GET_LASER_SENSOR_ENABLED;
-        else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_MACHINE_NAME_STR) == 0)
-            return GET_MACHINE_NAME;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_FIRMWARE_VERSION_STR) == 0)
             return GET_FIRMWARE_VERSION;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_OPENED_FILE_BOUNDS_STR) == 0)
@@ -227,9 +223,7 @@ JsonValueSetType JsonUtil::getJsonSetType(JsonDocument json) {
 
     if(!json[JSON_KEY_SET_TYPE_STR].isNull()) {
 
-        if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_WIFI_SETTINGS_STR) == 0)
-            return SET_WIFI_SETTINGS;
-        else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_BASE_STR) == 0)
+        if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_BASE_STR) == 0)
             return SET_DEBUGGING_BASE;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_SPINDLE_STR) == 0)
             return SET_DEBUGGING_SPINDLE;
@@ -241,8 +235,6 @@ JsonValueSetType JsonUtil::getJsonSetType(JsonDocument json) {
             return SET_DEBUGGING_SD_CARD;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_JSON_STR) == 0)
             return SET_DEBUGGING_JSON;
-        else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_NETWORK_STR) == 0)
-            return SET_DEBUGGING_NETWORK;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_EEPROM_STR) == 0)
             return SET_DEBUGGING_EEPROM;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_JOB_STR) == 0)
@@ -253,10 +245,6 @@ JsonValueSetType JsonUtil::getJsonSetType(JsonDocument json) {
             return SET_BENCHMARK_MINIMUM_MS;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_JSON_SETTINGS_STR) == 0)
             return SET_JSON_SETTINGS;
-        else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_MACHINE_NAME_STR) == 0)
-            return SET_MACHINE_NAME;
-        else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_HOTSPOT_SETTINGS_STR) == 0)
-            return SET_HOTSPOT_SETTINGS;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DRY_RUN_STR) == 0)
             return SET_DRY_RUN;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_JOB_X_STR) == 0)

@@ -87,8 +87,6 @@ bool isCurrentSensorInitialized = false;
 bool isRotaryAxisConnected = false;
 
 //mobileWebsocketConnection status
-bool isClientWiFiConnected = false;
-bool isClientWiFiConnecting = false;
 
 //startup auto-homing
 bool autoHomingPending = false;
@@ -233,10 +231,8 @@ float wcoY = 0.0;
 float wcoZ = 0.0;
 float wcoA = 0.0;
 
-NetworkSettings networkSettings;
 DebuggingSettings debuggingSettings;
 JsonSettings jsonSettings;
-MachineNameSettings machineNameSettings;
 
 // Machine usage meter — accumulated in RAM, persisted to a hidden SD file. Read-only via API.
 uint32_t usagePowerOnSeconds = 0;
@@ -488,7 +484,6 @@ void setup() {
   debuggingSettings.debuggingMacroBuffer = DEFAULT_DEBUGGING_MACRO_BUFFER;
   debuggingSettings.debuggingSDCard = DEFAULT_DEBUGGING_SD_CARD;
   debuggingSettings.debuggingJson = DEFAULT_DEBUGGING_JSON;
-  debuggingSettings.debuggingNetwork = DEFAULT_DEBUGGING_NETWORK;
   debuggingSettings.debuggingEEPROM = DEFAULT_DEBUGGING_EEPROM;
   debuggingSettings.debuggingJob = DEFAULT_DEBUGGING_JOB;
   debuggingSettings.benchmarking = DEFAULT_BENCHMARKING;
@@ -499,24 +494,9 @@ void setup() {
   jsonSettings.enableJsonResponse = DEFAULT_ENABLE_JSON_RESPONSE;
   jsonSettings.checkChar = EEPROM_CHECK_CHAR; //this char is used to check if the struct has been initialized or not, since we will read it from the EEPROM and if it's not initialized it will be filled with null chars
 
-  //init default wifi settings, they will be overwritten by the settings from the EEPROM if they are present, otherwise the default settings will be saved to the EEPROM for future use
-  arrayUtil.clearCharArray(networkSettings.apSsid, ACCESS_POINT_SSID_CHARS);
-  arrayUtil.clearCharArray(networkSettings.apPassword, ACCESS_POINT_PASSWORD_CHARS);
-  arrayUtil.clearCharArray(networkSettings.clientSsid, ACCESS_POINT_SSID_CHARS);
-  arrayUtil.clearCharArray(networkSettings.clientPassword, ACCESS_POINT_PASSWORD_CHARS);
-  arrayUtil.clearCharArray(machineNameSettings.machineName, MACHINE_NAME_CHARS);
   arrayUtil.clearCharArray(firmwareVersion, FIRMWARE_VERSION_CHARS);
   arrayUtil.clearCharArray(jsonResponseCharBuffer, JSON_BUFFER_SIZE); //clear the buffer for the json responses that we will send to the websocket clients, this is needed to avoid sending old data in case we have a json response that is smaller than the previous one stored in the buffer, since we will only overwrite the portion of the buffer corresponding to the new json response, if the new json response is smaller than the previous one we need to clear the buffer to avoid sending old data in the portion of the buffer that is not overwritten by the new json response
   
-  strcat(networkSettings.apSsid, DEFAULT_NETWORK_AP_SSID_PREFIX); // use prefix + device ID as default AP name
-  strcat(networkSettings.apSsid, boardDeviceId);
-  strcat(networkSettings.apPassword, DEFAULT_NETWORK_AP_PASSWORD);
-  strcat(networkSettings.clientSsid, DEFAULT_NETWORK_CLIENT_SSID);
-  strcat(networkSettings.clientPassword, DEFAULT_NETWORK_CLIENT_PASSWORD);
-  networkSettings.hotspotEnabled = DEFAULT_HOTSPOT_ENABLED;
-  networkSettings.checkChar = EEPROM_CHECK_CHAR; //this char is used to check if the struct has been initialized or not, since we will read it from the EEPROM and if it's not initialized it will be filled with null chars
-  strcat(machineNameSettings.machineName, DEFAULT_MACHINE_NAME);
-  machineNameSettings.checkChar = EEPROM_CHECK_CHAR;
 
 
 
@@ -711,36 +691,6 @@ void handleEEPROMSettings(){
 
   }
 
-
-  //networkSettings
-  NetworkSettings tmpWifiSettings;
-  tmpWifiSettings = eepromManager.readNetworkSettings();
-    
-  if(tmpWifiSettings.checkChar == EEPROM_CHECK_CHAR){
-
-    networkSettings = tmpWifiSettings;
-
-    // Guard against uninitialized hotspotEnabled byte from older EEPROM layouts:
-    // any value other than 0 (false) is treated as enabled (true).
-    if(networkSettings.hotspotEnabled != false) networkSettings.hotspotEnabled = true;
-
-
-    if(debuggingSettings.debuggingEEPROM) { 
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln("WiFi settings found in EEPROM, applying settings"); 
-    }
-    
-  }else{
-
-    if(debuggingSettings.debuggingEEPROM) { 
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln("No WiFi settings found in EEPROM, using default settings"); 
-    }
-    
-    eepromManager.saveNetworkSettings(networkSettings);
-
-  }
-
   //JsonSettings
   //we can add more settings here in the future if needed
   JsonSettings tmpJsonSettings;
@@ -766,28 +716,6 @@ void handleEEPROMSettings(){
 
     }
 
-  MachineNameSettings tmpMachineNameSettings;
-  tmpMachineNameSettings = eepromManager.readMachineNameSettings();
-
-  if(tmpMachineNameSettings.checkChar == EEPROM_CHECK_CHAR && tmpMachineNameSettings.machineName[0] != NULL_CHAR){
-
-      machineNameSettings = tmpMachineNameSettings;
-
-      if(debuggingSettings.debuggingEEPROM) {
-        serialManager.USBSerialPrint(FROM_CPUB);
-        serialManager.USBSerialPrintln("Machine name found in EEPROM, applying settings");
-      }
-
-    }else{
-
-      if(debuggingSettings.debuggingEEPROM) {
-        serialManager.USBSerialPrint(FROM_CPUB);
-        serialManager.USBSerialPrintln("No machine name found in EEPROM, using default settings");
-      }
-
-      eepromManager.saveMachineNameSettings(machineNameSettings);
-
-    }
 
 
 
@@ -5511,64 +5439,6 @@ void handleJsonSet(){
     break;
 
 
-    case SET_WIFI_SETTINGS:
-
-    if(isJobRunning || isJobPaused){
-
-      if(jsonSettings.enableJsonResponse){
-  
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_JOB_RUNNING_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-  
-      }
-
-      break;
-
-    }
-
-    if(!receivedJsonBuffer[JSON_KEY_AP_WIFI_SSID_STR].isNull() && !receivedJsonBuffer[JSON_KEY_AP_WIFI_PASSWORD_STR].isNull()
-    && !receivedJsonBuffer[JSON_KEY_CLIENT_WIFI_SSID_STR].isNull() && !receivedJsonBuffer[JSON_KEY_CLIENT_WIFI_PASSWORD_STR].isNull()){
-      
-        arrayUtil.clearCharArray(networkSettings.apSsid, ACCESS_POINT_SSID_CHARS);
-        arrayUtil.clearCharArray(networkSettings.apPassword, ACCESS_POINT_PASSWORD_CHARS);
-        arrayUtil.clearCharArray(networkSettings.clientSsid, ACCESS_POINT_SSID_CHARS);
-        arrayUtil.clearCharArray(networkSettings.clientPassword, ACCESS_POINT_PASSWORD_CHARS);
-
-        strcat(networkSettings.apSsid, receivedJsonBuffer[JSON_KEY_AP_WIFI_SSID_STR].as<const char*>());
-        strcat(networkSettings.apPassword, receivedJsonBuffer[JSON_KEY_AP_WIFI_PASSWORD_STR].as<const char*>());
-        strcat(networkSettings.clientSsid, receivedJsonBuffer[JSON_KEY_CLIENT_WIFI_SSID_STR].as<const char*>());
-        strcat(networkSettings.clientPassword, receivedJsonBuffer[JSON_KEY_CLIENT_WIFI_PASSWORD_STR].as<const char*>());
-
-        eepromManager.saveNetworkSettings(networkSettings);
-  
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-
-    }else{
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-    }
-
-    break;
 
     case SET_DEBUGGING_BASE:
 
@@ -5757,36 +5627,6 @@ void handleJsonSet(){
 
       break;
 
-      case SET_DEBUGGING_NETWORK:
-
-      if(!receivedJsonBuffer[JSON_KEY_DEBUGGING_NETWORK_STR].isNull()){
-
-        debuggingSettings.debuggingNetwork = receivedJsonBuffer[JSON_KEY_DEBUGGING_NETWORK_STR].as<bool>();
-        eepromManager.saveDebuggingSettings(debuggingSettings);
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-      
-      }else{
-      
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-      }
-
-    break;
 
     case SET_DEBUGGING_EEPROM:
     
@@ -5936,157 +5776,7 @@ void handleJsonSet(){
 
     break;
 
-    case SET_MACHINE_NAME:
 
-      if(receivedJsonBuffer[JSON_KEY_MACHINE_NAME_STR].isNull()){
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-        break;
-
-      }
-
-      {
-        const char* requestedMachineName = receivedJsonBuffer[JSON_KEY_MACHINE_NAME_STR].as<const char*>();
-
-        if(requestedMachineName == nullptr || strlen(requestedMachineName) == 0 || strlen(requestedMachineName) > MACHINE_NAME_MAX_CHARS){
-
-          if(jsonSettings.enableJsonResponse){
-
-            clearResponseJsonBuffer();
-            responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-            responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_INVALID_JSON_VALUE_STR;
-            serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-            sendJsonResponse();
-
-          }
-
-          break;
-
-        }
-
-        arrayUtil.clearCharArray(machineNameSettings.machineName, MACHINE_NAME_CHARS);
-        strncpy(machineNameSettings.machineName, requestedMachineName, MACHINE_NAME_MAX_CHARS);
-        machineNameSettings.machineName[MACHINE_NAME_MAX_CHARS] = NULL_CHAR;
-        machineNameSettings.checkChar = EEPROM_CHECK_CHAR;
-        eepromManager.saveMachineNameSettings(machineNameSettings);
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-          responseJsonBuffer[JSON_KEY_MACHINE_NAME_STR] = machineNameSettings.machineName;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-      }
-
-    break;
-
-    case SET_HOTSPOT_SETTINGS:
-
-      if(isJobRunning || isJobPaused){
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_JOB_RUNNING_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-        break;
-
-      }
-
-      if(!receivedJsonBuffer[JSON_KEY_AP_WIFI_SSID_STR].isNull() && !receivedJsonBuffer[JSON_KEY_AP_WIFI_PASSWORD_STR].isNull()){
-
-        {
-          const char* requestedApSsid = receivedJsonBuffer[JSON_KEY_AP_WIFI_SSID_STR].as<const char*>();
-          const char* requestedApPassword = receivedJsonBuffer[JSON_KEY_AP_WIFI_PASSWORD_STR].as<const char*>();
-
-          if(requestedApSsid == nullptr || strlen(requestedApSsid) == 0 || strlen(requestedApSsid) > ACCESS_POINT_SSID_CHARS - 1
-          || requestedApPassword == nullptr || strlen(requestedApPassword) == 0 || strlen(requestedApPassword) > ACCESS_POINT_PASSWORD_CHARS - 1){
-
-            if(jsonSettings.enableJsonResponse){
-
-              clearResponseJsonBuffer();
-              responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-              responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_INVALID_JSON_VALUE_STR;
-              serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-              sendJsonResponse();
-
-            }
-
-            break;
-
-          }
-
-          arrayUtil.clearCharArray(networkSettings.apSsid, ACCESS_POINT_SSID_CHARS);
-          arrayUtil.clearCharArray(networkSettings.apPassword, ACCESS_POINT_PASSWORD_CHARS);
-
-          strncpy(networkSettings.apSsid, requestedApSsid, ACCESS_POINT_SSID_CHARS - 1);
-          networkSettings.apSsid[ACCESS_POINT_SSID_CHARS - 1] = NULL_CHAR;
-          strncpy(networkSettings.apPassword, requestedApPassword, ACCESS_POINT_PASSWORD_CHARS - 1);
-          networkSettings.apPassword[ACCESS_POINT_PASSWORD_CHARS - 1] = NULL_CHAR;
-
-        }
-
-      }
-
-      // Update hotspotEnabled if the key is present (may be sent alone or alongside SSID/password)
-      if(!receivedJsonBuffer[JSON_KEY_HOTSPOT_ENABLED_STR].isNull()){
-
-        networkSettings.hotspotEnabled = receivedJsonBuffer[JSON_KEY_HOTSPOT_ENABLED_STR].as<bool>();
-
-      }
-
-      // At least one field must have been provided
-      if(receivedJsonBuffer[JSON_KEY_AP_WIFI_SSID_STR].isNull() && receivedJsonBuffer[JSON_KEY_HOTSPOT_ENABLED_STR].isNull()){
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-        break;
-
-      }
-
-      networkSettings.checkChar = EEPROM_CHECK_CHAR;
-      eepromManager.saveNetworkSettings(networkSettings);
-
-      if(jsonSettings.enableJsonResponse){
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-        responseJsonBuffer[JSON_RESPONSE_KEY_AP_WIFI_SSID_STR] = networkSettings.apSsid;
-        responseJsonBuffer[JSON_KEY_AP_WIFI_PASSWORD_STR] = networkSettings.apPassword;
-        responseJsonBuffer[JSON_KEY_HOTSPOT_ENABLED_STR] = networkSettings.hotspotEnabled;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-
-    break;
 
 
 
@@ -6726,39 +6416,6 @@ void handleJsonGet(){
 
     break;
 
-  case GET_WIFI_SETTINGS:
-
-    if(networkSettings.apSsid[0] != NULL_CHAR){
-
-      if(jsonSettings.enableJsonResponse) {
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-        responseJsonBuffer[JSON_KEY_AP_WIFI_SSID_STR] = networkSettings.apSsid;
-        responseJsonBuffer[JSON_KEY_AP_WIFI_PASSWORD_STR] = networkSettings.apPassword;
-        responseJsonBuffer[JSON_KEY_CLIENT_WIFI_SSID_STR] = networkSettings.clientSsid;
-        responseJsonBuffer[JSON_KEY_CLIENT_WIFI_PASSWORD_STR] = networkSettings.clientPassword;
-        responseJsonBuffer[JSON_KEY_HOTSPOT_ENABLED_STR] = networkSettings.hotspotEnabled;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-        
-      }
-
-    }else{
-
-      if(jsonSettings.enableJsonResponse) {
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_WIFI_SETTINGS_NOT_FOUND_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-    }
-
-    }
-
-    break;
 
   case GET_DEBUGGING_SETTINGS:
 
@@ -6773,7 +6430,6 @@ void handleJsonGet(){
       responseJsonBuffer[JSON_KEY_DEBUGGING_MACRO_BUFFER_STR] = debuggingSettings.debuggingMacroBuffer;
       responseJsonBuffer[JSON_KEY_DEBUGGING_SD_CARD_STR] = debuggingSettings.debuggingSDCard;
       responseJsonBuffer[JSON_KEY_DEBUGGING_JSON_STR] = debuggingSettings.debuggingJson;
-      responseJsonBuffer[JSON_KEY_DEBUGGING_NETWORK_STR] = debuggingSettings.debuggingNetwork;
       responseJsonBuffer[JSON_KEY_DEBUGGING_EEPROM_STR] = debuggingSettings.debuggingEEPROM;
       responseJsonBuffer[JSON_KEY_DEBUGGING_JOB_STR] = debuggingSettings.debuggingJob;
 
@@ -6907,19 +6563,6 @@ void handleJsonGet(){
     break;
 
 
-  case GET_MACHINE_NAME:
-
-    if(jsonSettings.enableJsonResponse) {
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_MACHINE_NAME_STR] = machineNameSettings.machineName;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
 
   case GET_FIRMWARE_VERSION:
 

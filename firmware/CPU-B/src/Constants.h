@@ -161,8 +161,6 @@ enum JsonCallKey {
 //other key that do not require enums
 #define JSON_KEY_FILENAME_STR "filename"
 #define JSON_KEY_NEW_FILENAME_STR "newFilename"
-#define JSON_KEY_AP_WIFI_SSID_STR "apWifiSSID"
-#define JSON_KEY_AP_WIFI_PASSWORD_STR "apWifiPassword"
 #define JSON_KEY_FILE_LINES_STR "filelines"
 #define JSON_KEY_FILE_DATE_STR "fileDate"
 #define JSON_KEY_CRC16_STR "crc"
@@ -315,7 +313,6 @@ enum JsonValueGetType {
   JOB_PROGRESS,
   OPENED_GCODE_FILE_TOTAL_LINES,
   NEXT_FILE_DOWNLOAD_CHUNK,
-  GET_WIFI_SETTINGS,
   GET_DEBUGGING_SETTINGS,
   GET_CURRENT_FEED_RATE,
   GET_CURRENT_SPINDLE_RPM,
@@ -325,7 +322,6 @@ enum JsonValueGetType {
   GET_SPINDLE_OVERRIDE,
   GET_ELECTRICAL_CURRENT,
   GET_LASER_SENSOR_ENABLED,
-  GET_MACHINE_NAME,
   GET_FIRMWARE_VERSION,
   GET_OPENED_FILE_BOUNDS,
   GET_MATERIAL_CENTER_POSITION,
@@ -355,7 +351,6 @@ enum JsonValueGetType {
 #define JSON_VALUE_JOB_PROGRESS_STR "jobProgress"
 #define JSON_VALUE_OPENED_GCODE_FILE_TOTAL_LINES_STR "openedGcodeFileTotalLines"
 #define JSON_VALUE_NEXT_FILE_DOWNLOAD_CHUNK_STR "nextFileDownloadChunk"
-#define JSON_VALUE_GET_WIFI_SETTINGS_STR "getWifiSettings"
 #define JSON_VALUE_GET_DEBUGGING_SETTINGS_STR "getDebuggingSettings"
 #define JSON_VALUE_GET_CURRENT_FEED_RATE_STR "currentFeedRate"
 #define JSON_VALUE_GET_CURRENT_SPINDLE_RPM_STR "currentSpindleRPM"
@@ -365,7 +360,6 @@ enum JsonValueGetType {
 #define JSON_VALUE_GET_SPINDLE_OVERRIDE_STR "getSpindleOverride"
 #define JSON_VALUE_GET_ELECTRICAL_CURRENT_STR "electricalCurrent"
 #define JSON_VALUE_GET_LASER_SENSOR_ENABLED_STR "laserSensorEnabled"
-#define JSON_VALUE_GET_MACHINE_NAME_STR "machineName"
 #define JSON_VALUE_GET_FIRMWARE_VERSION_STR "firmwareVersion"
 #define JSON_VALUE_GET_OPENED_FILE_BOUNDS_STR "getOpenedFileBounds"
 #define JSON_VALUE_GET_MATERIAL_CENTER_POSITION_STR "getMaterialCenterPosition"
@@ -376,21 +370,17 @@ enum JsonValueGetType {
 
 //values for JSON_KEY_SET_TYPE
 enum JsonValueSetType {
-  SET_WIFI_SETTINGS,
   SET_DEBUGGING_BASE,
   SET_DEBUGGING_SPINDLE,
   SET_DEBUGGING_STATUS,
   SET_DEBUGGING_MACRO_BUFFER,
   SET_DEBUGGING_SD_CARD,
   SET_DEBUGGING_JSON,
-  SET_DEBUGGING_NETWORK,
   SET_DEBUGGING_EEPROM,
   SET_DEBUGGING_JOB,
   SET_BENCHMARKING,
   SET_BENCHMARK_MINIMUM_MS,
   SET_JSON_SETTINGS,
-  SET_MACHINE_NAME,
-  SET_HOTSPOT_SETTINGS,
   SET_DRY_RUN,
   SET_JOB_X,
   SET_JOB_Y,
@@ -400,21 +390,17 @@ enum JsonValueSetType {
   UNKNOWN_JSON_SET_TYPE
 };
 
-#define JSON_VALUE_SET_WIFI_SETTINGS_STR "setWifiSettings"
 #define JSON_VALUE_SET_DEBUGGING_BASE_STR "setDebuggingBase"
 #define JSON_VALUE_SET_DEBUGGING_SPINDLE_STR "setDebuggingSpindle"
 #define JSON_VALUE_SET_DEBUGGING_STATUS_STR "setDebuggingStatus"
 #define JSON_VALUE_SET_DEBUGGING_MACRO_BUFFER_STR "setDebuggingMacroBuffer"
 #define JSON_VALUE_SET_DEBUGGING_SD_CARD_STR "setDebuggingSDCard"
 #define JSON_VALUE_SET_DEBUGGING_JSON_STR "setDebuggingJson"
-#define JSON_VALUE_SET_DEBUGGING_NETWORK_STR "setDebuggingNetwork"
 #define JSON_VALUE_SET_DEBUGGING_EEPROM_STR "setDebuggingEEPROM"
 #define JSON_VALUE_SET_DEBUGGING_JOB_STR "setDebuggingJob"
 #define JSON_VALUE_SET_BENCHMARKING_STR "setBenchmarking"
 #define JSON_VALUE_SET_BENCHMARK_MINIMUM_MS_STR "setBenchmarkMinimumMs"
 #define JSON_VALUE_SET_JSON_SETTINGS_STR "setJsonSettings"
-#define JSON_VALUE_SET_MACHINE_NAME_STR "setMachineName"
-#define JSON_VALUE_SET_HOTSPOT_SETTINGS_STR "setHotspotSettings"
 #define JSON_VALUE_SET_DRY_RUN_STR "setDryRun"
 
 
@@ -471,12 +457,6 @@ enum JsonValueSetType {
 #define JSON_KEY_MAX_FILE_HEIGHT_STR "maxFileHeight"
 #define JSON_KEY_FILE_SHA256_STR "fileSha256"
 #define JSON_KEY_ESTIMATED_DURATION_SECONDS_STR "estimatedDurationSeconds"
-#define JSON_RESPONSE_KEY_AP_WIFI_SSID_STR "apWifiSSID"
-#define JSON_RESPONSE_KEY_AP_WIFI_PASSWORD_STR "apWifiPassword"
-#define JSON_KEY_CLIENT_WIFI_SSID_STR "clientWifiSSID"
-#define JSON_KEY_CLIENT_WIFI_PASSWORD_STR "clientWifiPassword"
-#define JSON_KEY_HOTSPOT_ENABLED_STR "hotspotEnabled"
-#define JSON_KEY_MACHINE_NAME_STR "machineName"
 #define JSON_KEY_FIRMWARE_VERSION_STR "firmwareVersion"
 // rather than by rotation, since which way the motor turns depends on the accessory's wiring.
 #define JSON_KEY_SPINDLE_TYPE_STR "spindleType"
@@ -536,7 +516,6 @@ enum JsonValueSetType {
 #define JSON_KEY_DEBUGGING_MACRO_BUFFER_STR "debuggingMacroBuffer"
 #define JSON_KEY_DEBUGGING_SD_CARD_STR "debuggingSDCard"
 #define JSON_KEY_DEBUGGING_JSON_STR "debuggingJson"
-#define JSON_KEY_DEBUGGING_NETWORK_STR "debuggingNetwork"
 #define JSON_KEY_DEBUGGING_EEPROM_STR "debuggingEEPROM"
 #define JSON_KEY_DEBUGGING_JOB_STR "debuggingJob"
 #define JSON_KEY_BENCHMARKING_STR "benchmarking"
@@ -558,7 +537,6 @@ enum JsonValueSetType {
 #define JSON_VALUE_ERROR_FILE_HASH_NOT_FOUND_STR "fileHashNotFound"
 #define JSON_VALUE_ERROR_UNKNOWN_JSON_TYPE_STR "unknownJsonType"
 #define JSON_VALUE_ERROR_UNKNOWN_JSON_COMMAND_TYPE_STR "unknownJsonCommandType"
-#define JSON_VALUE_ERROR_WIFI_SETTINGS_NOT_FOUND_STR "wifiSettingsNotFound"
 #define JSON_VALUE_ERROR_MISSING_JSON_KEY_STR "missingJsonKey"
 #define JSON_VALUE_ERROR_FILE_CREATION_FAILED_STR "fileCreationFailed"
 #define JSON_VALUE_ERROR_FILE_RENAME_FAILED_STR "fileRenameFailed"

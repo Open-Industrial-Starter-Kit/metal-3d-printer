@@ -10,8 +10,6 @@ public:
     
     bool clearEEPROM();
     
-    NetworkSettings readNetworkSettings();
-    bool saveNetworkSettings(NetworkSettings networkSettings);
     
     DebuggingSettings readDebuggingSettings();
     bool saveDebuggingSettings(DebuggingSettings debuggingSettings);
@@ -19,8 +17,6 @@ public:
     JsonSettings readJsonSettings();
     bool saveJsonSettings(JsonSettings jsonSettings);
 
-    MachineNameSettings readMachineNameSettings();
-    bool saveMachineNameSettings(MachineNameSettings machineNameSettings);
 
 
 
