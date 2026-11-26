@@ -7,8 +7,6 @@ public:
 bool blinkLedTimer();
 void resetBlinkLedTimer();
 
-bool spindleTimer();
-void resetSpindleTimer();
 
 bool statusTimer();
 void resetStatusTimer();
@@ -22,7 +20,6 @@ void resetWebSocketPingTimer();
 private:
 
 unsigned long startTimeBlinkLed = 0.0;
-unsigned long startTimeSpindle = 0.0;
 unsigned long startTimeStatus = 0.0;
 unsigned long startTimeNetworkCheck = 0.0;
 unsigned long startTimeWebSocket = 0.0;

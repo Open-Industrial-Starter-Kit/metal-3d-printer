@@ -22,20 +22,10 @@ public:
     MachineNameSettings readMachineNameSettings();
     bool saveMachineNameSettings(MachineNameSettings machineNameSettings);
 
-    ToolLengthReferenceSettings readToolLengthReferenceSettings();
-    bool saveToolLengthReferenceSettings(ToolLengthReferenceSettings settings);
 
-    LaserOffsetZeroSettings readLaserOffsetZeroSettings();
-    bool saveLaserOffsetZeroSettings(LaserOffsetZeroSettings settings);
 
-    HousingSettings readHousingSettings();
-    bool saveHousingSettings(HousingSettings settings);
 
-    ProbeHeightSettings readProbeHeightSettings();
-    bool saveProbeHeightSettings(ProbeHeightSettings settings);
 
-    BrushlessMotorSettings readBrushlessMotorSettings();
-    bool saveBrushlessMotorSettings(BrushlessMotorSettings settings);
 
 
 private:

@@ -55,16 +55,8 @@ JsonValueCommandType JsonUtil::getJsonCommandType(JsonDocument json) {
             return INSTALL_ROTARY_MACRO;
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_FRAME_JOB_MACRO_STR) == 0)
             return FRAME_JOB_MACRO;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_PROBE_SET_JOB_Z0_MACRO_STR) == 0)
-            return PROBE_SET_JOB_Z0_MACRO;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_PROBE_TOOL_LENGTH_MACRO_STR) == 0)
-            return PROBE_TOOL_LENGTH_MACRO;
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_RETURN_JOB_XY0_MACRO_STR) == 0)
             return RETURN_JOB_XY0_MACRO;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_MOVE_TO_LASER_OFFSET_ZERO_MACRO_STR) == 0)
-            return MOVE_TO_LASER_OFFSET_ZERO_MACRO;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_CONFIRM_MATERIAL_CENTER_AND_SET_ZERO_STR) == 0)
-            return CONFIRM_MATERIAL_CENTER_AND_SET_ZERO;
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_OPEN_GCODE_FILE_STR) == 0)
             return OPEN_GCODE_FILE;
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_CLOSE_GCODE_FILE_STR) == 0)
@@ -133,24 +125,6 @@ JsonValueCommandType JsonUtil::getJsonCommandType(JsonDocument json) {
             return SET_FEED_RATE_OVERRIDE;
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_SET_SPINDLE_OVERRIDE_STR) == 0)
             return SET_SPINDLE_OVERRIDE;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_PROBE_LASER_EDGES_STR) == 0)
-            return PROBE_LASER_EDGES;
-            else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_PROBE_LASER_MATERIAL_BOUNDS_STR) == 0)
-                return PROBE_LASER_MATERIAL_BOUNDS;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_START_HEIGHT_MAP_SCAN_STR) == 0)
-            return START_HEIGHT_MAP_SCAN;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_ENABLE_HEIGHT_MAP_COMPENSATION_STR) == 0)
-            return ENABLE_HEIGHT_MAP_COMPENSATION;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_DISABLE_HEIGHT_MAP_COMPENSATION_STR) == 0)
-            return DISABLE_HEIGHT_MAP_COMPENSATION;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_CLEAR_HEIGHT_MAP_STR) == 0)
-            return CLEAR_HEIGHT_MAP;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_START_POINT_CLOUD_SCAN_STR) == 0)
-            return START_POINT_CLOUD_SCAN;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_ABORT_POINT_CLOUD_SCAN_STR) == 0)
-            return ABORT_POINT_CLOUD_SCAN;
-        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_ABORT_HEIGHT_MAP_SCAN_STR) == 0)
-            return ABORT_HEIGHT_MAP_SCAN;
         else
             return UNKNOWN_JSON_COMMAND_TYPE;
 
@@ -224,34 +198,14 @@ JsonValueGetType JsonUtil::getJsonGetType(JsonDocument json) {
             return GET_ELECTRICAL_CURRENT;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_LASER_SENSOR_ENABLED_STR) == 0)
             return GET_LASER_SENSOR_ENABLED;
-        else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_DISTANCE_LASER_MM_STR) == 0)
-            return GET_DISTANCE_LASER_MM;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_MACHINE_NAME_STR) == 0)
             return GET_MACHINE_NAME;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_FIRMWARE_VERSION_STR) == 0)
             return GET_FIRMWARE_VERSION;
-        else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_TOOL_LENGTH_STR) == 0)
-            return GET_TOOL_LENGTH;
-        else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_TOOL_LENGTH_REFERENCES_STR) == 0)
-            return GET_TOOL_LENGTH_REFERENCES;
-        else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_PROBE_HEIGHT_STR) == 0)
-            return GET_PROBE_HEIGHT;
-        else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_LASER_OFFSET_ZERO_SETTINGS_STR) == 0)
-            return GET_LASER_OFFSET_ZERO_SETTINGS;
-        else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_BRUSHLESS_MOTOR_SETTINGS_STR) == 0)
-            return GET_BRUSHLESS_MOTOR_SETTINGS;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_OPENED_FILE_BOUNDS_STR) == 0)
             return GET_OPENED_FILE_BOUNDS;
-        else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_HOUSING_SETTINGS_STR) == 0)
-            return GET_HOUSING_SETTINGS;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_MATERIAL_CENTER_POSITION_STR) == 0)
             return GET_MATERIAL_CENTER_POSITION;
-        else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_HEIGHT_MAP_STATUS_STR) == 0)
-            return GET_HEIGHT_MAP_STATUS;
-        else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_HEIGHT_MAP_POINTS_STR) == 0)
-            return GET_HEIGHT_MAP_POINTS;
-        else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_POINT_CLOUD_STATUS_STR) == 0)
-            return GET_POINT_CLOUD_STATUS;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_MACHINE_USAGE_STR) == 0)
             return GET_MACHINE_USAGE;
         else if(strcmp(jsonObject[JSON_KEY_GET_TYPE_STR], JSON_VALUE_GET_JOB_HISTORY_STR) == 0)
@@ -315,16 +269,6 @@ JsonValueSetType JsonUtil::getJsonSetType(JsonDocument json) {
             return SET_JOB_XYZ;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_JOB_A_STR) == 0)
             return SET_JOB_A;
-        else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_TOOL_LENGTH_REFERENCES_STR) == 0)
-            return SET_TOOL_LENGTH_REFERENCES;
-        else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_PROBE_HEIGHT_STR) == 0)
-            return SET_PROBE_HEIGHT;
-        else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_LASER_OFFSET_ZERO_SETTINGS_STR) == 0)
-            return SET_LASER_OFFSET_ZERO_SETTINGS;
-        else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_BRUSHLESS_MOTOR_SETTINGS_STR) == 0)
-            return SET_BRUSHLESS_MOTOR_SETTINGS;
-        else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_HOUSING_SETTINGS_STR) == 0)
-            return SET_HOUSING_SETTINGS;
         else
             return UNKNOWN_JSON_SET_TYPE;
 

@@ -28,30 +28,7 @@ void TimerUtil::resetBlinkLedTimer() {
 
 }
 
-void TimerUtil::resetSpindleTimer() {
 
-    startTimeSpindle = millis();
-
-}
-
-bool TimerUtil::spindleTimer() {
-
-  if (startTimeSpindle == 0) {
-
-    startTimeSpindle = millis();
-    return false;
-
-  }
-
-  unsigned long currentTime = millis();
-
-  if ((currentTime - startTimeSpindle) >= SPINDLE_INCREMENT_INTERVAL) {
-    startTimeSpindle = currentTime;
-    return true;
-  }
-
-  return false;
-}
 
 void TimerUtil::resetStatusTimer() {
 

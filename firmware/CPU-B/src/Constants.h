@@ -93,10 +93,6 @@ const unsigned char GRBL_JOG_CANCEL = 0x85;
 #define GRBL_OVERRIDE_COARSE_STEP 10
 
 //Resume spindle restore state machine stages (see handleResumeSpindleOverrideRamp)
-#define RESUME_RESTORE_DROP    0  // paced override drop to GRBL_OVERRIDE_MIN while spindle is stopped
-#define RESUME_RESTORE_RESTART 1  // untoggle 0x9E then resume motion ('~')
-#define RESUME_RESTORE_RAMP    2  // paced override ramp up to target while running
-#define RESUME_RESTORE_CONFIRM 3  // closed-loop verify grbl Ov: == target (+settle) before completing
 
 // Resume feed (motion) ramp stages (see handleResumeFeedRamp). grblHAL ignores feed-
 // override changes during HOLD, so the drop happens AFTER motion resumes.
@@ -125,11 +121,8 @@ enum MachineState {
   UNKNOWN
 };
 
-//Installed spindle variant. Selected at compile time via INSTALLED_SPINDLE_TYPE
 //(see Config.h) and exposed read-only through the JSON API (getSpindleType).
 enum SpindleType {
-  SPINDLE_24V,
-  SPINDLE_48V
 };
 
 #define SPINDLE_TYPE_24V_STR "24V"
@@ -175,12 +168,6 @@ enum JsonCallKey {
 #define JSON_KEY_CRC16_STR "crc"
 #define JSON_KEY_FILE_CHUNK_LINES_STR "fcl"
 #define JSON_KEY_JSON_RESPONSE_STR "jsonResponse"
-#define JSON_KEY_HEIGHT_MAP_SIZE_X_MM_STR "heightMapSizeXmm"
-#define JSON_KEY_HEIGHT_MAP_SIZE_Y_MM_STR "heightMapSizeYmm"
-#define JSON_KEY_HEIGHT_MAP_DENSITY_STR "heightMapDensity"
-#define JSON_KEY_HEIGHT_MAP_USE_OPENED_FILE_SIZE_STR "heightMapUseOpenedFileSize"
-#define JSON_KEY_HEIGHT_MAP_POINTS_START_INDEX_STR "heightMapPointsStartIndex"
-#define JSON_KEY_HEIGHT_MAP_POINTS_MAX_COUNT_STR "heightMapPointsMaxCount"
 #define JSON_KEY_VALUE_STR "value"
 
 //input source tracking
@@ -209,11 +196,7 @@ enum JsonValueCommandType {
   MOVE_TO_ROTARY_POSITION_MACRO,
   INSTALL_ROTARY_MACRO,
   FRAME_JOB_MACRO,
-  PROBE_SET_JOB_Z0_MACRO,
-  PROBE_TOOL_LENGTH_MACRO,
   RETURN_JOB_XY0_MACRO,
-  MOVE_TO_LASER_OFFSET_ZERO_MACRO,
-  CONFIRM_MATERIAL_CENTER_AND_SET_ZERO,
   OPEN_GCODE_FILE,
   START_FILE_TRANSFER,
   ABORT_FILE_TRANSFER,
@@ -248,15 +231,6 @@ enum JsonValueCommandType {
   DISABLE_LASER_SENSOR,
   SET_FEED_RATE_OVERRIDE,
   SET_SPINDLE_OVERRIDE,
-  PROBE_LASER_EDGES,
-  PROBE_LASER_MATERIAL_BOUNDS,
-  START_HEIGHT_MAP_SCAN,
-  ABORT_HEIGHT_MAP_SCAN,
-  ENABLE_HEIGHT_MAP_COMPENSATION,
-  DISABLE_HEIGHT_MAP_COMPENSATION,
-  CLEAR_HEIGHT_MAP,
-  START_POINT_CLOUD_SCAN,
-  ABORT_POINT_CLOUD_SCAN,
   UNKNOWN_JSON_COMMAND_TYPE
 };
 
@@ -266,11 +240,7 @@ enum JsonValueCommandType {
 #define JSON_VALUE_MOVE_TO_ROTARY_POSITION_MACRO_STR "moveToRotaryPosition"
 #define JSON_VALUE_INSTALL_ROTARY_MACRO_STR "installRotary"
 #define JSON_VALUE_FRAME_JOB_MACRO_STR "frameJob"
-#define JSON_VALUE_PROBE_SET_JOB_Z0_MACRO_STR "probeSetJobZ0Macro"
-#define JSON_VALUE_PROBE_TOOL_LENGTH_MACRO_STR "probeToolLengthMacro"
 #define JSON_VALUE_RETURN_JOB_XY0_MACRO_STR "returnJobXY0Macro"
-#define JSON_VALUE_MOVE_TO_LASER_OFFSET_ZERO_MACRO_STR "moveToLaserOffsetZero"
-#define JSON_VALUE_CONFIRM_MATERIAL_CENTER_AND_SET_ZERO_STR "confirmMaterialCenterAndSetZero"
 #define JSON_VALUE_OPEN_GCODE_FILE_STR "openGcodeFile"
 #define JSON_VALUE_START_FILE_TRANSFER_STR "startFileTransfer"
 #define JSON_VALUE_ABORT_FILE_TRANSFER_STR "abortFileTransfer"
@@ -310,43 +280,6 @@ enum JsonValueCommandType {
 #define JSON_VALUE_DISABLE_LASER_SENSOR_STR "disableLaserSensor"
 #define JSON_VALUE_SET_FEED_RATE_OVERRIDE_STR "setFeedRateOverride"
 #define JSON_VALUE_SET_SPINDLE_OVERRIDE_STR "setSpindleOverride"
-#define JSON_VALUE_PROBE_LASER_EDGES_STR "probeLaserEdges"
-#define JSON_VALUE_PROBE_LASER_MATERIAL_BOUNDS_STR "probeLaserMaterialBounds"
-#define JSON_VALUE_START_HEIGHT_MAP_SCAN_STR "startHeightMapScan"
-#define JSON_VALUE_ENABLE_HEIGHT_MAP_COMPENSATION_STR "enableHeightMapCompensation"
-#define JSON_VALUE_DISABLE_HEIGHT_MAP_COMPENSATION_STR "disableHeightMapCompensation"
-#define JSON_VALUE_CLEAR_HEIGHT_MAP_STR "clearHeightMap"
-#define JSON_VALUE_HEIGHT_MAP_DENSITY_COARSE_STR "coarse"
-#define JSON_VALUE_HEIGHT_MAP_DENSITY_FINE_STR "fine"
-#define JSON_VALUE_EVENT_LASER_EDGE_PROBING_COMPLETED_STR "laserEdgeProbingCompleted"
-#define JSON_VALUE_EVENT_LASER_MATERIAL_BOUNDS_COMPLETED_STR "laserMaterialBoundsCompleted"
-#define JSON_VALUE_EVENT_HEIGHT_MAP_SCAN_PROGRESS_STR "heightMapScanProgress"
-#define JSON_VALUE_EVENT_HEIGHT_MAP_SCAN_COMPLETED_STR "heightMapScanCompleted"
-#define JSON_VALUE_START_POINT_CLOUD_SCAN_STR "startPointCloudScan"
-#define JSON_VALUE_ABORT_POINT_CLOUD_SCAN_STR "abortPointCloudScan"
-#define JSON_VALUE_ABORT_HEIGHT_MAP_SCAN_STR "abortHeightMapScan"
-#define JSON_VALUE_POINT_CLOUD_DENSITY_ULTRAFINE_STR "ultrafine"
-#define JSON_VALUE_POINT_CLOUD_DENSITY_FINE_STR "fine"
-#define JSON_VALUE_POINT_CLOUD_DENSITY_MEDIUM_STR "medium"
-#define JSON_VALUE_POINT_CLOUD_DENSITY_COARSE_STR "coarse"
-#define JSON_VALUE_EVENT_POINT_CLOUD_SCAN_PROGRESS_STR "pointCloudScanProgress"
-#define JSON_VALUE_EVENT_POINT_CLOUD_SCAN_COMPLETED_STR "pointCloudScanCompleted"
-#define JSON_KEY_LASER_EDGE_X_MIN_STR "xMin"
-#define JSON_KEY_LASER_EDGE_X_MAX_STR "xMax"
-#define JSON_KEY_LASER_EDGE_Y_MIN_STR "yMin"
-#define JSON_KEY_LASER_EDGE_Y_MAX_STR "yMax"
-#define JSON_KEY_MATERIAL_CENTER_X_STR "materialCenterX"
-#define JSON_KEY_MATERIAL_CENTER_Y_STR "materialCenterY"
-#define JSON_KEY_MATERIAL_CENTER_VALID_STR "materialCenterValid"
-// XY0 corner detection (probeLaserEdges): which corner to detect, plus an
-// optional offset INTO the material applied to the origin on each axis.
-#define JSON_KEY_XY0_CORNER_STR "corner"
-#define JSON_KEY_XY0_X_OFFSET_STR "xOffset"
-#define JSON_KEY_XY0_Y_OFFSET_STR "yOffset"
-#define JSON_VALUE_XY0_CORNER_BOTTOM_LEFT_STR "bottomLeft"
-#define JSON_VALUE_XY0_CORNER_BOTTOM_RIGHT_STR "bottomRight"
-#define JSON_VALUE_XY0_CORNER_TOP_LEFT_STR "topLeft"
-#define JSON_VALUE_XY0_CORNER_TOP_RIGHT_STR "topRight"
 
 //override action values
 #define JSON_VALUE_OVERRIDE_ACTION_KEY_STR "action"
@@ -392,20 +325,10 @@ enum JsonValueGetType {
   GET_SPINDLE_OVERRIDE,
   GET_ELECTRICAL_CURRENT,
   GET_LASER_SENSOR_ENABLED,
-  GET_DISTANCE_LASER_MM,
   GET_MACHINE_NAME,
   GET_FIRMWARE_VERSION,
-  GET_TOOL_LENGTH,
-  GET_TOOL_LENGTH_REFERENCES,
-  GET_PROBE_HEIGHT,
-  GET_LASER_OFFSET_ZERO_SETTINGS,
-  GET_BRUSHLESS_MOTOR_SETTINGS,
   GET_OPENED_FILE_BOUNDS,
-  GET_HOUSING_SETTINGS,
   GET_MATERIAL_CENTER_POSITION,
-  GET_HEIGHT_MAP_STATUS,
-  GET_HEIGHT_MAP_POINTS,
-  GET_POINT_CLOUD_STATUS,
   GET_MACHINE_USAGE,
   GET_JOB_HISTORY,
   GET_JOB_COUNT,
@@ -442,19 +365,10 @@ enum JsonValueGetType {
 #define JSON_VALUE_GET_SPINDLE_OVERRIDE_STR "getSpindleOverride"
 #define JSON_VALUE_GET_ELECTRICAL_CURRENT_STR "electricalCurrent"
 #define JSON_VALUE_GET_LASER_SENSOR_ENABLED_STR "laserSensorEnabled"
-#define JSON_VALUE_GET_DISTANCE_LASER_MM_STR "distanceLaserMm"
 #define JSON_VALUE_GET_MACHINE_NAME_STR "machineName"
 #define JSON_VALUE_GET_FIRMWARE_VERSION_STR "firmwareVersion"
-#define JSON_VALUE_GET_TOOL_LENGTH_STR "getToolLength"
-#define JSON_VALUE_GET_TOOL_LENGTH_REFERENCES_STR "getToolLengthReferences"
-#define JSON_VALUE_GET_PROBE_HEIGHT_STR "getProbeHeight"
-#define JSON_VALUE_GET_LASER_OFFSET_ZERO_SETTINGS_STR "getLaserOffsetZeroSettings"
-#define JSON_VALUE_GET_BRUSHLESS_MOTOR_SETTINGS_STR "getBrushlessMotorSettings"
 #define JSON_VALUE_GET_OPENED_FILE_BOUNDS_STR "getOpenedFileBounds"
-#define JSON_VALUE_GET_HOUSING_SETTINGS_STR "getHousingSettings"
 #define JSON_VALUE_GET_MATERIAL_CENTER_POSITION_STR "getMaterialCenterPosition"
-#define JSON_VALUE_GET_HEIGHT_MAP_STATUS_STR "getHeightMapStatus"
-#define JSON_VALUE_GET_HEIGHT_MAP_POINTS_STR "getHeightMapPoints"
 #define JSON_VALUE_GET_MACHINE_USAGE_STR "getMachineUsage"
 #define JSON_VALUE_GET_JOB_HISTORY_STR "getJobHistory"
 #define JSON_VALUE_GET_JOB_COUNT_STR "getJobCount"
@@ -483,11 +397,6 @@ enum JsonValueSetType {
   SET_JOB_Z,
   SET_JOB_XYZ,
   SET_JOB_A,
-  SET_TOOL_LENGTH_REFERENCES,
-  SET_PROBE_HEIGHT,
-  SET_LASER_OFFSET_ZERO_SETTINGS,
-  SET_BRUSHLESS_MOTOR_SETTINGS,
-  SET_HOUSING_SETTINGS,
   UNKNOWN_JSON_SET_TYPE
 };
 
@@ -507,11 +416,6 @@ enum JsonValueSetType {
 #define JSON_VALUE_SET_MACHINE_NAME_STR "setMachineName"
 #define JSON_VALUE_SET_HOTSPOT_SETTINGS_STR "setHotspotSettings"
 #define JSON_VALUE_SET_DRY_RUN_STR "setDryRun"
-#define JSON_VALUE_SET_TOOL_LENGTH_REFERENCES_STR "setToolLengthReferences"
-#define JSON_VALUE_SET_PROBE_HEIGHT_STR "setProbeHeight"
-#define JSON_VALUE_SET_LASER_OFFSET_ZERO_SETTINGS_STR "setLaserOffsetZeroSettings"
-#define JSON_VALUE_SET_BRUSHLESS_MOTOR_SETTINGS_STR "setBrushlessMotorSettings"
-#define JSON_VALUE_SET_HOUSING_SETTINGS_STR "setHousingSettings"
 
 
 //API RESPONSE JSON
@@ -549,11 +453,8 @@ enum JsonValueSetType {
 #define JSON_KEY_CURRENT_SPINDLE_RPM_STR "currentSpindleRPM"
 #define JSON_KEY_FEED_RATE_OVERRIDE_STR "feedRateOverride"
 #define JSON_KEY_SPINDLE_OVERRIDE_STR "spindleOverride"
-#define JSON_KEY_MINIMUM_SPINDLE_RPM_STR "minimumSpindleRPM"
 #define JSON_KEY_ELECTRICAL_CURRENT_MA_STR "electricalCurrentmA"
 #define JSON_KEY_LASER_SENSOR_ENABLED_STR "laserSensorEnabled"
-#define JSON_KEY_DISTANCE_LASER_MM_STR "distanceLaserMm"
-#define JSON_KEY_DISTANCE_LASER_SENSOR_CONNECTED_STR "distanceLaserSensorConnected"
 #define JSON_KEY_SD_CARD_CONNECTED_STR "sdCardConnected"
 #define JSON_KEY_ROTARY_AXIS_CONNECTED_STR "rotaryAxisConnected"
 #define JSON_KEY_HOMED_SINCE_POWER_ON_STR "homedSincePowerOn"
@@ -577,17 +478,7 @@ enum JsonValueSetType {
 #define JSON_KEY_HOTSPOT_ENABLED_STR "hotspotEnabled"
 #define JSON_KEY_MACHINE_NAME_STR "machineName"
 #define JSON_KEY_FIRMWARE_VERSION_STR "firmwareVersion"
-#define JSON_KEY_TOOL_LENGTH_STR "toolLength"
-#define JSON_KEY_TOOL_LENGTH_REFERENCE_Z_STR "toolLengthReferenceZ"
-#define JSON_KEY_PROBE_HEIGHT_STR "probeHeight"
-#define JSON_KEY_LASER_OFFSET_ZERO_X_BACK_MM_STR "laserOffsetZeroXBackMm"
-#define JSON_KEY_LASER_OFFSET_ZERO_Y_BACK_MM_STR "laserOffsetZeroYBackMm"
-// Level driven on the brushless accessory's direction pin: false = LOW, true = HIGH. Named by level
 // rather than by rotation, since which way the motor turns depends on the accessory's wiring.
-#define JSON_KEY_BRUSHLESS_MOTOR_DIRECTION_REVERSED_STR "brushlessMotorDirectionReversed"
-#define JSON_KEY_HOUSING_INSTALLED_STR "housingInstalled"
-#define JSON_KEY_ALLOW_MOTION_WHEN_DOOR_OPEN_STR "allowMotionWhenDoorOpen"
-#define JSON_KEY_DOOR_OPEN_STR "doorOpen"
 #define JSON_KEY_SPINDLE_TYPE_STR "spindleType"
 #define JSON_KEY_POWER_ON_HOURS_STR "powerOnHours"
 #define JSON_KEY_RUN_HOURS_STR "runHours"
@@ -601,60 +492,25 @@ enum JsonValueSetType {
 #define JSON_KEY_OFFSET_STR "offset"
 #define JSON_KEY_RETURNED_STR "returned"
 #define JSON_KEY_HAS_MORE_STR "hasMore"
-#define JSON_KEY_HEIGHT_MAP_CONFIGURED_STR "heightMapConfigured"
-#define JSON_KEY_HEIGHT_MAP_SCAN_IN_PROGRESS_STR "heightMapScanInProgress"
-#define JSON_KEY_HEIGHT_MAP_READY_STR "heightMapReady"
-#define JSON_KEY_HEIGHT_MAP_COMPENSATION_ENABLED_STR "heightMapCompensationEnabled"
-#define JSON_KEY_HEIGHT_MAP_BOUND_FILE_STR "heightMapBoundFile"
-#define JSON_KEY_HEIGHT_MAP_GRID_POINTS_X_STR "heightMapGridPointsX"
-#define JSON_KEY_HEIGHT_MAP_GRID_POINTS_Y_STR "heightMapGridPointsY"
-#define JSON_KEY_HEIGHT_MAP_POINTS_SCANNED_STR "heightMapPointsScanned"
-#define JSON_KEY_HEIGHT_MAP_ACTIVE_FOR_OPENED_FILE_STR "heightMapActiveForOpenedFile"
-#define JSON_KEY_HEIGHT_MAP_POINTS_TOTAL_STR "heightMapPointsTotal"
-#define JSON_KEY_HEIGHT_MAP_POINTS_RETURNED_STR "heightMapPointsReturned"
-#define JSON_KEY_HEIGHT_MAP_POINTS_STR "heightMapPoints"
-#define JSON_KEY_HEIGHT_MAP_POINT_COORDINATES_STR "heightMapPointCoordinates"
-#define JSON_KEY_HEIGHT_MAP_COORDINATE_SPACE_STR "heightMapCoordinateSpace"
-#define JSON_KEY_HEIGHT_MAP_ABORT_STAGE_STR "heightMapAbortStage"
-#define JSON_KEY_HEIGHT_MAP_ABORT_DETAIL_STR "heightMapAbortDetail"
-// Line scan acquisition (see handleHeightMapScan). Progress is reported per ROW now that a whole row
 // is one continuous move; the point counters are still filled in (cells resolved so far) so existing
 // progress bars keep working.
-#define JSON_KEY_HEIGHT_MAP_LINE_SCAN_STR "heightMapLineScan"
-#define JSON_KEY_HEIGHT_MAP_ROWS_SCANNED_STR "heightMapRowsScanned"
-#define JSON_KEY_HEIGHT_MAP_ROWS_TOTAL_STR "heightMapRowsTotal"
-#define JSON_KEY_HEIGHT_MAP_SAMPLES_TAKEN_STR "heightMapSamplesTaken"
-#define JSON_KEY_HEIGHT_MAP_SPACING_MM_STR "heightMapSpacingMm"
 // Where the map's (0,0) cell sits, in job coordinates. Lets the frontend check the map is anchored
 // over the toolpath it is meant to compensate, rather than assuming it.
-#define JSON_KEY_HEIGHT_MAP_ORIGIN_X_MM_STR "heightMapOriginXmm"
-#define JSON_KEY_HEIGHT_MAP_ORIGIN_Y_MM_STR "heightMapOriginYmm"
 // Scan quality figures, so the frontend can warn instead of showing a smooth-looking but fabricated
 // map: cells that had to be filled from neighbours, the worst per-cell sample count, and the widest
 // trimmed spread seen in any cell (a direct read on how noisy the sensor was on this material).
-#define JSON_KEY_HEIGHT_MAP_CELLS_INTERPOLATED_STR "heightMapCellsInterpolated"
-#define JSON_KEY_HEIGHT_MAP_MIN_CELL_SAMPLES_STR "heightMapMinCellSamples"
-#define JSON_KEY_HEIGHT_MAP_MAX_CELL_SPREAD_MM_STR "heightMapMaxCellSpreadMm"
-// Where the worst cell is, in mm from the scan start corner (same frame as getHeightMapPoints), and
 // how many cells were noisy at all. Position tells you whether the trouble is at the edge of the scan
 // or in the middle of the work; the count tells you whether it is one spot or the whole surface.
-#define JSON_KEY_HEIGHT_MAP_NOISIEST_CELL_X_MM_STR "heightMapNoisiestCellXmm"
-#define JSON_KEY_HEIGHT_MAP_NOISIEST_CELL_Y_MM_STR "heightMapNoisiestCellYmm"
-#define JSON_KEY_HEIGHT_MAP_NOISY_CELLS_STR "heightMapNoisyCells"
 // Quality of the Z datum itself: how many of the stationary reads at job zero were valid, and how
 // far apart the ones that survived trimming were. A wide baseline spread means the reference every
 // map value is measured against is itself unreliable.
-#define JSON_KEY_HEIGHT_MAP_BASELINE_SAMPLES_STR "heightMapBaselineSamples"
-#define JSON_KEY_HEIGHT_MAP_BASELINE_SPREAD_MM_STR "heightMapBaselineSpreadMm"
 // True when the Z datum came from the swept cells at job (0,0) (the accurate path), false when it fell
 // back to the stationary reading because job zero lies outside the scanned rectangle. The fallback is
 // measured differently from the cells, so a constant depth offset can reappear with it.
-#define JSON_KEY_HEIGHT_MAP_DATUM_FROM_CELLS_STR "heightMapDatumFromCells"
 // Cell-derived datum minus the parked reading at the same point: how differently the sensor reads
 // while sweeping versus standing still. It is cancelled out of the map (both sides of the subtraction
 // now come from the cells), so this is a diagnostic, not an error -- but a large value means the
 // sweep is not measuring the same thing a parked reading would.
-#define JSON_KEY_HEIGHT_MAP_DATUM_BIAS_MM_STR "heightMapDatumBiasMm"
 // The toolpath's own extent, in job coordinates, from the opened file's MIN/MAX metadata. Unlike the
 // SIZEX/SIZEY figures these say WHERE the job sits, not just how big it is -- which is what makes a
 // coverage answer possible rather than a size comparison.
@@ -665,12 +521,9 @@ enum JsonValueSetType {
 // Whether the current map's rectangle contains the opened file's toolpath. OMITTED when the answer
 // cannot be determined -- no map, no file open, or a file written before MIN/MAX metadata existed --
 // so an absent key means "unknown", never "does not cover".
-#define JSON_KEY_HEIGHT_MAP_COVERS_OPENED_JOB_STR "heightMapCoversOpenedJob"
 // Extreme raw sensor readings seen during the scan. The sensor spans about +/-30 mm, so these show
 // how much headroom the scan actually had: values crowding either limit mean part of the map was
 // measured at the edge of the sensor's range and cannot be trusted.
-#define JSON_KEY_HEIGHT_MAP_MIN_READING_MM_STR "heightMapMinReadingMm"
-#define JSON_KEY_HEIGHT_MAP_MAX_READING_MM_STR "heightMapMaxReadingMm"
 
 #define JSON_VALUE_COORDINATE_SPACE_MACHINE_STR "machine"
 #define JSON_VALUE_COORDINATE_SPACE_RELATIVE_STR "relative"
@@ -700,7 +553,6 @@ enum JsonValueSetType {
 #define JSON_VALUE_EVENT_HOMING_COMPLETED_STR "homingCompleted"
 #define JSON_VALUE_EVENT_RESUME_COMPLETED_STR "resumeCompleted"
 #define JSON_VALUE_EVENT_PROBE_Z0_COMPLETED_STR "probeZ0Completed"
-#define JSON_VALUE_EVENT_PROBE_TOOL_LENGTH_COMPLETED_STR "probeToolLengthCompleted"
 #define JSON_VALUE_RESULT_MACHINE_STATUS_STR "machineStatus"
 #define JSON_VALUE_ERROR_FILE_NOT_FOUND_STR "fileNotFound"
 #define JSON_VALUE_ERROR_FILE_HASH_NOT_FOUND_STR "fileHashNotFound"
@@ -735,36 +587,13 @@ enum JsonValueSetType {
 #define JSON_VALUE_ERROR_SOFT_LIMIT_EXCEEDED_STR "softLimitExceeded"
 #define JSON_VALUE_ERROR_SPINDLE_RPM_BELOW_MINIMUM_STR "spindleRpmBelowMinimum"
 #define JSON_VALUE_ERROR_NOT_HOMED_STR "notHomed"
-#define JSON_VALUE_ERROR_DOOR_OPEN_STR "doorOpen"
 #define JSON_VALUE_ERROR_ROTARY_Y_LOCK_STR "rotaryYLock"
 #define JSON_VALUE_ERROR_MACRO_ALREADY_RUNNING_STR "macroAlreadyRunning"
 #define JSON_VALUE_ERROR_MACRO_RUNNING_STR "macroRunning"
 #define JSON_VALUE_ERROR_MACRO_BUFFER_FULL_STR "macroBufferFull"
 #define JSON_VALUE_ERROR_CURRENT_SENSOR_NOT_INITIALIZED_STR "currentSensorNotInitialized"
-#define JSON_VALUE_ERROR_DISTANCE_LASER_SENSOR_NOT_INITIALIZED_STR "distanceLaserSensorNotInitialized"
-#define JSON_VALUE_ERROR_DISTANCE_LASER_READ_FAILED_STR "distanceLaserReadFailed"
-#define JSON_VALUE_ERROR_DISTANCE_LASER_OUT_OF_RANGE_STR "distanceLaserOutOfRange"
 #define JSON_VALUE_ERROR_MATERIAL_CENTER_NOT_AVAILABLE_STR "materialCenterNotAvailable"
-#define JSON_VALUE_ERROR_HEIGHT_MAP_RESCAN_REQUIRED_STR "heightMapRescanRequired"
-#define JSON_VALUE_ERROR_HEIGHT_MAP_NOT_READY_STR "heightMapNotReady"
 // startJob refused: the map does not cover the opened file's toolpath, so part of the job would be
 // compensated with clamped edge values instead of measured ones.
-#define JSON_VALUE_ERROR_HEIGHT_MAP_DOES_NOT_COVER_JOB_STR "heightMapDoesNotCoverJob"
-#define JSON_VALUE_ERROR_POINT_CLOUD_SCAN_IN_PROGRESS_STR "pointCloudScanInProgress"
-#define JSON_VALUE_ERROR_NO_POINT_CLOUD_SCAN_IN_PROGRESS_STR "noPointCloudScanInProgress"
-#define JSON_VALUE_ERROR_NO_HEIGHT_MAP_SCAN_IN_PROGRESS_STR "noHeightMapScanInProgress"
-#define JSON_VALUE_GET_POINT_CLOUD_STATUS_STR "getPointCloudStatus"
-#define JSON_KEY_POINT_CLOUD_SCAN_IN_PROGRESS_STR "pointCloudScanInProgress"
-#define JSON_KEY_POINT_CLOUD_READY_STR "pointCloudReady"
-#define JSON_KEY_POINT_CLOUD_FILENAME_STR "pointCloudFilename"
-#define JSON_KEY_POINT_CLOUD_GRID_POINTS_X_STR "pointCloudGridPointsX"
-#define JSON_KEY_POINT_CLOUD_GRID_POINTS_Y_STR "pointCloudGridPointsY"
-#define JSON_KEY_POINT_CLOUD_CURRENT_ROW_STR "pointCloudCurrentRow"
-#define JSON_KEY_POINT_CLOUD_POINTS_SCANNED_STR "pointCloudPointsScanned"
-#define JSON_KEY_POINT_CLOUD_POINTS_TOTAL_STR "pointCloudPointsTotal"
-#define JSON_KEY_POINT_CLOUD_DENSITY_STR "pointCloudDensity"
-#define JSON_KEY_POINT_CLOUD_SAVED_STR "pointCloudSaved"
-#define JSON_KEY_POINT_CLOUD_SIZE_X_MM_STR "pointCloudSizeXmm"
-#define JSON_KEY_POINT_CLOUD_SIZE_Y_MM_STR "pointCloudSizeYmm"
 
 #endif // CONSTANTS_H

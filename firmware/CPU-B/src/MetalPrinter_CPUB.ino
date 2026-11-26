@@ -49,10 +49,8 @@ bool startRamping = false;
 bool ledStatus = false;
 bool startUpExection = true;
 bool spindleEnabled = false;
-bool isManualSpindleRampActive = false;
 bool enableCPUAPassthrough = DEFAULT_ENABLE_CPUA_PASSTHROUGH;
 bool initialHoming = DEFAULT_INITIAL_HOMING;
-float toolLength = 0.0f;
 
 enum FileTransferFailureReason {
   FILE_TRANSFER_FAILURE_NONE,
@@ -86,12 +84,6 @@ char boardDeviceId[16] = {0};
 //connection status variables
 bool isClientConnected = false;
 bool isCurrentSensorInitialized = false;
-bool isDistanceLaserSensorInitialized = false;
-bool hasDistanceLaserSensorPresence = false;
-bool distanceLaserSensorInitRequested = true;
-bool distanceLaserSensorKeepEnabledAfterInit = false;
-unsigned long distanceLaserSensorProbeReadyMs = 0;
-uint8_t distanceLaserSensorInitRetries = 0;
 bool isRotaryAxisConnected = false;
 
 //mobileWebsocketConnection status
@@ -112,7 +104,6 @@ bool isJobPaused = false;
 // which the status is still Hold; this lets the app show a "Resuming" state, not "paused".
 bool isResuming = false;
 bool pauseResumeSpindleRestorePending = false;
-bool pendingPauseSpindleStop = false;
 unsigned long pauseHoldRequestedMs = 0;
 // Gentle-pause feed-drop state: the API pause ramps the feed override down to the resume
 // floor WHILE STILL MOVING (grblHAL honors it out of HOLD, and it persists through the hold),
@@ -122,17 +113,9 @@ unsigned long pauseFeedDropLastStepMs = 0;
 bool pauseWillStopSpindle = false;
 unsigned long lastGRBLStatusReceivedMs = 0;
 int pauseResumeOriginalSpindleOverride = GRBL_OVERRIDE_DEFAULT;
-bool isResumeSpindleOverrideRampActive = false;
-int resumeSpindleOverrideRampTargetPercent = GRBL_OVERRIDE_DEFAULT;
-unsigned long resumeSpindleOverrideRampIntervalMs = 0;
-unsigned long resumeSpindleOverrideRampLastStepMs = 0;
-bool resumeMotionAfterOverrideRampPending = false;
-int resumeSpindleRestoreStage = RESUME_RESTORE_DROP;
 // Last spindle override percent GRBL actually reported in its "Ov:" status field, plus
 // the millis() at which it was last updated. Used by the resume CONFIRM stage to close
 // the loop (the ramp itself runs open-loop on the local counter). -1 = never reported.
-int lastReportedSpindleOverride = -1;
-unsigned long lastReportedSpindleOverrideMs = 0;
 // CONFIRM-stage timers.
 unsigned long resumeConfirmEnteredMs = 0;     // when CONFIRM started (overall timeout base)
 unsigned long resumeConfirmLastActionMs = 0;  // last nudge/entry; gates "fresh Ov: only"
@@ -202,8 +185,6 @@ char downloadFileName[SD_MAX_FILE_NAME_LENGTH];
 unsigned long serialLastApiPingMs = 0;
 unsigned long fileTransferLastChunkActivityMs = 0;
 unsigned long fileDownloadLastChunkActivityMs = 0;
-unsigned long manualSpindleRampLastStepMs = 0;
-unsigned long manualSpindleRampIntervalMs = 0;
 uint16_t transferFileYear = 0;
 uint8_t transferFileMonth = 0;
 uint8_t transferFileDay = 0;
@@ -215,17 +196,11 @@ char fileChunkLines[FILE_CHUNK_LINES_BUFFER];
 char downloadFileChunkBuffer[DOWNLOAD_FILE_CHUNK_BUFFER];
 unsigned long downloadFileCurrentLine = 0;
 int downloadChunkSendFailures = 0; // consecutive send failures for the current chunk; bounds the rewind/re-request loop
-long manualSpindleRampTargetRPM = 0;
-long manualSpindleRampNextRPM = 0;
-long manualSpindleRampLastCommandedRPM = 0;
 // Set only for a ramp triggered by an M3 read from a JOB. Such a ramp holds motion until GRBL's
 // planner has drained, so the spindle comes up with the machine stopped and motion only restarts once
 // it is at speed. Never set for a console M3 (nothing is streaming) nor for any other path.
-bool manualSpindleRampAwaitingDrain = false;
-unsigned long manualSpindleRampDrainStartedMs = 0;
 // The final speed has been SENT but the spindle has not yet had time to reach it. The ramp stays
 // active through this, so the job stays held and the reported state stays Run.
-bool manualSpindleRampSettlePending = false;
 
 // Modal spindle state (mirrors GRBL's modal words so the ramp engages regardless
 // of how the CAM splits M3/S across lines). commandedSpindleRPM is the RPM we
@@ -235,9 +210,6 @@ bool isSpindleOnCommanded = false;              // M3 seen, cleared by M5/M30/re
 long commandedSpindleRPM = 0;                   // last RPM actually commanded to GRBL
 // A line carrying more than spindle words (e.g. "G1 X10 S9000") cannot be consumed
 // by the ramp: it is held here and released once the ramp completes.
-bool isSpindleLineHeld = false;
-bool heldSpindleLineIsJob = false;              // held from the job reader vs console passthrough
-char heldSpindleLineBuffer[LINE_BUFFER_CHARACTERS];
 unsigned long downloadFileTotalLines = 0;
 
 byte bufferByteUSB = 0;
@@ -265,14 +237,6 @@ NetworkSettings networkSettings;
 DebuggingSettings debuggingSettings;
 JsonSettings jsonSettings;
 MachineNameSettings machineNameSettings;
-ToolLengthReferenceSettings toolLengthReferenceSettings;
-LaserOffsetZeroSettings laserOffsetZeroSettings;
-BrushlessMotorSettings brushlessMotorSettings;
-HousingSettings housingSettings;
-ProbeHeightSettings probeHeightSettings;
-unsigned long doorSensorOpenSinceMs = 0; // millis() when the door pin first read OPEN, for debounce (0 = closed)
-bool doorOpenDebounced = false;          // true once the door has read OPEN for DOOR_SENSOR_DEBOUNCE_MS (housing installed only)
-bool virtualDoorLatched = false;         // CPUB's interlock decision mirrored to grblHAL; latches while the lid is open
 
 // Machine usage meter — accumulated in RAM, persisted to a hidden SD file. Read-only via API.
 uint32_t usagePowerOnSeconds = 0;
@@ -295,285 +259,36 @@ bool isHoming = false;
 InputSource homingInputSource = INPUT_SOURCE_USB;
 InputSource resumeInputSource = INPUT_SOURCE_USB;
 bool homedSincePowerOn = false;
-bool isProbeZ0MacroRunning = false;
 InputSource probeZ0MacroInputSource = INPUT_SOURCE_USB;
-bool isProbeToolLengthMacroRunning = false;
-InputSource probeToolLengthMacroInputSource = INPUT_SOURCE_USB;
-bool probeToolLengthZCaptured = false;
 bool isRotaryYLockBypassed = false;
 
-// Laser edge probing state machine
-// Coarse scan states (one continuous move per direction) + fine scan + corner positioning
-enum LaserEdgeProbeState : uint8_t {
-  LASER_EDGE_PROBE_IDLE = 0,
-  LASER_EDGE_PROBE_COARSE_SCAN,    // send long G1, monitor laser while moving
-  LASER_EDGE_PROBE_COARSE_STOP,    // feed-hold → soft-reset → unlock sequence
-  LASER_EDGE_PROBE_RETURN_FINE,    // G90 move to fine-scan start position
-  LASER_EDGE_PROBE_FINE_SCAN,      // step-and-settle fine detection
-  LASER_EDGE_PROBE_FINE_RETURN,    // G90 return to start X/Y for next direction
-  LASER_EDGE_PROBE_Y_BASELINE,     // re-measure laser baseline before Y phase
-  LASER_EDGE_PROBE_GO_CORNER,
-  LASER_EDGE_PROBE_SET_ORIGIN
-};
-enum LaserEdgeProbeSubState : uint8_t {
-  LASER_EDGE_SUB_SEND = 0,
-  LASER_EDGE_SUB_SEND_MOTION,      // second half of two-step send (mode cmd already sent)
-  LASER_EDGE_SUB_WAIT,
-  LASER_EDGE_SUB_READ,
-  LASER_EDGE_SUB_MONITOR,          // monitoring laser during continuous motion
-  LASER_EDGE_SUB_WAIT_HOLD,        // waiting for HOLD state after feed-hold
-  LASER_EDGE_SUB_WAIT_ALARM,       // waiting for ALARM after soft reset
-  LASER_EDGE_SUB_WAIT_IDLE         // waiting for IDLE after $X unlock
-};
-enum LaserEdgeProbeDirState : uint8_t {
-  PROBE_DIR_XNEG = 0,
-  PROBE_DIR_XPOS = 1,
-  PROBE_DIR_YNEG = 2,
-  PROBE_DIR_YPOS = 3
-};
 
-enum LaserMaterialBoundsProbeState : uint8_t {
-  LASER_MATERIAL_BOUNDS_PROBE_IDLE = 0,
-  LASER_MATERIAL_BOUNDS_PROBE_COARSE_SCAN,
-  LASER_MATERIAL_BOUNDS_PROBE_COARSE_STOP,
-  LASER_MATERIAL_BOUNDS_PROBE_RETURN_FINE,
-  LASER_MATERIAL_BOUNDS_PROBE_FINE_SCAN,
-  LASER_MATERIAL_BOUNDS_PROBE_FINE_RETURN,
-  LASER_MATERIAL_BOUNDS_PROBE_AXIS_BASELINE,
-  LASER_MATERIAL_BOUNDS_PROBE_CENTER_MOVE,
-  LASER_MATERIAL_BOUNDS_PROBE_WAIT_CENTER
-};
-bool isLaserEdgeProbingActive = false;
-bool laserEdgeProbeSuppressAlarmAbort = false;
-bool laserEdgeProbeWaitingForInitialUnlock = false;
-InputSource laserEdgeProbeInputSource = INPUT_SOURCE_USB;
-LaserEdgeProbeState laserEdgeProbeState = LASER_EDGE_PROBE_IDLE;
-LaserEdgeProbeSubState laserEdgeProbeSubState = LASER_EDGE_SUB_SEND;
-LaserEdgeProbeDirState laserEdgeProbeCurrentDir = PROBE_DIR_XNEG;
-float laserEdgeProbeBaselineMm = 0.0f;
-float laserEdgeProbeStartX = 0.0f;          // work-coord start (used for scan targets)
-float laserEdgeProbeStartY = 0.0f;
-float laserEdgeProbeStartMachineX = 0.0f;  // machine-coord start (used for return moves)
-float laserEdgeProbeStartMachineY = 0.0f;
-float laserEdgeProbeXNeg = 0.0f;
-float laserEdgeProbeYNeg = 0.0f;
-float laserEdgeProbeRoughEdge = 0.0f;         // rough edge position captured at HOLD after coarse scan
-float laserEdgeProbeCoarseCurrentTarget = 0.0f; // absolute work-coord target for the current streaming increment
-float laserEdgeProbeTraveled = 0.0f;          // total distance sent in coarse scan
-float laserEdgeProbeBaselineSampleSum = 0.0f;
-float laserEdgeProbeReturnTargetX = 0.0f;
-float laserEdgeProbeReturnTargetY = 0.0f;
-unsigned long laserEdgeProbeStepSentMs = 0;
-uint8_t laserEdgeProbeSetOriginStep = 0;
-uint8_t laserEdgeProbeBaselineSampleCount = 0;
-bool laserEdgeProbeReturnMotionObserved = false;
-bool laserEdgeProbeRecoveryNeedsReset = false;
 // Selected corner → the two edge directions to probe (X first, then Y) and the
 // offset moved INTO the material along each axis before the origin is set.
 // Defaults describe the bottom-left corner with zero offset.
-LaserEdgeProbeDirState laserEdgeProbeFirstDir = PROBE_DIR_XNEG;   // X-axis edge for the corner
-LaserEdgeProbeDirState laserEdgeProbeSecondDir = PROBE_DIR_YNEG;  // Y-axis edge for the corner
-float laserEdgeProbeXOffset = 0.0f;
-float laserEdgeProbeYOffset = 0.0f;
 
-bool isLaserMaterialBoundsProbingActive = false;
-bool laserMaterialBoundsProbeSuppressAlarmAbort = false;
-bool laserMaterialBoundsProbeWaitingForInitialUnlock = false;
-InputSource laserMaterialBoundsProbeInputSource = INPUT_SOURCE_USB;
-LaserMaterialBoundsProbeState laserMaterialBoundsProbeState = LASER_MATERIAL_BOUNDS_PROBE_IDLE;
-LaserEdgeProbeSubState laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_SEND;
-LaserEdgeProbeDirState laserMaterialBoundsProbeCurrentDir = PROBE_DIR_XNEG;
-float laserMaterialBoundsProbeBaselineMm = 0.0f;
-float laserMaterialBoundsProbeStartX = 0.0f;
-float laserMaterialBoundsProbeStartY = 0.0f;
-float laserMaterialBoundsProbeXMin = 0.0f;
-float laserMaterialBoundsProbeXMax = 0.0f;
-float laserMaterialBoundsProbeYMin = 0.0f;
-float laserMaterialBoundsProbeYMax = 0.0f;
-float laserMaterialBoundsProbeRoughEdge = 0.0f;
-float laserMaterialBoundsProbeCoarseCurrentTarget = 0.0f;
-float laserMaterialBoundsProbeTraveled = 0.0f;
-float laserMaterialBoundsProbeCenterX = 0.0f;
-float laserMaterialBoundsProbeCenterY = 0.0f;
-float lastDetectedMaterialCenterX = 0.0f;
-float lastDetectedMaterialCenterY = 0.0f;
-bool hasLastDetectedMaterialCenter = false;
-float laserMaterialBoundsProbeReturnTargetX = 0.0f;
-float laserMaterialBoundsProbeReturnTargetY = 0.0f;
-float laserMaterialBoundsProbeBaselineSampleSum = 0.0f;
-uint8_t laserMaterialBoundsProbeBaselineSampleCount = 0;
-unsigned long laserMaterialBoundsProbeStepSentMs = 0;
-bool laserMaterialBoundsProbeReturnMotionObserved = false;
-bool laserMaterialBoundsProbeRecoveryNeedsReset = false;
-const char* laserMaterialBoundsProbeAbortStage = nullptr;
-const char* laserMaterialBoundsProbeAbortDetail = nullptr;
 
-enum HeightMapScanState : uint8_t {
-  HEIGHT_MAP_SCAN_IDLE = 0,
-  HEIGHT_MAP_SCAN_WAIT_SENSOR_READY,
-  // Point-by-point states (legacy, HEIGHT_MAP_USE_LEGACY_GRID_SCAN)
-  HEIGHT_MAP_SCAN_MOVE,
-  HEIGHT_MAP_SCAN_WAIT_IDLE,
-  HEIGHT_MAP_SCAN_SETTLE,
-  HEIGHT_MAP_SCAN_SAMPLE,
-  // Line scan states (active)
-  HEIGHT_MAP_SCAN_MOVE_BASELINE,
-  HEIGHT_MAP_SCAN_WAIT_BASELINE_IDLE,
-  HEIGHT_MAP_SCAN_BASELINE_SAMPLE,
-  HEIGHT_MAP_SCAN_MOVE_ROW_START,
-  HEIGHT_MAP_SCAN_WAIT_ROW_START_IDLE,
-  HEIGHT_MAP_SCAN_START_ROW,
-  HEIGHT_MAP_SCAN_SAMPLING,
-  // Shared return states
-  HEIGHT_MAP_SCAN_RETURN_ORIGIN,
-  HEIGHT_MAP_SCAN_WAIT_RETURN_IDLE
-};
-bool heightMapConfigured = false;
-float heightMapSizeXmm = 0.0f;
-float heightMapSizeYmm = 0.0f;
-bool heightMapFineDensity = false;
-bool heightMapScanInProgress = false;
-bool heightMapReady = false;
-bool heightMapCompensationEnabled = false;
-bool heightMapUsedForCurrentFile = false;
-char heightMapBoundFile[SD_MAX_FILE_NAME_LENGTH] = {0};
-InputSource heightMapInputSource = INPUT_SOURCE_USB;
-HeightMapScanState heightMapScanState = HEIGHT_MAP_SCAN_IDLE;
-uint16_t heightMapGridPointsX = 0;
-uint16_t heightMapGridPointsY = 0;
-uint16_t heightMapTotalPoints = 0;
-uint16_t heightMapNextPointIndex = 0;
-float heightMapSpacingXmm = 0.0f;
-float heightMapSpacingYmm = 0.0f;
-float heightMapOriginX = 0.0f;
-float heightMapOriginY = 0.0f;
-float heightMapStartMachineX = 0.0f;
-float heightMapStartMachineY = 0.0f;
-// Where the head was when startHeightMapScan was accepted. The scan returns HERE when it finishes,
 // which since the map can be anchored at job zero is no longer necessarily the map origin.
-float heightMapReturnX = 0.0f;
-float heightMapReturnY = 0.0f;
 // The work offset that was in effect when the scan started. The map is anchored in job coordinates,
 // so this is what tells us later whether those coordinates still mean the same place on the material.
-float heightMapWcoX = 0.0f;
-float heightMapWcoY = 0.0f;
-float heightMapBaselineDistanceMm = 0.0f;
 // Work-coord target of the in-flight scan move; WAIT_IDLE gates sampling on the head reaching it.
-float heightMapMoveTargetX = 0.0f;
-float heightMapMoveTargetY = 0.0f;
 // Legacy point-by-point sample accumulator (averaging): reads are spaced out and averaged.
-float heightMapSampleSumMm = 0.0f;
-int heightMapSampleValidCount = 0;
-int heightMapSampleAttempt = 0;
-unsigned long heightMapNextSampleMs = 0;
-unsigned long heightMapSettleUntilMs = 0;
-unsigned long heightMapWaitOkSinceMs = 0;
-unsigned long heightMapSensorReadyMs = 0;
-const char* heightMapAbortStage = nullptr;
-const char* heightMapAbortDetail = nullptr;
-// Finished map: one value per grid cell, in serpentine scan order (see hmPhysToScanIdx). Holds the
 // raw per-cell trimmed-mean DISTANCE during a line scan and is re-expressed relative to the origin
-// cell in finalizeHeightMapLineScan().
-float heightMapRelativeMm[HEIGHT_MAP_MAX_POINTS_PER_AXIS * HEIGHT_MAP_MAX_POINTS_PER_AXIS] = {0};
 
 // ---- Line scan acquisition state ----
 // Row geometry, in the TOOL frame. The G1s add the laser offset so the LASER rides the row while the
 // map stays in the tool frame, exactly as the legacy per-point scan did.
-uint16_t heightMapCurrentRow = 0;
-float heightMapRowStartX = 0.0f;        // exact X at row start (theoretical)
-float heightMapRowEndX = 0.0f;          // exact X at row end (theoretical)
-float heightMapRowY = 0.0f;             // exact Y for the current row
-unsigned long heightMapRowStartMs = 0;  // millis() when the current row G1 was issued
-uint32_t heightMapRowDurationMs = 0;    // expected row duration (acceleration negligible at this feed)
 // Samples arrive in X order along a row, so leaving a column means that column is finished. Only ONE
 // cell's samples are ever held in RAM; the cell is collapsed to a trimmed mean on the way out.
-float heightMapCellSamples[HEIGHT_MAP_CELL_MAX_SAMPLES] = {0};
-uint16_t heightMapCellSampleCount = 0;
-int32_t heightMapCellActiveCol = -1;
-// Per-cell "has a real measurement" bitset. Cells that never reached HEIGHT_MAP_CELL_MIN_SAMPLES stay
 // clear and are filled from their neighbours at the end of the scan instead of silently inheriting the
 // previous cell's value.
-uint8_t heightMapCellValid[(HEIGHT_MAP_MAX_POINTS_PER_AXIS * HEIGHT_MAP_MAX_POINTS_PER_AXIS + 7) / 8] = {0};
 // Scan quality figures reported through the API.
-uint32_t heightMapSamplesTaken = 0;
-uint32_t heightMapCellDroppedSamples = 0;
-uint16_t heightMapCellsInterpolated = 0;
-uint16_t heightMapMinCellSamples = 0;
-float heightMapMaxCellSpreadMm = 0.0f;
-// Physical grid position of the cell that produced heightMapMaxCellSpreadMm, and how many cells were
 // noisy at all, so a bad scan can be located instead of merely detected.
-uint16_t heightMapNoisiestCellRow = 0;
-uint16_t heightMapNoisiestCellCol = 0;
-uint16_t heightMapNoisyCells = 0;
 // Extreme raw readings seen during the scan, to show how much sensor headroom it actually had.
-// Deliberately NOT cleared by invalidateHeightMap: they have to survive an abort so the failure event
 // can report the reading that caused it. Reset when a scan starts instead.
-float heightMapMinReadingMm = 0.0f;
-float heightMapMaxReadingMm = 0.0f;
-bool heightMapHasReading = false;
 // Z datum, measured standing still at job XY zero before the sweep. Like the reading extremes above,
-// these are NOT cleared by invalidateHeightMap so a failure event can still report them; they are
 // reset when a scan starts.
-bool heightMapBaselineCaptured = false;
-bool heightMapDatumFromCells = false;
-float heightMapDatumBiasMm = 0.0f;
-float heightMapBaselineSpreadMm = 0.0f;
-uint16_t heightMapBaselineSampleCount = 0;
-int heightMapBaselineAttempt = 0;
 
-// Point cloud scan state
-enum PointCloudScanState : uint8_t {
-  POINT_CLOUD_SCAN_IDLE = 0,
-  POINT_CLOUD_SCAN_WAIT_SENSOR_READY,
-  // Point-by-point states (legacy, used by commented-out scan mode)
-  POINT_CLOUD_SCAN_MOVE,
-  POINT_CLOUD_SCAN_WAIT_IDLE,
-  POINT_CLOUD_SCAN_SETTLE,
-  POINT_CLOUD_SCAN_SAMPLE,
-  // Line scan states (active)
-  POINT_CLOUD_SCAN_START_ROW,
-  POINT_CLOUD_SCAN_SAMPLING,
-  POINT_CLOUD_SCAN_MOVE_Y,
-  POINT_CLOUD_SCAN_WAIT_Y_IDLE,
-  // Shared return states
-  POINT_CLOUD_SCAN_RETURN_ORIGIN,
-  POINT_CLOUD_SCAN_WAIT_RETURN_IDLE
-};
-bool pointCloudScanInProgress = false;
-bool pointCloudReady = false;
-PointCloudScanState pointCloudScanState = POINT_CLOUD_SCAN_IDLE;
-float pointCloudSizeXmm = 0.0f;
-float pointCloudSizeYmm = 0.0f;
-float pointCloudSpacingMm = 0.0f;
-uint16_t pointCloudGridPointsX = 0;
-uint16_t pointCloudGridPointsY = 0;
-uint32_t pointCloudTotalPoints = 0;
-uint32_t pointCloudNextPointIndex = 0;
-float pointCloudOriginX = 0.0f;
-float pointCloudOriginY = 0.0f;
-float pointCloudBaselineDistanceMm = 0.0f;
-unsigned long pointCloudSettleUntilMs = 0;
-unsigned long pointCloudWaitOkSinceMs = 0;
-unsigned long pointCloudSensorReadyMs = 0;
-char pointCloudFilename[SD_MAX_FILE_NAME_LENGTH] = {0};
-char pointCloudDensityStr[12] = {0};
-const char* pointCloudAbortStage = nullptr;
-const char* pointCloudAbortDetail = nullptr;
-InputSource pointCloudInputSource = INPUT_SOURCE_USB;
-uint32_t pointCloudVertexCountOffset = 0;
-uint8_t pointCloudSyncCounter = 0;
-uint16_t pointCloudCurrentRow = 0;
-float pointCloudRowStartX = 0.0f;      // exact X at row start (theoretical)
-float pointCloudRowEndX = 0.0f;        // exact X at row end (theoretical)
-float pointCloudRowY = 0.0f;           // exact Y for current row (theoretical)
-unsigned long pointCloudRowStartMs = 0;       // millis() when current row G1 was issued
-uint32_t pointCloudRowDurationMs = 0;          // expected row duration (acceleration negligible)
-uint16_t pointCloudFileYear = 0;
-uint8_t pointCloudFileMonth = 0;
-uint8_t pointCloudFileDay = 0;
-uint8_t pointCloudFileHour = 0;
-uint8_t pointCloudFileMinute = 0;
-uint8_t pointCloudFileSecond = 0;
 
 //COUNTERS
 int USBLinePos = 0;
@@ -604,59 +319,12 @@ SDCardManager sdCardManager;
 JsonUtil jsonUtil;
 EEPROMManager eepromManager;
 Adafruit_INA219 currentSensor(CURRENT_SENSOR_I2C_ADDRESS);
-ModbusMaster distanceLaserSensorModbus;
 
-void preDistanceLaserTransmission() {
 
-  digitalWrite(DISTANCE_LASER_SENSOR_DIR_PIN, HIGH);   // HIGH = transmit
-  delayMicroseconds(DISTANCE_LASER_SENSOR_DIR_SETTLE_US);   // let the transceiver settle before bit 1
 
-}
 
-void postDistanceLaserTransmission() {
 
-  // SoftwareSerial::write() blocks, so the last bit is already on the wire by now.
-  delayMicroseconds(DISTANCE_LASER_SENSOR_DIR_SETTLE_US);
-  digitalWrite(DISTANCE_LASER_SENSOR_DIR_PIN, LOW);    // LOW = receive
-
-}
-
-void requestDistanceLaserSensorInitialization(unsigned long probeDelayMs, bool keepEnabledAfterInit) {
-
-  distanceLaserSensorInitRequested = true;
-  distanceLaserSensorKeepEnabledAfterInit = keepEnabledAfterInit;
-  isDistanceLaserSensorInitialized = false;
-  distanceLaserSensorInitRetries = 0;
-  distanceLaserSensorProbeReadyMs = millis() + probeDelayMs;
-  digitalWrite(LASER_SENSOR_ENABLE_PIN, HIGH);
-
-}
-
-void disableDistanceLaserSensor() {
-
-  distanceLaserSensorInitRequested = false;
-  distanceLaserSensorKeepEnabledAfterInit = false;
-  isDistanceLaserSensorInitialized = false;
-  distanceLaserSensorInitRetries = 0;
-  distanceLaserSensorProbeReadyMs = 0;
-  digitalWrite(LASER_SENSOR_ENABLE_PIN, LOW);
-
-}
-
-// Drives the brushless accessory's direction pin to the configured level. Called once after the
-// settings are restored from EEPROM, and again whenever setBrushlessMotorSettings changes them.
 // The pin is an output held at a static level: the accessory reads it, nothing toggles it per move.
-void applyBrushlessMotorDirection() {
-
-  digitalWrite(BRUSHLESS_MOTOR_DIR_PIN, brushlessMotorSettings.directionReversed ? HIGH : LOW);
-
-  if (debuggingSettings.debuggingBase) {
-    serialManager.USBSerialPrint(FROM_CPUB);
-    serialManager.USBSerialPrint("Brushless motor direction pin driven ");
-    serialManager.USBSerialPrintln(brushlessMotorSettings.directionReversed ? "HIGH (reversed)" : "LOW (default)");
-  }
-
-}
 
 // Reads the opened file's toolpath extent, in job coordinates, from its metadata line. Returns false
 // when no file is open or the file predates MIN/MAX metadata -- in which case WHERE the toolpath sits
@@ -675,242 +343,18 @@ bool readOpenedFileBounds(float* minX, float* maxX, float* minY, float* maxY) {
 // Does the current map's rectangle contain the opened file's toolpath?
 //
 // This is the question a size comparison cannot answer: a map big enough for the job still misses it
-// if it was scanned somewhere else, and interpolateHeightMapZ CLAMPS lookups outside its rectangle
 // rather than failing, so an uncovered job runs to completion on edge values.
 //
 // `known` receives false when the answer cannot be determined (no map, no file open, or no MIN/MAX
 // metadata). A false return with known == false means UNKNOWN, not "does not cover".
-bool doesHeightMapCoverOpenedJob(bool* known) {
 
-  if (known != nullptr)
-    *known = false;
 
-  if (!heightMapReady || heightMapGridPointsX == 0 || heightMapGridPointsY == 0)
-    return false;
 
-  float jobMinX = 0.0f, jobMaxX = 0.0f, jobMinY = 0.0f, jobMaxY = 0.0f;
-  if (!readOpenedFileBounds(&jobMinX, &jobMaxX, &jobMinY, &jobMaxY))
-    return false;
 
-  if (known != nullptr)
-    *known = true;
 
-  // The map spans +X and -Y from its origin, so the origin is its top-left corner.
-  return !(jobMinX < heightMapOriginX - HEIGHT_MAP_JOB_COVERAGE_TOLERANCE_MM
-        || jobMaxX > heightMapOriginX + heightMapSizeXmm + HEIGHT_MAP_JOB_COVERAGE_TOLERANCE_MM
-        || jobMinY < heightMapOriginY - heightMapSizeYmm - HEIGHT_MAP_JOB_COVERAGE_TOLERANCE_MM
-        || jobMaxY > heightMapOriginY + HEIGHT_MAP_JOB_COVERAGE_TOLERANCE_MM);
 
-}
 
-void logLaserProbeStartFailure(const char* reason) {
 
-  serialManager.USBSerialPrint(FROM_CPUB);
-  serialManager.USBSerialPrint("[LaserProbe] START rejected: ");
-  serialManager.USBSerialPrintln(reason);
-
-}
-
-void invalidateHeightMap(bool clearConfiguration) {
-
-  heightMapScanInProgress = false;
-  heightMapReady = false;
-  heightMapUsedForCurrentFile = false;
-  heightMapScanState = HEIGHT_MAP_SCAN_IDLE;
-  heightMapGridPointsX = 0;
-  heightMapGridPointsY = 0;
-  heightMapTotalPoints = 0;
-  heightMapNextPointIndex = 0;
-  heightMapSpacingXmm = 0.0f;
-  heightMapSpacingYmm = 0.0f;
-  heightMapOriginX = 0.0f;
-  heightMapOriginY = 0.0f;
-  heightMapStartMachineX = 0.0f;
-  heightMapStartMachineY = 0.0f;
-  heightMapReturnX = 0.0f;
-  heightMapReturnY = 0.0f;
-  heightMapWcoX = 0.0f;
-  heightMapWcoY = 0.0f;
-  heightMapBaselineDistanceMm = 0.0f;
-  heightMapSettleUntilMs = 0;
-  heightMapWaitOkSinceMs = 0;
-  heightMapSensorReadyMs = 0;
-  heightMapAbortStage = nullptr;
-  heightMapAbortDetail = nullptr;
-  // Line scan acquisition state and quality figures
-  heightMapCurrentRow = 0;
-  heightMapRowStartX = 0.0f;
-  heightMapRowEndX = 0.0f;
-  heightMapRowY = 0.0f;
-  heightMapRowStartMs = 0;
-  heightMapRowDurationMs = 0;
-  heightMapCellSampleCount = 0;
-  heightMapCellActiveCol = -1;
-  heightMapSamplesTaken = 0;
-  heightMapCellDroppedSamples = 0;
-  heightMapCellsInterpolated = 0;
-  heightMapMinCellSamples = 0;
-  heightMapMaxCellSpreadMm = 0.0f;
-  arrayUtil.clearCharArray(heightMapBoundFile, SD_MAX_FILE_NAME_LENGTH);
-
-  if (clearConfiguration) {
-    heightMapConfigured = false;
-    heightMapSizeXmm = 0.0f;
-    heightMapSizeYmm = 0.0f;
-  }
-
-}
-
-uint16_t getHeightMapGridPointsForSize(float sizeMm, float spacingMm, uint16_t maxPoints) {
-
-  if (sizeMm <= 0.0f || spacingMm <= 0.0f)
-    return 0;
-
-  int points = (int)(sizeMm / spacingMm + 0.999f) + 1;
-  if (points < 2)
-    points = 2;
-  if (points > (int)maxPoints)
-    points = (int)maxPoints;
-  return (uint16_t)points;
-
-}
-
-void getHeightMapPointTarget(uint16_t pointIndex, float* x, float* y) {
-
-  if (x == nullptr || y == nullptr || heightMapGridPointsX == 0)
-    return;
-
-  uint16_t row = pointIndex / heightMapGridPointsX;
-  uint16_t colInRow = pointIndex % heightMapGridPointsX;
-  uint16_t col = (row % 2 == 0) ? colInRow : (heightMapGridPointsX - 1 - colInRow);
-
-  *x = heightMapOriginX + ((float)col * heightMapSpacingXmm);
-  *y = heightMapOriginY - ((float)row * heightMapSpacingYmm);
-
-}
-
-void pushHeightMapScanCompletedEvent(bool success) {
-
-  if (!jsonSettings.enableJsonResponse)
-    return;
-
-  InputSource savedSource = currentInputSource;
-  currentInputSource = heightMapInputSource;
-
-  clearResponseJsonBuffer();
-  responseJsonBuffer[JSON_KEY_TYPE_STR] = JSON_VALUE_EVENT_HEIGHT_MAP_SCAN_COMPLETED_STR;
-  responseJsonBuffer[JSON_KEY_RESULT_STR] = success ? JSON_VALUE_RESULT_SUCCESS_STR : JSON_VALUE_RESULT_FAILURE_STR;
-  responseJsonBuffer[JSON_KEY_HEIGHT_MAP_POINTS_SCANNED_STR] = heightMapNextPointIndex;
-  if (success) {
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_GRID_POINTS_X_STR] = heightMapGridPointsX;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_GRID_POINTS_Y_STR] = heightMapGridPointsY;
-#if !HEIGHT_MAP_USE_LEGACY_GRID_SCAN
-    // Scan quality, so the frontend can warn on a poor scan instead of trusting a smooth-looking map.
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_SAMPLES_TAKEN_STR] = heightMapSamplesTaken;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_CELLS_INTERPOLATED_STR] = heightMapCellsInterpolated;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_MIN_CELL_SAMPLES_STR] = heightMapMinCellSamples;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_MAX_CELL_SPREAD_MM_STR] =
-      roundf(heightMapMaxCellSpreadMm * 1000.0f) / 1000.0f;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_NOISY_CELLS_STR] = heightMapNoisyCells;
-    // Offset from the scan start corner, matching the frame getHeightMapPoints reports in.
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_NOISIEST_CELL_X_MM_STR] =
-      roundf((float)heightMapNoisiestCellCol * heightMapSpacingXmm * 1000.0f) / 1000.0f;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_NOISIEST_CELL_Y_MM_STR] =
-      roundf(-(float)heightMapNoisiestCellRow * heightMapSpacingYmm * 1000.0f) / 1000.0f;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_BASELINE_SAMPLES_STR] = heightMapBaselineSampleCount;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_BASELINE_SPREAD_MM_STR] =
-      roundf(heightMapBaselineSpreadMm * 1000.0f) / 1000.0f;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_DATUM_FROM_CELLS_STR] = heightMapDatumFromCells;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_DATUM_BIAS_MM_STR] =
-      roundf(heightMapDatumBiasMm * 1000.0f) / 1000.0f;
-#endif
-  } else {
-    if (heightMapAbortStage != nullptr)
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ABORT_STAGE_STR] = heightMapAbortStage;
-    if (heightMapAbortDetail != nullptr)
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ABORT_DETAIL_STR] = heightMapAbortDetail;
-  }
-#if !HEIGHT_MAP_USE_LEGACY_GRID_SCAN
-  // Reported either way: on a SENSOR_RANGE abort these carry the reading that caused it, which is
-  // what tells the operator how far to move Z.
-  if (heightMapHasReading) {
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_MIN_READING_MM_STR] = roundf(heightMapMinReadingMm * 100.0f) / 100.0f;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_MAX_READING_MM_STR] = roundf(heightMapMaxReadingMm * 100.0f) / 100.0f;
-  }
-#endif
-  serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-  sendJsonResponse();
-
-  currentInputSource = savedSource;
-
-}
-
-void pushHeightMapScanProgressEvent() {
-
-  if (!jsonSettings.enableJsonResponse)
-    return;
-
-  InputSource savedSource = currentInputSource;
-  currentInputSource = heightMapInputSource;
-
-  clearResponseJsonBuffer();
-  responseJsonBuffer[JSON_KEY_TYPE_STR] = JSON_VALUE_EVENT_HEIGHT_MAP_SCAN_PROGRESS_STR;
-  responseJsonBuffer[JSON_KEY_HEIGHT_MAP_POINTS_SCANNED_STR] = heightMapNextPointIndex;
-  responseJsonBuffer[JSON_KEY_HEIGHT_MAP_POINTS_TOTAL_STR] = heightMapTotalPoints;
-  responseJsonBuffer[JSON_KEY_HEIGHT_MAP_GRID_POINTS_X_STR] = heightMapGridPointsX;
-  responseJsonBuffer[JSON_KEY_HEIGHT_MAP_GRID_POINTS_Y_STR] = heightMapGridPointsY;
-#if !HEIGHT_MAP_USE_LEGACY_GRID_SCAN
-  // A whole row is one continuous move now, so the event fires per row rather than per point. The
-  // point counters above still carry cells-resolved / cells-total for existing progress bars.
-  responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ROWS_SCANNED_STR] = heightMapCurrentRow;
-  responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ROWS_TOTAL_STR] = heightMapGridPointsY;
-  responseJsonBuffer[JSON_KEY_HEIGHT_MAP_SAMPLES_TAKEN_STR] = heightMapSamplesTaken;
-#endif
-  serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-  sendJsonResponse();
-
-  currentInputSource = savedSource;
-
-}
-
-void abortHeightMapScan(const char* stage, const char* detail) {
-
-  heightMapAbortStage = stage;
-  heightMapAbortDetail = detail;
-  // Stop any motion currently in flight on GRBL (Ctrl-X soft reset) and clear the
-  // pending-ack counter so the firmware does not keep waiting for an `ok` that the
-  // cancelled G1 will never produce.
-  serialManager.CPUASerialWrite(GRBL_STOP_RESET);
-  waitForOk = 0;
-  invalidateHeightMap(false);
-  heightMapAbortStage = stage;
-  heightMapAbortDetail = detail;
-  pushHeightMapScanCompletedEvent(false);
-
-}
-
-void logHeightMapScanDebug(const char* phase, const char* detail) {
-
-  if (!debuggingSettings.debuggingMacroBuffer && !debuggingSettings.debuggingStatus && !debuggingSettings.debuggingBase)
-    return;
-
-  char dbg[220];
-  snprintf(dbg, sizeof(dbg),
-           "[HeightMap] phase=%s detail=%s state=%d idx=%u total=%u waitForOk=%d machineState=%d ready=%d scanInProgress=%d sensorReadyMs=%lu settleUntilMs=%lu",
-           phase,
-           detail,
-           (int)heightMapScanState,
-           (unsigned)heightMapNextPointIndex,
-           (unsigned)heightMapTotalPoints,
-           waitForOk,
-           (int)currentMachineState,
-           heightMapReady ? 1 : 0,
-           heightMapScanInProgress ? 1 : 0,
-           (unsigned long)heightMapSensorReadyMs,
-           (unsigned long)heightMapSettleUntilMs);
-  serialManager.USBSerialPrintln(dbg);
-
-}
 
 // Drops the map when the job XY zero moves.
 //
@@ -925,1538 +369,42 @@ void logHeightMapScanDebug(const char* phase, const char* detail) {
 //
 // Z is deliberately NOT checked. The stored values are deltas from the origin cell, so re-zeroing Z
 // (re-probing after a tool change, say) shifts the cut depth uniformly and leaves the map itself valid.
-static void checkHeightMapWorkOffsetChange() {
-
-  if (!heightMapReady && !heightMapScanInProgress)
-    return;
-
-  if (fabsf(wcoX - heightMapWcoX) <= HEIGHT_MAP_WCO_CHANGE_TOLERANCE_MM &&
-      fabsf(wcoY - heightMapWcoY) <= HEIGHT_MAP_WCO_CHANGE_TOLERANCE_MM)
-    return;
-
-  char dbg[160];
-  snprintf(dbg, sizeof(dbg),
-           "HeightMap dropped: job XY zero moved by (%.3f, %.3f) mm since the scan - rescan required",
-           wcoX - heightMapWcoX, wcoY - heightMapWcoY);
-  serialManager.USBSerialPrint(FROM_CPUB);
-  serialManager.USBSerialPrintln(dbg);
-
-  if (heightMapScanInProgress) {
-    // Mid-scan there is nothing to salvage: the rows already stored are in the old frame.
-    abortHeightMapScan("ZERO_CHANGED", "work_offset_moved");
-    return;
-  }
-
-  invalidateHeightMap(false);
-  heightMapCompensationEnabled = false;
-
-}
 
 // ─── Height map cell statistics ─────────────────────────────────
 
-// Maps a physical grid position to its index in heightMapRelativeMm. Storage is in serpentine scan
 // order: row 0 runs +X, row 1 runs -X, and so on, which is also the order the line scan fills them in.
-static uint16_t hmPhysToScanIdx(uint16_t row, uint16_t col) {
-  if (row % 2 == 0) return row * heightMapGridPointsX + col;
-  return row * heightMapGridPointsX + (heightMapGridPointsX - 1 - col);
-}
 
 // Median of up to 9 floats (used by the height-map outlier filter). Sorts the array in place.
-static float hmMedian(float* v, int n) {
-  for (int i = 1; i < n; i++) {
-    float x = v[i];
-    int j = i - 1;
-    while (j >= 0 && v[j] > x) { v[j + 1] = v[j]; j--; }
-    v[j + 1] = x;
-  }
-  return (n & 1) ? v[n / 2] : 0.5f * (v[n / 2 - 1] + v[n / 2]);
-}
 
-static bool hmCellValid(uint16_t idx) {
-  return (heightMapCellValid[idx >> 3] & (uint8_t)(1u << (idx & 7))) != 0;
-}
 
-static void hmSetCellValid(uint16_t idx) {
-  heightMapCellValid[idx >> 3] |= (uint8_t)(1u << (idx & 7));
-}
 
-static void hmClearAllCellValid() {
-  memset(heightMapCellValid, 0, sizeof(heightMapCellValid));
-}
 
-// Sorts v in place and returns the mean of the middle (100 - 2*HEIGHT_MAP_CELL_TRIM_PERCENT)% of it.
 // Trimming BOTH ends is what makes a cell stable on reflective stock: a specular glint reads short and
 // a dropout reads long, both land at an extreme, and both are discarded outright -- where a plain mean
 // would drag the cell toward them by enough to lift the tool clear of a shallow cut. spreadOut gets the
 // range of the values that survived the trim, i.e. a per-cell noise figure.
-static float hmTrimmedMean(float* v, uint16_t n, float* spreadOut) {
 
-  for (uint16_t i = 1; i < n; i++) {
-    float x = v[i];
-    int j = (int)i - 1;
-    while (j >= 0 && v[j] > x) { v[j + 1] = v[j]; j--; }
-    v[j + 1] = x;
-  }
-
-  uint16_t trim = (uint16_t)(((uint32_t)n * HEIGHT_MAP_CELL_TRIM_PERCENT) / 100u);
-  uint16_t lo = trim;
-  uint16_t hi = (uint16_t)(n - trim);
-  if (hi <= lo) { lo = 0; hi = n; }   // too few samples to trim: use them all
-
-  float sum = 0.0f;
-  for (uint16_t i = lo; i < hi; i++)
-    sum += v[i];
-
-  if (spreadOut != nullptr)
-    *spreadOut = v[hi - 1] - v[lo];
-
-  return sum / (float)(hi - lo);
-
-}
-
-// Collapses the samples gathered for heightMapCellActiveCol into that cell. Called when the head
 // crosses into the next column and once more when the row ends.
-static void closeHeightMapCell() {
-
-  if (heightMapCellActiveCol < 0 || heightMapCurrentRow >= heightMapGridPointsY) {
-    heightMapCellSampleCount = 0;
-    return;
-  }
-
-  if (heightMapCellSampleCount >= HEIGHT_MAP_CELL_MIN_SAMPLES) {
-
-    uint16_t idx = hmPhysToScanIdx(heightMapCurrentRow, (uint16_t)heightMapCellActiveCol);
-    float spread = 0.0f;
-    heightMapRelativeMm[idx] = hmTrimmedMean(heightMapCellSamples, heightMapCellSampleCount, &spread);
-    hmSetCellValid(idx);
-
-    if (spread > heightMapMaxCellSpreadMm) {
-      heightMapMaxCellSpreadMm = spread;
-      heightMapNoisiestCellRow = heightMapCurrentRow;
-      heightMapNoisiestCellCol = (uint16_t)heightMapCellActiveCol;
-    }
-    if (spread > HEIGHT_MAP_CELL_NOISY_SPREAD_MM)
-      ++heightMapNoisyCells;
-    if (heightMapMinCellSamples == 0 || heightMapCellSampleCount < heightMapMinCellSamples)
-      heightMapMinCellSamples = heightMapCellSampleCount;
-
-  }
-  // Fewer than HEIGHT_MAP_CELL_MIN_SAMPLES: the cell stays EMPTY and is filled from its neighbours
-  // once the scan finishes. It is deliberately NOT given the previous cell's value.
-
-  heightMapCellSampleCount = 0;
-
-}
 
 // Fills cells with no real measurement from their valid neighbours, propagating over several passes so
 // a hole closes from its rim inwards. Returns how many cells were filled. This replaces the legacy
 // "carry the previous point's value" behaviour, which silently produced a flat patch that looked
 // entirely plausible in the 3D view while the tool rode over uncut material.
-static uint16_t fillHeightMapGaps() {
-
-  static uint8_t pending[(HEIGHT_MAP_MAX_POINTS_PER_AXIS * HEIGHT_MAP_MAX_POINTS_PER_AXIS + 7) / 8];
-  uint16_t filled = 0;
-
-  for (int pass = 0; pass < HEIGHT_MAP_GAP_FILL_PASSES; pass++) {
-
-    memset(pending, 0, sizeof(pending));
-    bool any = false;
-
-    for (int row = 0; row < (int)heightMapGridPointsY; row++) {
-      for (int col = 0; col < (int)heightMapGridPointsX; col++) {
-
-        uint16_t idx = hmPhysToScanIdx((uint16_t)row, (uint16_t)col);
-        if (hmCellValid(idx)) continue;
-
-        float sum = 0.0f;
-        int n = 0;
-        for (int dr = -1; dr <= 1; dr++) {
-          for (int dc = -1; dc <= 1; dc++) {
-            if (dr == 0 && dc == 0) continue;
-            int r = row + dr, c = col + dc;
-            if (r < 0 || r >= (int)heightMapGridPointsY || c < 0 || c >= (int)heightMapGridPointsX) continue;
-            uint16_t nIdx = hmPhysToScanIdx((uint16_t)r, (uint16_t)c);
-            if (!hmCellValid(nIdx)) continue;
-            sum += heightMapRelativeMm[nIdx];
-            n++;
-          }
-        }
-        if (n == 0) continue;
-
-        heightMapRelativeMm[idx] = sum / (float)n;
-        // Marked valid only after the whole pass, so a hole fills symmetrically from its rim rather
-        // than smearing along the iteration order.
-        pending[idx >> 3] |= (uint8_t)(1u << (idx & 7));
-        filled++;
-        any = true;
-
-      }
-    }
-
-    for (unsigned int i = 0; i < sizeof(pending); i++)
-      heightMapCellValid[i] |= pending[i];
-
-    if (!any)
-      break;
-
-  }
-
-  return filled;
-
-}
 
 // Turns the raw per-cell distances left by the line scan into the finished map. Returns false, having
 // already aborted the scan, if the result cannot be trusted.
-static bool finalizeHeightMapLineScan() {
 
-  uint16_t totalCells = (uint16_t)((uint32_t)heightMapGridPointsX * heightMapGridPointsY);
-  if (totalCells == 0) {
-    abortHeightMapScan("FINALIZE", "empty_grid");
-    return false;
-  }
-
-  uint16_t validCells = 0;
-  for (uint16_t idx = 0; idx < totalCells; idx++)
-    if (hmCellValid(idx)) validCells++;
-
-  // Nothing measured at all: the laser never produced a usable read anywhere on the work. Fail loudly
-  // rather than hand back a map of zeroes that would read as a perfectly flat surface.
-  if (validCells == 0) {
-    logHeightMapScanDebug("FINALIZE", "no_valid_cells");
-    abortHeightMapScan("FINALIZE", "no_valid_cells");
-    return false;
-  }
-
-  heightMapCellsInterpolated = fillHeightMapGaps();
-
-  // Anything the neighbour passes could not reach (a whole edge of dropouts) falls back to the mean of
-  // the measured cells so the map stays continuous, and is counted as interpolated too.
-  float sum = 0.0f;
-  uint16_t n = 0;
-  for (uint16_t idx = 0; idx < totalCells; idx++)
-    if (hmCellValid(idx)) { sum += heightMapRelativeMm[idx]; n++; }
-  float mapMean = (n > 0) ? (sum / (float)n) : 0.0f;
-
-  for (uint16_t idx = 0; idx < totalCells; idx++) {
-    if (hmCellValid(idx)) continue;
-    heightMapRelativeMm[idx] = mapMean;
-    hmSetCellValid(idx);
-    heightMapCellsInterpolated++;
-  }
-
-  // The filter only ever compares a cell against its own neighbours, so running it on absolute
-  // distances is equivalent to running it on relative ones.
-  filterHeightMapOutliers();
-
-  // The datum was measured standing still at job XY zero before the sweep (HEIGHT_MAP_SCAN_BASELINE_
-  // SAMPLE), so it is independent of the map's own cells. Cells hold absolute distances until here;
-  // subtracting the datum expresses every one of them as a height relative to the surface at job XY
-  // zero, which is where Z gets touched off.
-  if (!heightMapBaselineCaptured) {
-    logHeightMapScanDebug("FINALIZE", "no_baseline");
-    abortHeightMapScan("FINALIZE", "no_baseline");
-    return false;
-  }
-
-  // Take the datum from the SWEPT CELLS at job (0,0) rather than from the stationary reading taken
-  // before the sweep. Both refer to the same point, but the stationary read and the cells are acquired
-  // differently -- parked versus moving at the row feed rate -- and any systematic difference between
-  // those two conditions lands in every map value as a constant, which is a constant cutting-depth
-  // error. Reading the datum out of the cells puts the same acquisition path on both sides of the
-  // subtraction, so that difference cancels.
-  //
-  // The cells still hold absolute distances here, so interpolateHeightMapZ returns the absolute
-  // distance at job (0,0), interpolated from the four cells around it -- roughly 80 readings rather
-  // than the 15 the stationary measurement takes, and spread over a few mm so a local defect at job
-  // zero (a touch-off dimple or the burr it raises) is diluted and trimmed instead of BEING the datum.
-  //
-  // Only valid if job (0,0) is actually inside the scanned rectangle: outside it interpolateHeightMapZ
-  // clamps to the nearest edge cell and would silently return the wrong reference. In that case keep
-  // the stationary datum and say so, since the constant offset can come back with it.
-  const float datumMargin = HEIGHT_MAP_JOB_COVERAGE_TOLERANCE_MM;
-  bool jobZeroInsideMap =
-       (0.0f >= heightMapOriginX - datumMargin)
-    && (0.0f <= heightMapOriginX + heightMapSizeXmm + datumMargin)
-    && (0.0f <= heightMapOriginY + datumMargin)
-    && (0.0f >= heightMapOriginY - heightMapSizeYmm - datumMargin);
-
-  // Both branches read the datum out of the SWEPT CELLS, so it shares whatever bias the cells carry
-  // and that bias cancels in `cell - datum`. The stationary reading is never the datum: it is acquired
-  // differently (parked vs moving) and mixing the two puts a constant error into every map value.
-  float datumMm;
-
-  if (jobZeroInsideMap) {
-    datumMm = interpolateHeightMapZ(0.0f, 0.0f);
-    heightMapDatumFromCells = true;
-  } else {
-    // Job zero is outside the scanned rectangle, so there is no cell there to read. Fall back to the
-    // map's own origin cell -- which means Z must be touched off at the SCAN'S START CORNER for this
-    // map, not at job zero.
-    datumMm = heightMapRelativeMm[hmPhysToScanIdx(0, 0)];
-    heightMapDatumFromCells = false;
-    serialManager.USBSerialPrint(FROM_CPUB);
-    serialManager.USBSerialPrintln("HeightMap: job zero is outside the scanned area - datum taken at the scan's start corner, so set Z zero THERE, not at job zero");
-  }
-
-  heightMapDatumBiasMm = datumMm - heightMapBaselineDistanceMm;
-
-  for (uint16_t idx = 0; idx < totalCells; idx++)
-    heightMapRelativeMm[idx] -= datumMm;
-
-  // Sized for the full line: it silently truncated at 200 and lost the bias figure, which is the one
-  // number that says whether the sweep reads differently from a parked measurement.
-  char dbg[320];
-  snprintf(dbg, sizeof(dbg),
-           "HeightMap line scan: cells=%u measured=%u interpolated=%u samples=%lu dropped=%lu minCellSamples=%u maxCellSpread=%.3fmm at(%.1f,%.1f) noisyCells=%u readings[%.2f..%.2f] datum=%.3fmm(%s) parked=%.3fmm bias=%.3fmm",
-           (unsigned)totalCells,
-           (unsigned)validCells,
-           (unsigned)heightMapCellsInterpolated,
-           (unsigned long)heightMapSamplesTaken,
-           (unsigned long)heightMapCellDroppedSamples,
-           (unsigned)heightMapMinCellSamples,
-           heightMapMaxCellSpreadMm,
-           (double)((float)heightMapNoisiestCellCol * heightMapSpacingXmm),
-           (double)(-(float)heightMapNoisiestCellRow * heightMapSpacingYmm),
-           (unsigned)heightMapNoisyCells,
-           heightMapMinReadingMm,
-           heightMapMaxReadingMm,
-           datumMm,
-           heightMapDatumFromCells ? "cells" : "parked",
-           heightMapBaselineDistanceMm,
-           datumMm - heightMapBaselineDistanceMm);
-  serialManager.USBSerialPrint(FROM_CPUB);
-  serialManager.USBSerialPrintln(dbg);
-
-  return true;
-
-}
-
-void handleHeightMapScan() {
-
-  if (!heightMapScanInProgress)
-    return;
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_WAIT_SENSOR_READY) {
-    if ((long)(millis() - heightMapSensorReadyMs) < 0)
-      return;
-    logHeightMapScanDebug("WAIT_SENSOR_READY", "sensor_ready");
-#if HEIGHT_MAP_USE_LEGACY_GRID_SCAN
-    heightMapScanState = HEIGHT_MAP_SCAN_MOVE;
-#else
-    // Every cell starts with no measurement; only a cell that actually collects
-    // HEIGHT_MAP_CELL_MIN_SAMPLES reads is marked valid.
-    hmClearAllCellValid();
-    heightMapCurrentRow = 0;
-    heightMapCellActiveCol = -1;
-    heightMapCellSampleCount = 0;
-    heightMapSamplesTaken = 0;
-    heightMapCellDroppedSamples = 0;
-    heightMapCellsInterpolated = 0;
-    heightMapMinCellSamples = 0;
-    heightMapMaxCellSpreadMm = 0.0f;
-    heightMapNoisiestCellRow = 0;
-    heightMapNoisiestCellCol = 0;
-    heightMapNoisyCells = 0;
-    heightMapMinReadingMm = 0.0f;
-    heightMapMaxReadingMm = 0.0f;
-    heightMapHasReading = false;
-    heightMapBaselineCaptured = false;
-    heightMapDatumFromCells = false;
-    heightMapDatumBiasMm = 0.0f;
-    heightMapBaselineSpreadMm = 0.0f;
-    heightMapBaselineSampleCount = 0;
-    heightMapBaselineAttempt = 0;
-    // The datum is measured first, standing still at job XY zero, before any sweeping.
-    heightMapScanState = HEIGHT_MAP_SCAN_MOVE_BASELINE;
-#endif
-    return;
-  }
-
-#if HEIGHT_MAP_USE_LEGACY_GRID_SCAN
-
-  // ============ LEGACY POINT-BY-POINT GRID SCAN (kept for reinstatement) ============
-  // Stops at every grid point, waits out HEIGHT_MAP_SCAN_SETTLE_DELAY_MS, then averages up to
-  // HEIGHT_MAP_SAMPLE_RETRY_COUNT reads. Superseded by the line scan below; see Config.h.
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_MOVE) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (heightMapWaitOkSinceMs == 0)
-          heightMapWaitOkSinceMs = millis();
-        else if ((long)(millis() - heightMapWaitOkSinceMs) >= HEIGHT_MAP_WAIT_OK_STALE_MS) {
-          logHeightMapScanDebug("MOVE", "stale_waitForOk_cleared");
-          waitForOk = 0;
-          heightMapWaitOkSinceMs = 0;
-        }
-      } else {
-        heightMapWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    heightMapWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      logHeightMapScanDebug("MOVE", "machine_not_idle_before_send");
-    if (currentMachineState != IDLE)
-      return;
-
-    float targetX = 0.0f;
-    float targetY = 0.0f;
-    getHeightMapPointTarget(heightMapNextPointIndex, &targetX, &targetY);
-
-    // The laser sensor sits behind the spindle by (xBackMm, yBackMm): laser = spindle - offset.
-    // getHeightMapPointTarget returns the grid point in the TOOL frame (where compensation is
-    // later applied). To measure the surface there, drive the SPINDLE to gridTarget + offset so
-    // the LASER lands on the grid point. The stored map index/origin stay in the tool frame, so
-    // interpolation during the job lines up with the cut.
-    float scanX = targetX + laserOffsetZeroSettings.xBackMm;
-    float scanY = targetY + laserOffsetZeroSettings.yBackMm;
-
-    // Remember the target (work coords) so WAIT_IDLE can confirm the head actually arrives here
-    // before sampling — an IDLE status alone can be the stale pre-move one.
-    heightMapMoveTargetX = scanX;
-    heightMapMoveTargetY = scanY;
-
-    logHeightMapScanDebug("MOVE", "sending_move");
-
-    char cmd[MACRO_LINE_BUFFER_CHARS];
-    snprintf(cmd, sizeof(cmd), "G90 G1 X%.3f Y%.3f F%d", scanX, scanY, HEIGHT_MAP_SCAN_FEED_RATE_MM_MIN);
-    if (!scheduleOrSendCPUA(cmd)) {
-      logHeightMapScanDebug("MOVE", "schedule_failed");
-      abortHeightMapScan("MOVE", "schedule_failed");
-      return;
-    }
-    logHeightMapScanDebug("MOVE", "move_accepted");
-    heightMapScanState = HEIGHT_MAP_SCAN_WAIT_IDLE;
-    return;
-  }
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_WAIT_IDLE) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (heightMapWaitOkSinceMs == 0)
-          heightMapWaitOkSinceMs = millis();
-        else if ((long)(millis() - heightMapWaitOkSinceMs) >= HEIGHT_MAP_WAIT_OK_STALE_MS) {
-          logHeightMapScanDebug("WAIT_IDLE", "stale_waitForOk_cleared");
-          waitForOk = 0;
-          heightMapWaitOkSinceMs = 0;
-        }
-      } else {
-        heightMapWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    heightMapWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      logHeightMapScanDebug("WAIT_IDLE", "machine_not_idle");
-    if (currentMachineState != IDLE)
-      return;
-    // IDLE alone is not enough: currentMachineState is a polled value and can still read the stale
-    // pre-move IDLE right after the move is sent (before the poll updates to Run). On the long first
-    // move that samples point 0 before arrival and corrupts the whole map's baseline. Require the
-    // reported work position (MPos - WCO) to actually reach the target. The position is parsed from
-    // the same status reports as the state, so a stale IDLE carries the stale old position and fails
-    // this check until a fresh report confirms arrival.
-    if (fabsf((currentMachinePositionX - wcoX) - heightMapMoveTargetX) > HEIGHT_MAP_ARRIVE_TOLERANCE_MM ||
-        fabsf((currentMachinePositionY - wcoY) - heightMapMoveTargetY) > HEIGHT_MAP_ARRIVE_TOLERANCE_MM) {
-      logHeightMapScanDebug("WAIT_IDLE", "waiting_arrival");
-      return;
-    }
-    logHeightMapScanDebug("WAIT_IDLE", "settle_start");
-    heightMapSettleUntilMs = millis() + HEIGHT_MAP_SCAN_SETTLE_DELAY_MS;
-    heightMapScanState = HEIGHT_MAP_SCAN_SETTLE;
-    return;
-  }
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_SETTLE) {
-    if ((long)(millis() - heightMapSettleUntilMs) < 0)
-      return;
-    logHeightMapScanDebug("SETTLE", "settle_complete");
-    heightMapSampleSumMm = 0.0f;
-    heightMapSampleValidCount = 0;
-    heightMapSampleAttempt = 0;
-    heightMapNextSampleMs = 0;
-    heightMapScanState = HEIGHT_MAP_SCAN_SAMPLE;
-    return;
-  }
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_SAMPLE) {
-
-    // Non-blocking multi-sample averaging: take up to HEIGHT_MAP_SAMPLE_RETRY_COUNT reads spaced by
-    // HEIGHT_MAP_SAMPLE_RETRY_DELAY_MS (the Modbus laser mis-reads / de-inits if hammered back-to-back)
-    // and average the valid ones. This cuts the per-point noise that, on a shallow PCB cut, would lift
-    // the tool off the work, and gives reflective spots several chances at a real read before carrying.
-    if (heightMapNextSampleMs != 0 && (long)(millis() - heightMapNextSampleMs) < 0)
-      return; // waiting out the inter-sample delay
-
-    if (heightMapSampleAttempt < HEIGHT_MAP_SAMPLE_RETRY_COUNT) {
-      float distanceMm = 0.0f;
-      bool outOfRange = false;
-      if (readDistanceLaserMm(&distanceMm, &outOfRange) && !outOfRange) {
-        heightMapSampleSumMm += distanceMm;
-        heightMapSampleValidCount++;
-      } else {
-        logHeightMapScanDebug("SAMPLE", outOfRange ? "sample_out_of_range_ignored" : "sample_read_failed_ignored");
-      }
-      heightMapSampleAttempt++;
-      heightMapNextSampleMs = millis() + HEIGHT_MAP_SAMPLE_RETRY_DELAY_MS;
-      return; // take the next read on a later loop pass
-    }
-
-    // All attempts done for this point — average the valid reads.
-    bool hasValidSample = (heightMapSampleValidCount > 0);
-    float representativeDistanceMm = hasValidSample
-      ? (heightMapSampleSumMm / (float)heightMapSampleValidCount) : 0.0f;
-
-    // Only the FIRST point is mandatory: it defines the baseline the whole map is relative to, so an
-    // unreadable first point must abort. Any LATER point that can't be read (out of range, reflective
-    // spot, hole, edge) must NOT kill the whole scan — carry the previous point's value and continue.
-    if (!hasValidSample && heightMapNextPointIndex == 0) {
-      logHeightMapScanDebug("SAMPLE", "no_valid_samples_abort_first_point");
-      abortHeightMapScan("SAMPLE", "no_valid_samples_first_point");
-      return;
-    }
-
-    if (heightMapNextPointIndex == 0)
-      heightMapBaselineDistanceMm = representativeDistanceMm;
-
-    if (heightMapNextPointIndex < (HEIGHT_MAP_MAX_POINTS_PER_AXIS * HEIGHT_MAP_MAX_POINTS_PER_AXIS)) {
-      if (hasValidSample)
-        // Sign is `distance - baseline`, matching the point-cloud scan and verified on hardware with a
-        // 4mm gauge block: a higher surface yields a POSITIVE offset and a lower surface a NEGATIVE one,
-        // so `Z_new = programmedZ + offset` correctly raises the tool over highs and lowers it over lows.
-        // (The previous `baseline - distance` was inverted, driving Z the wrong way.)
-        heightMapRelativeMm[heightMapNextPointIndex] = representativeDistanceMm - heightMapBaselineDistanceMm;
-      else {
-        // Unreadable non-first point: reuse the previous point's value so the map still completes.
-        logHeightMapScanDebug("SAMPLE", "no_valid_samples_carry_previous");
-        heightMapRelativeMm[heightMapNextPointIndex] = heightMapRelativeMm[heightMapNextPointIndex - 1];
-      }
-    }
-
-    ++heightMapNextPointIndex;
-    pushHeightMapScanProgressEvent();
-
-    if (heightMapNextPointIndex >= heightMapTotalPoints) {
-      logHeightMapScanDebug("SAMPLE", "all_points_scanned_return_origin");
-      heightMapScanState = HEIGHT_MAP_SCAN_RETURN_ORIGIN;
-      return;
-    }
-
-    heightMapScanState = HEIGHT_MAP_SCAN_MOVE;
-    return;
-  }
-
-#else
-
-  // ==================== LINE SCAN MODE (ACTIVE) ====================
-  // One G1 per grid row at HEIGHT_MAP_LINE_SCAN_FEED_RATE_MM_MIN, with the laser polled on every
-  // loop() pass while GRBL moves, instead of stopping and settling at each of the grid points.
-  // X is dead reckoned from the row start time: the feed rate is constant and the acceleration ramp
-  // at 300 mm/min is a fraction of one sample, so this avoids the status-poll latency that would
-  // otherwise cluster samples. Each sample is binned into its nearest grid column, and a column is
-  // collapsed into a trimmed mean the moment the head leaves it -- so a cell is tens of independent
-  // reads rather than the 3 the legacy per-point scan took, at roughly half the wall clock.
-
-  // ---- Z datum ----
-  // Measured standing still at job XY zero, before any sweeping. Every value in the finished map is
-  // expressed relative to this, so Z is touched off at job XY zero. Taking it from the map's own
-  // origin cell (the previous behaviour) rested the whole map on a half-width row-end cell carrying
-  // about half the samples of any other -- the weakest cell in the map.
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_MOVE_BASELINE) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (heightMapWaitOkSinceMs == 0)
-          heightMapWaitOkSinceMs = millis();
-        else if ((long)(millis() - heightMapWaitOkSinceMs) >= HEIGHT_MAP_WAIT_OK_STALE_MS) {
-          logHeightMapScanDebug("MOVE_BASELINE", "stale_waitForOk_cleared");
-          waitForOk = 0;
-          heightMapWaitOkSinceMs = 0;
-        }
-      } else {
-        heightMapWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    heightMapWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE) {
-      logHeightMapScanDebug("MOVE_BASELINE", "machine_not_idle_before_send");
-      return;
-    }
-
-    // Drive the SPINDLE to the map's origin cell + laser offset, so the LASER sits on the first point
-    // of the scan.
-    //
-    // This reading is the SENSOR RANGE CHECK, not the Z datum -- the datum is derived from the swept
-    // cells in finalizeHeightMapLineScan. Taking it over job (0,0) instead required the laser to
-    // physically reach job zero, and with a +9.21 mm Y offset against a machine whose Y ceiling is 0,
-    // that refused nearly every scan on a soft limit no matter how small the patch. The map's own
-    // origin is guaranteed reachable: the scan rectangle is soft-limit checked before the scan starts.
-    // It is also the more useful place to check range, being on the surface actually being scanned.
-    heightMapMoveTargetX = heightMapOriginX + laserOffsetZeroSettings.xBackMm;
-    heightMapMoveTargetY = heightMapOriginY + laserOffsetZeroSettings.yBackMm;
-
-    char cmd[MACRO_LINE_BUFFER_CHARS];
-    snprintf(cmd, sizeof(cmd), "G90 G1 X%.3f Y%.3f F%d",
-             heightMapMoveTargetX, heightMapMoveTargetY, HEIGHT_MAP_SCAN_FEED_RATE_MM_MIN);
-    if (!scheduleOrSendCPUA(cmd)) {
-      logHeightMapScanDebug("MOVE_BASELINE", "schedule_failed");
-      abortHeightMapScan("BASELINE", "schedule_failed");
-      return;
-    }
-
-    logHeightMapScanDebug("MOVE_BASELINE", "baseline_move_accepted");
-    heightMapScanState = HEIGHT_MAP_SCAN_WAIT_BASELINE_IDLE;
-    return;
-  }
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_WAIT_BASELINE_IDLE) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (heightMapWaitOkSinceMs == 0)
-          heightMapWaitOkSinceMs = millis();
-        else if ((long)(millis() - heightMapWaitOkSinceMs) >= HEIGHT_MAP_WAIT_OK_STALE_MS) {
-          logHeightMapScanDebug("WAIT_BASELINE_IDLE", "stale_waitForOk_cleared");
-          waitForOk = 0;
-          heightMapWaitOkSinceMs = 0;
-        }
-      } else {
-        heightMapWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    heightMapWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      return;
-    // A polled IDLE can still be the stale pre-move one; require confirmed arrival before reading,
-    // or the datum would be measured somewhere on the way.
-    if (fabsf((currentMachinePositionX - wcoX) - heightMapMoveTargetX) > HEIGHT_MAP_ARRIVE_TOLERANCE_MM ||
-        fabsf((currentMachinePositionY - wcoY) - heightMapMoveTargetY) > HEIGHT_MAP_ARRIVE_TOLERANCE_MM) {
-      logHeightMapScanDebug("WAIT_BASELINE_IDLE", "waiting_arrival");
-      return;
-    }
-
-    // The per-cell buffer is free at this point in the scan, so the datum reuses it. Keeping
-    // heightMapCellActiveCol at -1 makes closeHeightMapCell() a no-op if it is ever reached.
-    heightMapCellActiveCol = -1;
-    heightMapCellSampleCount = 0;
-    heightMapBaselineAttempt = 0;
-    heightMapNextSampleMs = 0;
-    logHeightMapScanDebug("WAIT_BASELINE_IDLE", "baseline_sampling_start");
-    heightMapScanState = HEIGHT_MAP_SCAN_BASELINE_SAMPLE;
-    return;
-  }
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_BASELINE_SAMPLE) {
-
-    // Spaced reads: the Modbus laser mis-reads if hammered back to back.
-    if (heightMapNextSampleMs != 0 && (long)(millis() - heightMapNextSampleMs) < 0)
-      return;
-
-    if (heightMapBaselineAttempt < HEIGHT_MAP_BASELINE_SAMPLE_COUNT) {
-
-      float distanceMm = 0.0f;
-      bool outOfRange = false;
-      if (readDistanceLaserMm(&distanceMm, &outOfRange) && !outOfRange) {
-        if (heightMapCellSampleCount < HEIGHT_MAP_CELL_MAX_SAMPLES)
-          heightMapCellSamples[heightMapCellSampleCount++] = distanceMm;
-        if (!heightMapHasReading) {
-          heightMapMinReadingMm = distanceMm;
-          heightMapMaxReadingMm = distanceMm;
-          heightMapHasReading = true;
-        } else {
-          if (distanceMm < heightMapMinReadingMm) heightMapMinReadingMm = distanceMm;
-          if (distanceMm > heightMapMaxReadingMm) heightMapMaxReadingMm = distanceMm;
-        }
-        ++heightMapSamplesTaken;
-      } else {
-        logHeightMapScanDebug("BASELINE_SAMPLE", outOfRange ? "read_out_of_range" : "read_failed");
-      }
-
-      ++heightMapBaselineAttempt;
-      heightMapNextSampleMs = millis() + HEIGHT_MAP_SAMPLE_RETRY_DELAY_MS;
-      return;
-
-    }
-
-    if (heightMapCellSampleCount < HEIGHT_MAP_CELL_MIN_SAMPLES) {
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln("HeightMap refused: could not read the Z datum at job XY zero. Check the Z height and that the stock covers job zero.");
-      logHeightMapScanDebug("BASELINE_SAMPLE", "not_enough_valid_readings");
-      heightMapCellSampleCount = 0;
-      abortHeightMapScan("BASELINE", "no_valid_readings");
-      return;
-    }
-
-    // Same trimmed mean a cell uses: a stationary glint still has to be rejected.
-    float baselineSpread = 0.0f;
-    heightMapBaselineSampleCount = heightMapCellSampleCount;
-    heightMapBaselineDistanceMm = hmTrimmedMean(heightMapCellSamples, heightMapCellSampleCount, &baselineSpread);
-    heightMapBaselineSpreadMm = baselineSpread;
-    heightMapBaselineCaptured = true;
-    heightMapCellSampleCount = 0;
-
-    // The sensor spans about +/-30 mm and tracks Z roughly 1:1, so a datum near either limit means the
-    // surface will fall out of range somewhere on the work. Refuse now rather than after the sweep.
-    if (fabsf(heightMapBaselineDistanceMm) > HEIGHT_MAP_START_READING_MAX_ABS_MM) {
-      char dbg[200];
-      snprintf(dbg, sizeof(dbg),
-               "HeightMap refused: laser reads %.2f mm at job zero, outside +/-%.1f mm of mid-range. Jog Z until it reads near 0, then rescan.",
-               heightMapBaselineDistanceMm, (double)HEIGHT_MAP_START_READING_MAX_ABS_MM);
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln(dbg);
-      logHeightMapScanDebug("BASELINE_SAMPLE", "reading_near_range_limit");
-      abortHeightMapScan("BASELINE", "reading_near_range_limit");
-      return;
-    }
-
-    {
-      char dbg[160];
-      snprintf(dbg, sizeof(dbg),
-               "HeightMap Z datum at job zero: %.3f mm from %u/%u reads, spread %.3f mm",
-               heightMapBaselineDistanceMm,
-               (unsigned)heightMapBaselineSampleCount,
-               (unsigned)HEIGHT_MAP_BASELINE_SAMPLE_COUNT,
-               heightMapBaselineSpreadMm);
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln(dbg);
-    }
-
-    heightMapCurrentRow = 0;
-    heightMapScanState = HEIGHT_MAP_SCAN_MOVE_ROW_START;
-    return;
-  }
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_MOVE_ROW_START) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (heightMapWaitOkSinceMs == 0)
-          heightMapWaitOkSinceMs = millis();
-        else if ((long)(millis() - heightMapWaitOkSinceMs) >= HEIGHT_MAP_WAIT_OK_STALE_MS) {
-          logHeightMapScanDebug("MOVE_ROW_START", "stale_waitForOk_cleared");
-          waitForOk = 0;
-          heightMapWaitOkSinceMs = 0;
-        }
-      } else {
-        heightMapWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    heightMapWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE) {
-      logHeightMapScanDebug("MOVE_ROW_START", "machine_not_idle_before_send");
-      return;
-    }
-
-    // Boustrophedon: even rows run +X, odd rows run -X, which is also the serpentine order
-    // hmPhysToScanIdx stores cells in, so the head never has to traverse back across the work.
-    bool evenRow = (heightMapCurrentRow % 2 == 0);
-    heightMapRowStartX = evenRow ? heightMapOriginX : (heightMapOriginX + heightMapSizeXmm);
-    heightMapRowEndX   = evenRow ? (heightMapOriginX + heightMapSizeXmm) : heightMapOriginX;
-    heightMapRowY      = heightMapOriginY - ((float)heightMapCurrentRow * heightMapSpacingYmm);
-
-    // The laser sits behind the spindle by (xBackMm, yBackMm), so the SPINDLE is driven to
-    // toolTarget + offset to put the LASER on the row. The map itself stays in the tool frame, which
-    // is what the job-time interpolation expects.
-    heightMapMoveTargetX = heightMapRowStartX + laserOffsetZeroSettings.xBackMm;
-    heightMapMoveTargetY = heightMapRowY + laserOffsetZeroSettings.yBackMm;
-
-    char cmd[MACRO_LINE_BUFFER_CHARS];
-    snprintf(cmd, sizeof(cmd), "G90 G1 X%.3f Y%.3f F%d",
-             heightMapMoveTargetX, heightMapMoveTargetY, HEIGHT_MAP_SCAN_FEED_RATE_MM_MIN);
-    if (!scheduleOrSendCPUA(cmd)) {
-      logHeightMapScanDebug("MOVE_ROW_START", "schedule_failed");
-      abortHeightMapScan("MOVE_ROW_START", "schedule_failed");
-      return;
-    }
-
-    logHeightMapScanDebug("MOVE_ROW_START", "row_start_move_accepted");
-    heightMapScanState = HEIGHT_MAP_SCAN_WAIT_ROW_START_IDLE;
-    return;
-  }
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_WAIT_ROW_START_IDLE) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (heightMapWaitOkSinceMs == 0)
-          heightMapWaitOkSinceMs = millis();
-        else if ((long)(millis() - heightMapWaitOkSinceMs) >= HEIGHT_MAP_WAIT_OK_STALE_MS) {
-          logHeightMapScanDebug("WAIT_ROW_START_IDLE", "stale_waitForOk_cleared");
-          waitForOk = 0;
-          heightMapWaitOkSinceMs = 0;
-        }
-      } else {
-        heightMapWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    heightMapWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      return;
-    // currentMachineState is polled, so a fresh IDLE can still be the stale pre-move one. The row
-    // timing clock is only meaningful if the head really is at heightMapRowStartX when the row G1 is
-    // issued -- starting it early would skew every dead-reckoned X in the row -- so require the
-    // reported work position to confirm arrival first.
-    if (fabsf((currentMachinePositionX - wcoX) - heightMapMoveTargetX) > HEIGHT_MAP_ARRIVE_TOLERANCE_MM ||
-        fabsf((currentMachinePositionY - wcoY) - heightMapMoveTargetY) > HEIGHT_MAP_ARRIVE_TOLERANCE_MM) {
-      logHeightMapScanDebug("WAIT_ROW_START_IDLE", "waiting_arrival");
-      return;
-    }
-
-    // The sensor window was already validated on the stationary datum reading at job zero, which is a
-    // far more reliable check than a single reading taken here would be.
-    heightMapScanState = HEIGHT_MAP_SCAN_START_ROW;
-    return;
-  }
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_START_ROW) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (heightMapWaitOkSinceMs == 0)
-          heightMapWaitOkSinceMs = millis();
-        else if ((long)(millis() - heightMapWaitOkSinceMs) >= HEIGHT_MAP_WAIT_OK_STALE_MS) {
-          logHeightMapScanDebug("START_ROW", "stale_waitForOk_cleared");
-          waitForOk = 0;
-          heightMapWaitOkSinceMs = 0;
-        }
-      } else {
-        heightMapWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    heightMapWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE) {
-      logHeightMapScanDebug("START_ROW", "machine_not_idle_before_send");
-      return;
-    }
-
-    char cmd[MACRO_LINE_BUFFER_CHARS];
-    snprintf(cmd, sizeof(cmd), "G90 G1 X%.3f F%d",
-             heightMapRowEndX + laserOffsetZeroSettings.xBackMm, HEIGHT_MAP_LINE_SCAN_FEED_RATE_MM_MIN);
-    if (!scheduleOrSendCPUA(cmd)) {
-      logHeightMapScanDebug("START_ROW", "schedule_failed");
-      abortHeightMapScan("START_ROW", "schedule_failed");
-      return;
-    }
-
-    heightMapCellActiveCol = -1;
-    heightMapCellSampleCount = 0;
-    heightMapRowStartMs = millis();
-    // Purely time based. Acceleration is negligible at this feed rate, so the row takes essentially
-    // exactly sizeXmm / feed, and this avoids racing GRBL's near-instant "ok" against the 200 ms
-    // cached machine-state poll.
-    heightMapRowDurationMs = (uint32_t)(
-      heightMapSizeXmm * 60000.0f / (float)HEIGHT_MAP_LINE_SCAN_FEED_RATE_MM_MIN + 0.5f);
-
-    logHeightMapScanDebug("START_ROW", "row_move_accepted");
-    heightMapScanState = HEIGHT_MAP_SCAN_SAMPLING;
-    return;
-  }
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_SAMPLING) {
-
-    bool rowComplete = ((uint32_t)(millis() - heightMapRowStartMs) >= heightMapRowDurationMs);
-
-    if (!rowComplete) {
-
-      float distanceMm = 0.0f;
-      bool outOfRange = false;
-      if (readDistanceLaserMm(&distanceMm, &outOfRange) && !outOfRange) {
-
-        // Time-based X dead reckoning, independently timestamped per read.
-        float speedMmPerMs = (float)HEIGHT_MAP_LINE_SCAN_FEED_RATE_MM_MIN / 60000.0f;
-        float direction = (heightMapRowEndX >= heightMapRowStartX) ? 1.0f : -1.0f;
-        float capturedX = heightMapRowStartX
-          + direction * speedMmPerMs * (float)(millis() - heightMapRowStartMs);
-
-        int32_t col = (int32_t)floorf((capturedX - heightMapOriginX) / heightMapSpacingXmm + 0.5f);
-        if (col < 0)
-          col = 0;
-        if (col > (int32_t)heightMapGridPointsX - 1)
-          col = (int32_t)heightMapGridPointsX - 1;
-
-        // Samples arrive in X order, so leaving a column means that column is finished: collapse it
-        // now and keep only one cell's worth of samples in RAM for the whole scan.
-        if (col != heightMapCellActiveCol) {
-          closeHeightMapCell();
-          heightMapCellActiveCol = col;
-        }
-
-        if (heightMapCellSampleCount < HEIGHT_MAP_CELL_MAX_SAMPLES)
-          heightMapCellSamples[heightMapCellSampleCount++] = distanceMm;
-        else
-          ++heightMapCellDroppedSamples;
-
-        if (!heightMapHasReading) {
-          heightMapMinReadingMm = distanceMm;
-          heightMapMaxReadingMm = distanceMm;
-          heightMapHasReading = true;
-        } else {
-          if (distanceMm < heightMapMinReadingMm) heightMapMinReadingMm = distanceMm;
-          if (distanceMm > heightMapMaxReadingMm) heightMapMaxReadingMm = distanceMm;
-        }
-
-        ++heightMapSamplesTaken;
-
-      }
-
-      return;
-
-    }
-
-    closeHeightMapCell();          // collapse the final column of the row
-    heightMapCellActiveCol = -1;
-    ++heightMapCurrentRow;
-    // Cells resolved so far, so the existing points-based progress bars keep working unchanged.
-    heightMapNextPointIndex = (uint16_t)((uint32_t)heightMapCurrentRow * heightMapGridPointsX);
-    pushHeightMapScanProgressEvent();
-
-    if (heightMapCurrentRow >= heightMapGridPointsY) {
-      logHeightMapScanDebug("SAMPLING", "all_rows_scanned_return_origin");
-      heightMapScanState = HEIGHT_MAP_SCAN_RETURN_ORIGIN;
-    } else {
-      heightMapScanState = HEIGHT_MAP_SCAN_MOVE_ROW_START;
-    }
-    return;
-  }
-
-#endif
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_RETURN_ORIGIN) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (heightMapWaitOkSinceMs == 0)
-          heightMapWaitOkSinceMs = millis();
-        else if ((long)(millis() - heightMapWaitOkSinceMs) >= HEIGHT_MAP_WAIT_OK_STALE_MS) {
-          logHeightMapScanDebug("RETURN_ORIGIN", "stale_waitForOk_cleared");
-          waitForOk = 0;
-          heightMapWaitOkSinceMs = 0;
-        }
-      } else {
-        heightMapWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    heightMapWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      logHeightMapScanDebug("RETURN_ORIGIN", "machine_not_idle_before_send");
-    if (currentMachineState != IDLE)
-      return;
-
-    logHeightMapScanDebug("RETURN_ORIGIN", "sending_return_move");
-
-    char cmd[MACRO_LINE_BUFFER_CHARS];
-    snprintf(cmd, sizeof(cmd), "G90 G1 X%.3f Y%.3f F%d", heightMapReturnX, heightMapReturnY, HEIGHT_MAP_SCAN_FEED_RATE_MM_MIN);
-    if (!scheduleOrSendCPUA(cmd)) {
-      logHeightMapScanDebug("RETURN_ORIGIN", "schedule_failed");
-      abortHeightMapScan("RETURN_ORIGIN", "schedule_failed");
-      return;
-    }
-
-    logHeightMapScanDebug("RETURN_ORIGIN", "return_move_accepted");
-    heightMapScanState = HEIGHT_MAP_SCAN_WAIT_RETURN_IDLE;
-    return;
-  }
-
-  if (heightMapScanState == HEIGHT_MAP_SCAN_WAIT_RETURN_IDLE) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (heightMapWaitOkSinceMs == 0)
-          heightMapWaitOkSinceMs = millis();
-        else if ((long)(millis() - heightMapWaitOkSinceMs) >= HEIGHT_MAP_WAIT_OK_STALE_MS) {
-          logHeightMapScanDebug("WAIT_RETURN_IDLE", "stale_waitForOk_cleared");
-          waitForOk = 0;
-          heightMapWaitOkSinceMs = 0;
-        }
-      } else {
-        heightMapWaitOkSinceMs = 0;
-      }
-      return;
-    }
-
-    heightMapWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      logHeightMapScanDebug("WAIT_RETURN_IDLE", "machine_not_idle");
-    if (currentMachineState != IDLE)
-      return;
-
-#if HEIGHT_MAP_USE_LEGACY_GRID_SCAN
-    heightMapScanInProgress = false;
-    heightMapScanState = HEIGHT_MAP_SCAN_IDLE;
-    filterHeightMapOutliers();   // remove isolated spikes before the map goes live
-#else
-    // Gap fill, spike filter and baseline, in that order. Aborts internally (and reports why) if the
-    // scan produced nothing usable, rather than publishing a map that only looks plausible.
-    if (!finalizeHeightMapLineScan())
-      return;
-    heightMapScanInProgress = false;
-    heightMapScanState = HEIGHT_MAP_SCAN_IDLE;
-#endif
-    heightMapReady = true;
-    heightMapUsedForCurrentFile = false;
-    arrayUtil.clearCharArray(heightMapBoundFile, SD_MAX_FILE_NAME_LENGTH);
-    if (openedReadFileName[0] != NULL_CHAR)
-      strncpy(heightMapBoundFile, openedReadFileName, SD_MAX_FILE_NAME_LENGTH - 1);
-    pushHeightMapScanCompletedEvent(true);
-    return;
-  }
-
-}
 
 // ==================== Point Cloud Scan ====================
 
-void pushPointCloudScanProgressEvent() {
-  if (!jsonSettings.enableJsonResponse)
-    return;
-  InputSource savedSource = currentInputSource;
-  currentInputSource = pointCloudInputSource;
-  clearResponseJsonBuffer();
-  responseJsonBuffer[JSON_KEY_TYPE_STR] = JSON_VALUE_EVENT_POINT_CLOUD_SCAN_PROGRESS_STR;
-  responseJsonBuffer[JSON_KEY_POINT_CLOUD_POINTS_SCANNED_STR] = pointCloudNextPointIndex;
-  responseJsonBuffer[JSON_KEY_POINT_CLOUD_POINTS_TOTAL_STR] = pointCloudTotalPoints;
-  responseJsonBuffer[JSON_KEY_POINT_CLOUD_GRID_POINTS_X_STR] = pointCloudGridPointsX;
-  responseJsonBuffer[JSON_KEY_POINT_CLOUD_GRID_POINTS_Y_STR] = pointCloudGridPointsY;
-  responseJsonBuffer[JSON_KEY_POINT_CLOUD_CURRENT_ROW_STR] = pointCloudCurrentRow;
-  serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-  sendJsonResponse();
-  currentInputSource = savedSource;
-}
 
-void pushPointCloudScanCompletedEvent(bool success, bool saved) {
-  if (!jsonSettings.enableJsonResponse)
-    return;
-  InputSource savedSource = currentInputSource;
-  currentInputSource = pointCloudInputSource;
-  clearResponseJsonBuffer();
-  responseJsonBuffer[JSON_KEY_TYPE_STR] = JSON_VALUE_EVENT_POINT_CLOUD_SCAN_COMPLETED_STR;
-  responseJsonBuffer[JSON_KEY_RESULT_STR] = success ? JSON_VALUE_RESULT_SUCCESS_STR : JSON_VALUE_RESULT_FAILURE_STR;
-  responseJsonBuffer[JSON_KEY_POINT_CLOUD_SAVED_STR] = saved;
-  if (success) {
-    responseJsonBuffer[JSON_KEY_POINT_CLOUD_FILENAME_STR] = pointCloudFilename;
-    responseJsonBuffer[JSON_KEY_POINT_CLOUD_GRID_POINTS_X_STR] = pointCloudGridPointsX;
-    responseJsonBuffer[JSON_KEY_POINT_CLOUD_GRID_POINTS_Y_STR] = pointCloudGridPointsY;
-    responseJsonBuffer[JSON_KEY_POINT_CLOUD_POINTS_SCANNED_STR] = pointCloudNextPointIndex;
-  } else {
-    if (pointCloudAbortStage != nullptr)
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ABORT_STAGE_STR] = pointCloudAbortStage;
-    if (pointCloudAbortDetail != nullptr)
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ABORT_DETAIL_STR] = pointCloudAbortDetail;
-  }
-  serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-  sendJsonResponse();
-  currentInputSource = savedSource;
-}
 
-void resetPointCloudScanState() {
-  pointCloudScanInProgress = false;
-  pointCloudScanState = POINT_CLOUD_SCAN_IDLE;
-  pointCloudNextPointIndex = 0;
-  pointCloudSettleUntilMs = 0;
-  pointCloudWaitOkSinceMs = 0;
-  pointCloudSensorReadyMs = 0;
-  pointCloudBaselineDistanceMm = 0.0f;
-  pointCloudAbortStage = nullptr;
-  pointCloudAbortDetail = nullptr;
-  pointCloudVertexCountOffset = 0;
-  pointCloudSyncCounter = 0;
-  pointCloudCurrentRow = 0;
-  pointCloudRowStartX = 0.0f;
-  pointCloudRowEndX = 0.0f;
-  pointCloudRowY = 0.0f;
-  pointCloudRowStartMs = 0;
-  pointCloudRowDurationMs = 0;
-  pointCloudFileYear = 0;
-  pointCloudFileMonth = 0;
-  pointCloudFileDay = 0;
-  pointCloudFileHour = 0;
-  pointCloudFileMinute = 0;
-  pointCloudFileSecond = 0;
-}
 
-void abortPointCloudScan(const char* stage, const char* detail) {
-  pointCloudAbortStage = stage;
-  pointCloudAbortDetail = detail;
-  // Stop any motion currently in flight on GRBL (Ctrl-X soft reset) and clear the
-  // pending-ack counter so the firmware does not keep waiting for an `ok` that the
-  // cancelled G1 will never produce.
-  serialManager.CPUASerialWrite(GRBL_STOP_RESET);
-  waitForOk = 0;
-  // Follow reset with an explicit unlock so controllers that enter Alarm/lock
-  // after Ctrl-X can recover without requiring a separate API call.
-  serialManager.CPUASerialPrintln(GRBL_UNLOCK);
-  ++waitForOk;
-  if (sdCardManager.isWriteFileOpen()) {
-    // Rewrite actual (partial) vertex count so the file is a valid partial PLY
-    char countStr[11];
-    snprintf(countStr, sizeof(countStr), "%010lu", (unsigned long)pointCloudNextPointIndex);
-    if (pointCloudVertexCountOffset > 0 && sdCardManager.seekWriteFile(pointCloudVertexCountOffset)) {
-      sdCardManager.writeText(countStr);
-      sdCardManager.syncWriteFile();
-    }
-    sdCardManager.closeWriteFile();
-  }
-  resetPointCloudScanState();
-  pointCloudAbortStage = stage;
-  pointCloudAbortDetail = detail;
-  pushPointCloudScanCompletedEvent(false, false);
-}
 
 // Returns the scan-order (serpentine) index for physical grid position (row, col)
-static uint32_t pcPhysToScanIdx(uint16_t row, uint16_t col) {
-  if (row % 2 == 0) return (uint32_t)row * pointCloudGridPointsX + col;
-  return (uint32_t)row * pointCloudGridPointsX + (pointCloudGridPointsX - 1 - col);
-}
 
-void getPointCloudPointTarget(uint32_t pointIndex, float* x, float* y) {
-  if (x == nullptr || y == nullptr || pointCloudGridPointsX == 0)
-    return;
-  uint16_t row = (uint16_t)(pointIndex / pointCloudGridPointsX);
-  uint16_t colInRow = (uint16_t)(pointIndex % pointCloudGridPointsX);
-  uint16_t col = (row % 2 == 0) ? colInRow : (pointCloudGridPointsX - 1 - colInRow);
-  *x = pointCloudOriginX + ((float)col * pointCloudSpacingMm);
-  *y = pointCloudOriginY - ((float)row * pointCloudSpacingMm);
-}
 
-bool savePointCloudPlyHeader() {
-  if (sdCardManager.fileExists(pointCloudFilename))
-    sdCardManager.deleteFile(pointCloudFilename);
-  if (!sdCardManager.createTextFile(pointCloudFilename))
-    return false;
-  if (!sdCardManager.openTextFileForWriting(pointCloudFilename))
-    return false;
-  if (pointCloudFileYear != 0)
-    sdCardManager.setWriteFileTimestamp(pointCloudFileYear, pointCloudFileMonth, pointCloudFileDay, pointCloudFileHour, pointCloudFileMinute, pointCloudFileSecond);
-  char line[128];
-  sdCardManager.writeTextLine("ply");
-  sdCardManager.writeTextLine("format ascii 1.0");
-  sdCardManager.writeTextLine("comment OISK Metal 3D Printer point cloud");
-  snprintf(line, sizeof(line), "comment file=%s density=%s spacingXY=%.3f gridX=%u gridY=%u",
-    pointCloudFilename, pointCloudDensityStr, pointCloudSpacingMm,
-    pointCloudGridPointsX, pointCloudGridPointsY);
-  sdCardManager.writeTextLine(line);
-  // Flush buffer so position is accurate; record offset of the 10-digit count field
-  pointCloudVertexCountOffset = sdCardManager.getWriteFilePosition() + 15; // "element vertex " is 15 chars
-  sdCardManager.writeTextLine("element vertex 0000000000");
-  sdCardManager.writeTextLine("property float x");
-  sdCardManager.writeTextLine("property float y");
-  sdCardManager.writeTextLine("property float z");
-  sdCardManager.writeTextLine("end_header");
-  return true;
-}
 
-void handlePointCloudScan() {
-  if (!pointCloudScanInProgress)
-    return;
-
-  // ==================== LINE SCAN MODE (ACTIVE) ====================
-  // Scans one full row at a time at POINT_CLOUD_LINE_SCAN_FEED_RATE_MM_MIN mm/min,
-  // sampling the laser on every loop() call while GRBL is moving.
-  // X position is read live from currentJobPositionX; Y is the exact row coordinate.
-  // Point spacing is irregular (determined by Modbus read rate), but each point has
-  // precise XYZ stored in the PLY file.
-
-  if (pointCloudScanState == POINT_CLOUD_SCAN_WAIT_SENSOR_READY) {
-    if ((long)(millis() - pointCloudSensorReadyMs) < 0)
-      return;
-    // Z reference: the first valid in-scan sample is taken as Z=0; all subsequent points
-    // are stored as offsets from it. Sentinel 0.0 means "not yet captured" — SAMPLING
-    // sets it from the first successful read.
-    pointCloudBaselineDistanceMm = 0.0f;
-    if (!savePointCloudPlyHeader()) {
-      abortPointCloudScan("WAIT_SENSOR_READY", "file_create_failed");
-      return;
-    }
-    pointCloudCurrentRow = 0;
-    pointCloudScanState = POINT_CLOUD_SCAN_START_ROW;
-    return;
-  }
-
-  if (pointCloudScanState == POINT_CLOUD_SCAN_START_ROW) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (pointCloudWaitOkSinceMs == 0)
-          pointCloudWaitOkSinceMs = millis();
-        else if ((long)(millis() - pointCloudWaitOkSinceMs) >= POINT_CLOUD_WAIT_OK_STALE_MS) {
-          waitForOk = 0;
-          pointCloudWaitOkSinceMs = 0;
-        }
-      } else {
-        pointCloudWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    pointCloudWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      return;
-    // Even rows scan left→right; odd rows scan right→left (boustrophedon)
-    bool evenRow = (pointCloudCurrentRow % 2 == 0);
-    float rowStartX = evenRow ? pointCloudOriginX : (pointCloudOriginX + pointCloudSizeXmm);
-    float rowEndX   = evenRow ? (pointCloudOriginX + pointCloudSizeXmm) : pointCloudOriginX;
-    float rowY = pointCloudOriginY - ((float)pointCloudCurrentRow * pointCloudSpacingMm);
-    char cmd[MACRO_LINE_BUFFER_CHARS];
-    snprintf(cmd, sizeof(cmd), "G90 G1 X%.3f F%d", rowEndX, POINT_CLOUD_LINE_SCAN_FEED_RATE_MM_MIN);
-    if (!scheduleOrSendCPUA(cmd)) {
-      abortPointCloudScan("START_ROW", "schedule_failed");
-      return;
-    }
-    // Record row geometry and start time for time-based X dead reckoning in SAMPLING
-    pointCloudRowStartX = rowStartX;
-    pointCloudRowEndX   = rowEndX;
-    pointCloudRowY      = rowY;
-    pointCloudRowStartMs = millis();
-    // Row duration is purely time-based (acceleration negligible). No GRBL state polling.
-    pointCloudRowDurationMs = (uint32_t)(
-      pointCloudSizeXmm * 60000.0f / (float)POINT_CLOUD_LINE_SCAN_FEED_RATE_MM_MIN + 0.5f);
-    pointCloudScanState = POINT_CLOUD_SCAN_SAMPLING;
-    return;
-  }
-
-  if (pointCloudScanState == POINT_CLOUD_SCAN_SAMPLING) {
-    // Pure time-based row completion. Acceleration is negligible at 300 mm/min so the
-    // machine reaches feed rate within a fraction of a sample, and finishes the row in
-    // essentially exactly sizeXmm / feed ms. This avoids races between GRBL's near-instant
-    // "ok" and the 200 ms cached machine-state polling cadence.
-    bool rowComplete = ((uint32_t)(millis() - pointCloudRowStartMs) >= pointCloudRowDurationMs);
-
-    if (!rowComplete) {
-      // Machine is still moving — sample the laser
-      float distanceMm = 0.0f;
-      bool outOfRange = false;
-      if (readDistanceLaserMm(&distanceMm, &outOfRange) && !outOfRange) {
-        // Time-based X dead reckoning: avoids GRBL status-poll latency and clustering.
-        // Each Modbus read (~15 ms) is independently timestamped; position is computed
-        // from the known row start X, feed rate, and elapsed time since G1 was issued.
-        float speedMmPerMs = (float)POINT_CLOUD_LINE_SCAN_FEED_RATE_MM_MIN / 60000.0f;
-        float direction = (pointCloudRowEndX >= pointCloudRowStartX) ? 1.0f : -1.0f;
-        float capturedX = pointCloudRowStartX
-          + direction * speedMmPerMs * (float)(millis() - pointCloudRowStartMs);
-        float capturedY = pointCloudRowY;
-        // First valid sample of the whole scan defines Z=0; all later points are
-        // offsets from it. Sign is `distance - baseline` (empirically the correct
-        // orientation for this sensor / mounting): a surface farther than the first
-        // point yields positive Z, closer yields negative Z.
-        if (pointCloudBaselineDistanceMm == 0.0f) {
-          pointCloudBaselineDistanceMm = distanceMm;
-        }
-        float pz = distanceMm - pointCloudBaselineDistanceMm;
-        char pointLine[64];
-        snprintf(pointLine, sizeof(pointLine), "%.3f %.3f %.3f", capturedX, capturedY, pz);
-        if (!sdCardManager.writeTextLine(pointLine)) {
-          abortPointCloudScan("SAMPLING", "write_failed");
-          return;
-        }
-        ++pointCloudNextPointIndex;
-        if (++pointCloudSyncCounter >= POINT_CLOUD_SYNC_INTERVAL) {
-          pointCloudSyncCounter = 0;
-          sdCardManager.syncWriteFile();
-        }
-      }
-      return;
-    }
-
-    // Row complete — sync, fire progress, then advance to next row or finish
-    sdCardManager.syncWriteFile();
-    pointCloudSyncCounter = 0;
-    ++pointCloudCurrentRow;
-    pushPointCloudScanProgressEvent();
-    if (pointCloudCurrentRow >= pointCloudGridPointsY)
-      pointCloudScanState = POINT_CLOUD_SCAN_RETURN_ORIGIN;
-    else
-      pointCloudScanState = POINT_CLOUD_SCAN_MOVE_Y;
-    return;
-  }
-
-  if (pointCloudScanState == POINT_CLOUD_SCAN_MOVE_Y) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (pointCloudWaitOkSinceMs == 0)
-          pointCloudWaitOkSinceMs = millis();
-        else if ((long)(millis() - pointCloudWaitOkSinceMs) >= POINT_CLOUD_WAIT_OK_STALE_MS) {
-          waitForOk = 0;
-          pointCloudWaitOkSinceMs = 0;
-        }
-      } else {
-        pointCloudWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    pointCloudWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      return;
-    float nextRowY = pointCloudOriginY - ((float)pointCloudCurrentRow * pointCloudSpacingMm);
-    char cmd[MACRO_LINE_BUFFER_CHARS];
-    snprintf(cmd, sizeof(cmd), "G90 G1 Y%.3f F%d", nextRowY, POINT_CLOUD_LINE_SCAN_FEED_RATE_MM_MIN);
-    if (!scheduleOrSendCPUA(cmd)) {
-      abortPointCloudScan("MOVE_Y", "schedule_failed");
-      return;
-    }
-    pointCloudScanState = POINT_CLOUD_SCAN_WAIT_Y_IDLE;
-    return;
-  }
-
-  if (pointCloudScanState == POINT_CLOUD_SCAN_WAIT_Y_IDLE) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (pointCloudWaitOkSinceMs == 0)
-          pointCloudWaitOkSinceMs = millis();
-        else if ((long)(millis() - pointCloudWaitOkSinceMs) >= POINT_CLOUD_WAIT_OK_STALE_MS) {
-          waitForOk = 0;
-          pointCloudWaitOkSinceMs = 0;
-        }
-      } else {
-        pointCloudWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    pointCloudWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      return;
-    pointCloudScanState = POINT_CLOUD_SCAN_START_ROW;
-    return;
-  }
-
-  if (pointCloudScanState == POINT_CLOUD_SCAN_RETURN_ORIGIN) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (pointCloudWaitOkSinceMs == 0)
-          pointCloudWaitOkSinceMs = millis();
-        else if ((long)(millis() - pointCloudWaitOkSinceMs) >= POINT_CLOUD_WAIT_OK_STALE_MS) {
-          waitForOk = 0;
-          pointCloudWaitOkSinceMs = 0;
-        }
-      } else {
-        pointCloudWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    pointCloudWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      return;
-    // Rewrite actual vertex count in PLY header before closing
-    {
-      char countStr[11];
-      snprintf(countStr, sizeof(countStr), "%010lu", (unsigned long)pointCloudNextPointIndex);
-      if (sdCardManager.seekWriteFile(pointCloudVertexCountOffset)) {
-        sdCardManager.writeText(countStr);
-        sdCardManager.syncWriteFile();
-      }
-    }
-    sdCardManager.closeWriteFile();
-    char cmd[MACRO_LINE_BUFFER_CHARS];
-    snprintf(cmd, sizeof(cmd), "G90 G1 X%.3f Y%.3f F%d", pointCloudOriginX, pointCloudOriginY, POINT_CLOUD_LINE_SCAN_FEED_RATE_MM_MIN);
-    if (!scheduleOrSendCPUA(cmd)) {
-      abortPointCloudScan("RETURN_ORIGIN", "schedule_failed");
-      return;
-    }
-    pointCloudScanState = POINT_CLOUD_SCAN_WAIT_RETURN_IDLE;
-    return;
-  }
-
-  if (pointCloudScanState == POINT_CLOUD_SCAN_WAIT_RETURN_IDLE) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (pointCloudWaitOkSinceMs == 0)
-          pointCloudWaitOkSinceMs = millis();
-        else if ((long)(millis() - pointCloudWaitOkSinceMs) >= POINT_CLOUD_WAIT_OK_STALE_MS) {
-          waitForOk = 0;
-          pointCloudWaitOkSinceMs = 0;
-        }
-      } else {
-        pointCloudWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    pointCloudWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      return;
-    resetPointCloudScanState();
-    pointCloudReady = true;
-    pushPointCloudScanCompletedEvent(true, true);
-    return;
-  }
-
-  // ==================== POINT-BY-POINT SCAN MODE (LEGACY, COMMENTED OUT) ====================
-  /*
-  if (pointCloudScanState == POINT_CLOUD_SCAN_WAIT_SENSOR_READY) {
-    if ((long)(millis() - pointCloudSensorReadyMs) < 0)
-      return;
-    if (!savePointCloudPlyHeader()) {
-      abortPointCloudScan("WAIT_SENSOR_READY", "file_create_failed");
-      return;
-    }
-    pointCloudScanState = POINT_CLOUD_SCAN_MOVE;
-    return;
-  }
-
-  if (pointCloudScanState == POINT_CLOUD_SCAN_MOVE) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (pointCloudWaitOkSinceMs == 0)
-          pointCloudWaitOkSinceMs = millis();
-        else if ((long)(millis() - pointCloudWaitOkSinceMs) >= POINT_CLOUD_WAIT_OK_STALE_MS) {
-          waitForOk = 0;
-          pointCloudWaitOkSinceMs = 0;
-        }
-      } else {
-        pointCloudWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    pointCloudWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      return;
-    float targetX = 0.0f, targetY = 0.0f;
-    getPointCloudPointTarget(pointCloudNextPointIndex, &targetX, &targetY);
-    char cmd[MACRO_LINE_BUFFER_CHARS];
-    snprintf(cmd, sizeof(cmd), "G90 G1 X%.3f Y%.3f F%d", targetX, targetY, POINT_CLOUD_SCAN_FEED_RATE_MM_MIN);
-    if (!scheduleOrSendCPUA(cmd)) {
-      abortPointCloudScan("MOVE", "schedule_failed");
-      return;
-    }
-    pointCloudScanState = POINT_CLOUD_SCAN_WAIT_IDLE;
-    return;
-  }
-
-  if (pointCloudScanState == POINT_CLOUD_SCAN_WAIT_IDLE) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (pointCloudWaitOkSinceMs == 0)
-          pointCloudWaitOkSinceMs = millis();
-        else if ((long)(millis() - pointCloudWaitOkSinceMs) >= POINT_CLOUD_WAIT_OK_STALE_MS) {
-          waitForOk = 0;
-          pointCloudWaitOkSinceMs = 0;
-        }
-      } else {
-        pointCloudWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    pointCloudWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      return;
-    pointCloudSettleUntilMs = millis() + POINT_CLOUD_SCAN_SETTLE_DELAY_MS;
-    pointCloudScanState = POINT_CLOUD_SCAN_SETTLE;
-    return;
-  }
-
-  if (pointCloudScanState == POINT_CLOUD_SCAN_SETTLE) {
-    if ((long)(millis() - pointCloudSettleUntilMs) < 0)
-      return;
-    pointCloudScanState = POINT_CLOUD_SCAN_SAMPLE;
-    return;
-  }
-
-  if (pointCloudScanState == POINT_CLOUD_SCAN_SAMPLE) {
-    float representativeDistanceMm = 0.0f;
-    bool hasValidSample = false;
-    for (int sampleIndex = 0; sampleIndex < POINT_CLOUD_SAMPLE_COUNT; ++sampleIndex) {
-      float distanceMm = 0.0f;
-      bool outOfRange = false;
-      if (!readDistanceLaserMm(&distanceMm, &outOfRange) || outOfRange)
-        continue;
-      representativeDistanceMm = distanceMm;
-      hasValidSample = true;
-      break;
-    }
-    if (!hasValidSample) {
-      abortPointCloudScan("SAMPLE", "no_valid_samples");
-      return;
-    }
-
-    if (pointCloudNextPointIndex == 0)
-      pointCloudBaselineDistanceMm = representativeDistanceMm;
-
-    uint16_t row = (uint16_t)(pointCloudNextPointIndex / pointCloudGridPointsX);
-    uint16_t colInRow = (uint16_t)(pointCloudNextPointIndex % pointCloudGridPointsX);
-    uint16_t col = (row % 2 == 0) ? colInRow : (pointCloudGridPointsX - 1 - colInRow);
-    float px = pointCloudOriginX + ((float)col * pointCloudSpacingMm);
-    float py = pointCloudOriginY - ((float)row * pointCloudSpacingMm);
-    float pz = pointCloudBaselineDistanceMm - representativeDistanceMm;
-
-    char pointLine[64];
-    snprintf(pointLine, sizeof(pointLine), "%.3f %.3f %.3f", px, py, pz);
-    if (!sdCardManager.writeTextLine(pointLine)) {
-      abortPointCloudScan("SAMPLE", "write_failed");
-      return;
-    }
-
-    ++pointCloudNextPointIndex;
-    pushPointCloudScanProgressEvent();
-
-    if (++pointCloudSyncCounter >= POINT_CLOUD_SYNC_INTERVAL) {
-      pointCloudSyncCounter = 0;
-      sdCardManager.syncWriteFile();
-    }
-
-    if (pointCloudNextPointIndex >= pointCloudTotalPoints) {
-      pointCloudScanState = POINT_CLOUD_SCAN_RETURN_ORIGIN;
-      return;
-    }
-    pointCloudScanState = POINT_CLOUD_SCAN_MOVE;
-    return;
-  }
-
-  if (pointCloudScanState == POINT_CLOUD_SCAN_RETURN_ORIGIN) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (pointCloudWaitOkSinceMs == 0)
-          pointCloudWaitOkSinceMs = millis();
-        else if ((long)(millis() - pointCloudWaitOkSinceMs) >= POINT_CLOUD_WAIT_OK_STALE_MS) {
-          waitForOk = 0;
-          pointCloudWaitOkSinceMs = 0;
-        }
-      } else {
-        pointCloudWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    pointCloudWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      return;
-    {
-      char countStr[11];
-      snprintf(countStr, sizeof(countStr), "%010lu", (unsigned long)pointCloudNextPointIndex);
-      if (sdCardManager.seekWriteFile(pointCloudVertexCountOffset)) {
-        sdCardManager.writeText(countStr);
-        sdCardManager.syncWriteFile();
-      }
-    }
-    sdCardManager.closeWriteFile();
-    char cmd[MACRO_LINE_BUFFER_CHARS];
-    snprintf(cmd, sizeof(cmd), "G90 G1 X%.3f Y%.3f F%d", pointCloudOriginX, pointCloudOriginY, POINT_CLOUD_SCAN_FEED_RATE_MM_MIN);
-    if (!scheduleOrSendCPUA(cmd)) {
-      abortPointCloudScan("RETURN_ORIGIN", "schedule_failed");
-      return;
-    }
-    pointCloudScanState = POINT_CLOUD_SCAN_WAIT_RETURN_IDLE;
-    return;
-  }
-
-  if (pointCloudScanState == POINT_CLOUD_SCAN_WAIT_RETURN_IDLE) {
-    if (waitForOk > 0) {
-      if (currentMachineState == IDLE) {
-        if (pointCloudWaitOkSinceMs == 0)
-          pointCloudWaitOkSinceMs = millis();
-        else if ((long)(millis() - pointCloudWaitOkSinceMs) >= POINT_CLOUD_WAIT_OK_STALE_MS) {
-          waitForOk = 0;
-          pointCloudWaitOkSinceMs = 0;
-        }
-      } else {
-        pointCloudWaitOkSinceMs = 0;
-      }
-      return;
-    }
-    pointCloudWaitOkSinceMs = 0;
-    if (currentMachineState != IDLE)
-      return;
-    resetPointCloudScanState();
-    pointCloudReady = true;
-    pushPointCloudScanCompletedEvent(true, true);
-    return;
-  }
-  */
-  // ==================== END POINT-BY-POINT SCAN MODE ====================
-}
 
 bool buildHashSidecarFilename(const char* filename, char* buffer, size_t bufferSize) {
 
@@ -2495,65 +443,6 @@ bool prepareHashSidecarForOverwrite(const char* filename, char* hashFilename, si
 
 }
 
-bool readDistanceLaserMm(float* distanceMm, bool* isOutOfRange) {
-
-  if(distanceMm == nullptr)
-    return false;
-
-  if(isOutOfRange != nullptr)
-    *isOutOfRange = false;
-
-  if(!isDistanceLaserSensorInitialized)
-    return false;
-
-  uint8_t result = distanceLaserSensorModbus.readInputRegisters(
-    DISTANCE_LASER_SENSOR_MODBUS_INPUT_REGISTER,
-    DISTANCE_LASER_SENSOR_MODBUS_REGISTER_COUNT
-  );
-
-  if(result != distanceLaserSensorModbus.ku8MBSuccess) {
-    isDistanceLaserSensorInitialized = false;
-    distanceLaserSensorInitRetries = 0;
-    distanceLaserSensorProbeReadyMs = millis() + 2000;
-    return false;
-  }
-
-#if INSTALLED_DISTANCE_LASER_SENSOR == LASER_SENSOR_NEW
-  // One 32-bit signed value across two registers, big-endian.
-  uint16_t rawHigh = distanceLaserSensorModbus.getResponseBuffer(0);
-  uint16_t rawLow  = distanceLaserSensorModbus.getResponseBuffer(1);
-  int32_t micrometers = (int32_t)(((uint32_t)rawHigh << 16) | (uint32_t)rawLow);
-  micrometers *= DISTANCE_LASER_SENSOR_LSB_UM;
-#else
-  // One 16-bit signed register, scaled to the same micrometre units so the checks below are shared.
-  int32_t micrometers = (int32_t)(int16_t)distanceLaserSensorModbus.getResponseBuffer(0)
-                        * DISTANCE_LASER_SENSOR_LSB_UM;
-#endif
-
-  // The sensor's own validity rule comes first: it marks out of range with a specific value rather
-  // than by saturating, and the GRK additionally treats anything beyond +/-9999 mm as invalid.
-  if(micrometers == DISTANCE_LASER_SENSOR_INVALID_UM
-     || micrometers >  DISTANCE_LASER_SENSOR_MAX_ABS_VALID_UM
-     || micrometers < -DISTANCE_LASER_SENSOR_MAX_ABS_VALID_UM) {
-    if(isOutOfRange != nullptr)
-      *isOutOfRange = true;
-    return false;
-  }
-
-  *distanceMm = ((float)micrometers) / 1000.0f;
-
-  // Two-sided: the reading is an inverted distance and legitimately goes negative when the head is
-  // high, so the guard has to bracket the range rather than reject the negative half.
-  if(*distanceMm >= DISTANCE_LASER_SENSOR_MAX_VALID_MM
-     || *distanceMm <= DISTANCE_LASER_SENSOR_MIN_VALID_MM) {
-    if(isOutOfRange != nullptr)
-      *isOutOfRange = true;
-    return false;
-  }
-
-  return true;
-
-}
 
 bool renameHashSidecarIfPresent(const char* oldFilename, const char* newFilename) {
 
@@ -2628,23 +517,10 @@ void setup() {
   networkSettings.checkChar = EEPROM_CHECK_CHAR; //this char is used to check if the struct has been initialized or not, since we will read it from the EEPROM and if it's not initialized it will be filled with null chars
   strcat(machineNameSettings.machineName, DEFAULT_MACHINE_NAME);
   machineNameSettings.checkChar = EEPROM_CHECK_CHAR;
-  toolLengthReferenceSettings.refZ      = BED_PROBE_REFERENCE_Z_MM;
-  toolLengthReferenceSettings.checkChar = EEPROM_CHECK_CHAR;
-  brushlessMotorSettings.directionReversed = BRUSHLESS_MOTOR_DIRECTION_REVERSED_DEFAULT;
-  brushlessMotorSettings.checkChar = EEPROM_CHECK_CHAR;
 
-  laserOffsetZeroSettings.xBackMm = LASER_OFFSET_ZERO_X_BACK_MM;
-  laserOffsetZeroSettings.yBackMm = LASER_OFFSET_ZERO_Y_BACK_MM;
-  laserOffsetZeroSettings.checkChar = EEPROM_CHECK_CHAR;
 
-  //default housing state (no housing) — overwritten by EEPROM if a value was saved
-  housingSettings.housingInstalled = DEFAULT_HOUSING_INSTALLED;
-  housingSettings.allowMotionWhenDoorOpen = DEFAULT_ALLOW_MOTION_WHEN_DOOR_OPEN;
-  housingSettings.checkChar = EEPROM_CHECK_CHAR;
 
   //default probe height — overwritten by EEPROM if a value was saved
-  probeHeightSettings.heightMm  = DEFAULT_PROBE_HEIGHT_MM;
-  probeHeightSettings.checkChar = EEPROM_CHECK_CHAR;
 
   strcat(firmwareVersion, DEFAULT_FIRMWARE_VERSION);
  
@@ -2657,20 +533,12 @@ void setup() {
     pinMode(ENABLE_Y_PIN, OUTPUT);
     pinMode(ENABLE_Z_PIN, OUTPUT);
     pinMode(ENABLE_A_PIN, OUTPUT);
-    pinMode(DISTANCE_LASER_SENSOR_DIR_PIN, OUTPUT);
     pinMode(LASER_SENSOR_ENABLE_PIN, OUTPUT);
-    pinMode(DOOR_SENSOR_PIN, INPUT_PULLUP); // LOW = door closed (held to GND), HIGH = door open (released to internal pull-up)
-    doorSensorOpenSinceMs = 0;
-    pinMode(BRUSHLESS_MOTOR_BRAKE_PIN, INPUT_PULLUP);
-    pinMode(BRUSHLESS_MOTOR_DIR_PIN, OUTPUT);
     digitalWrite(ENABLE_X_PIN, LOW);
     digitalWrite(ENABLE_Y_PIN, LOW);
     digitalWrite(ENABLE_Z_PIN, LOW);
     digitalWrite(ENABLE_A_PIN, LOW);
-    digitalWrite(DISTANCE_LASER_SENSOR_DIR_PIN, LOW);
     digitalWrite(LASER_SENSOR_ENABLE_PIN, LOW);
-    // Defaults apply here; EEPROM is read later in setup and re-applies the stored level.
-    applyBrushlessMotorDirection();
 
     //Current sensor I2C init
     Wire.setSDA(CURRENT_SENSOR_SDA_PIN);
@@ -2774,7 +642,6 @@ void loop() {
     benchmark.setStartTime(millis());
 
   //todo to implement these commented functions
-  //handleSpindleRamping();
   handleSerialClientWatchdog();
   handleJogWatchdog();
   handleFileTransferTimeouts();
@@ -2783,14 +650,8 @@ void loop() {
   handleRGBLed();
   readFromCPUA();
   handleAutoHoming();
-  handleManualSpindleRamp();
-  handleHeldSpindleLineRelease();
   handlePauseFeedDrop();
-  handlePendingPauseSpindleStop();
-  handleResumeSpindleOverrideRamp();
   handleResumeFeedRamp();
-  handleDoorSensor();
-  handleVirtualDoorSignal();
   handleMachineUsage();
   handleSyncActions();
   handleMacros();
@@ -2798,11 +659,6 @@ void loop() {
   askGRBLStatus();
   handleJob();
   updateRotaryAxisDetection();
-  handleDistanceLaserSensorInit();
-  handleLaserEdgeProbing();
-  handleLaserMaterialBoundsProbing();
-  handleHeightMapScan();
-  handlePointCloudScan();
 
   if (debuggingSettings.benchmarking){
 
@@ -2820,29 +676,6 @@ void loop() {
 }
 
 /////////////////////////IMPLEMENTATION METHODS////////////////////////////////
-void handleDistanceLaserSensorInit() {
-  if (!distanceLaserSensorInitRequested) return;
-  if (isDistanceLaserSensorInitialized) return;
-  if (distanceLaserSensorInitRetries >= DISTANCE_LASER_SENSOR_MAX_INIT_RETRIES) return;
-
-  digitalWrite(LASER_SENSOR_ENABLE_PIN, HIGH);
-
-  if (millis() < distanceLaserSensorProbeReadyMs) return;
-
-  uint8_t probeResult = distanceLaserSensorModbus.readInputRegisters(
-    DISTANCE_LASER_SENSOR_MODBUS_INPUT_REGISTER,
-    DISTANCE_LASER_SENSOR_MODBUS_REGISTER_COUNT
-  );
-  if (probeResult == distanceLaserSensorModbus.ku8MBSuccess) {
-    isDistanceLaserSensorInitialized = true;
-    hasDistanceLaserSensorPresence = true;
-    distanceLaserSensorInitRetries = 0;
-    digitalWrite(LASER_SENSOR_ENABLE_PIN, distanceLaserSensorKeepEnabledAfterInit ? HIGH : LOW);
-  } else {
-    distanceLaserSensorInitRetries++;
-    distanceLaserSensorProbeReadyMs = millis() + 2000;
-  }
-}
 
 void handleEEPROMSettings(){
 
@@ -2956,123 +789,11 @@ void handleEEPROMSettings(){
 
     }
 
-  ToolLengthReferenceSettings tmpToolLengthReferenceSettings;
-  tmpToolLengthReferenceSettings = eepromManager.readToolLengthReferenceSettings();
 
-  if(tmpToolLengthReferenceSettings.checkChar == EEPROM_CHECK_CHAR){
 
-      toolLengthReferenceSettings = tmpToolLengthReferenceSettings;
 
-      if(debuggingSettings.debuggingEEPROM) {
-        serialManager.USBSerialPrint(FROM_CPUB);
-        serialManager.USBSerialPrintln("Tool length reference settings found in EEPROM, applying settings");
-      }
 
-    }else{
 
-      if(debuggingSettings.debuggingEEPROM) {
-        serialManager.USBSerialPrint(FROM_CPUB);
-        serialManager.USBSerialPrintln("No tool length reference settings found in EEPROM, using default settings");
-      }
-
-      eepromManager.saveToolLengthReferenceSettings(toolLengthReferenceSettings);
-
-    }
-
-  LaserOffsetZeroSettings tmpLaserOffsetZeroSettings;
-  tmpLaserOffsetZeroSettings = eepromManager.readLaserOffsetZeroSettings();
-
-  if(tmpLaserOffsetZeroSettings.checkChar == EEPROM_CHECK_CHAR){
-
-      laserOffsetZeroSettings = tmpLaserOffsetZeroSettings;
-
-      if(debuggingSettings.debuggingEEPROM) {
-        serialManager.USBSerialPrint(FROM_CPUB);
-        serialManager.USBSerialPrintln("Laser offset zero settings found in EEPROM, applying settings");
-      }
-
-    }else{
-
-      if(debuggingSettings.debuggingEEPROM) {
-        serialManager.USBSerialPrint(FROM_CPUB);
-        serialManager.USBSerialPrintln("No laser offset zero settings found in EEPROM, using default settings");
-      }
-
-      eepromManager.saveLaserOffsetZeroSettings(laserOffsetZeroSettings);
-
-    }
-
-  BrushlessMotorSettings tmpBrushlessMotorSettings;
-  tmpBrushlessMotorSettings = eepromManager.readBrushlessMotorSettings();
-
-  if(tmpBrushlessMotorSettings.checkChar == EEPROM_CHECK_CHAR){
-
-      brushlessMotorSettings = tmpBrushlessMotorSettings;
-
-      if(debuggingSettings.debuggingEEPROM) {
-        serialManager.USBSerialPrint(FROM_CPUB);
-        serialManager.USBSerialPrintln("Brushless motor settings found in EEPROM, applying settings");
-      }
-
-    }else{
-
-      if(debuggingSettings.debuggingEEPROM) {
-        serialManager.USBSerialPrint(FROM_CPUB);
-        serialManager.USBSerialPrintln("No brushless motor settings found in EEPROM, using default settings");
-      }
-
-      eepromManager.saveBrushlessMotorSettings(brushlessMotorSettings);
-
-    }
-
-  // The pin was driven to the default during IO setup; re-apply now that the stored level is known.
-  applyBrushlessMotorDirection();
-
-  HousingSettings tmpHousingSettings;
-  tmpHousingSettings = eepromManager.readHousingSettings();
-
-  if(tmpHousingSettings.checkChar == EEPROM_CHECK_CHAR){
-
-      housingSettings = tmpHousingSettings;
-
-      if(debuggingSettings.debuggingEEPROM) {
-        serialManager.USBSerialPrint(FROM_CPUB);
-        serialManager.USBSerialPrintln("Housing settings found in EEPROM, applying settings");
-      }
-
-    }else{
-
-      if(debuggingSettings.debuggingEEPROM) {
-        serialManager.USBSerialPrint(FROM_CPUB);
-        serialManager.USBSerialPrintln("No housing settings found in EEPROM, using default settings");
-      }
-
-      eepromManager.saveHousingSettings(housingSettings);
-
-    }
-
-  ProbeHeightSettings tmpProbeHeightSettings;
-  tmpProbeHeightSettings = eepromManager.readProbeHeightSettings();
-
-  if(tmpProbeHeightSettings.checkChar == EEPROM_CHECK_CHAR){
-
-      probeHeightSettings = tmpProbeHeightSettings;
-
-      if(debuggingSettings.debuggingEEPROM) {
-        serialManager.USBSerialPrint(FROM_CPUB);
-        serialManager.USBSerialPrintln("Probe height settings found in EEPROM, applying settings");
-      }
-
-    }else{
-
-      if(debuggingSettings.debuggingEEPROM) {
-        serialManager.USBSerialPrint(FROM_CPUB);
-        serialManager.USBSerialPrintln("No probe height settings found in EEPROM, using default settings");
-      }
-
-      eepromManager.saveProbeHeightSettings(probeHeightSettings);
-
-    }
 
 
 }
@@ -3092,7 +813,6 @@ void handleSerialClientWatchdog() {
   // several seconds — long enough for a ping to lapse. Without this check the watchdog
   // would fire a second, spurious 0x84 there, re-parking mid-resume ([MSG:Check Door]).
   if(isJobRunning && !isJobPaused && currentMachineState == RUN){
-    resetManualSpindleRampState();
     serialManager.CPUASerialWrite(static_cast<byte>(GRBL_SAFETY_DOOR));
     currentMachineState = HOLD;
     isJobPaused = true;
@@ -3366,10 +1086,6 @@ void handleMacros(){
         serialManager.USBSerialPrintln(dbg);
       }
       arrayUtil.clear2DCharArray(bufferMacroLines);
-      if (isProbeZ0MacroRunning)
-        pushProbeZ0CompletedEvent(false);
-      if (isProbeToolLengthMacroRunning)
-        pushProbeToolLengthCompletedEvent(false);
       isRotaryYLockBypassed = false;
       isMacroRunning = false;
       return;
@@ -3387,10 +1103,6 @@ void handleMacros(){
         serialManager.USBSerialPrintln(dbg);
       }
       arrayUtil.clear2DCharArray(bufferMacroLines);
-      if (isProbeZ0MacroRunning)
-        pushProbeZ0CompletedEvent(false);
-      if (isProbeToolLengthMacroRunning)
-        pushProbeToolLengthCompletedEvent(false);
       isRotaryYLockBypassed = false;
       isMacroRunning = false;
       return;
@@ -3406,35 +1118,12 @@ void handleMacros(){
 
   }else{
 
-    if (isLaserEdgeProbingActive || isLaserMaterialBoundsProbingActive) return; // laser probing manages its own lifecycle
-
-    if (isProbeZ0MacroRunning)
-      pushProbeZ0CompletedEvent(true);
-    if (isProbeToolLengthMacroRunning)
-      pushProbeToolLengthCompletedEvent(probeToolLengthZCaptured);
-    isRotaryYLockBypassed = false;
-    isMacroRunning = false; //if there are no more lines to execute we can set the macro running flag to false, so we don't enter this function anymore until a new macro is loaded in the buffer
-
-    if(debuggingSettings.debuggingMacroBuffer) { serialManager.USBSerialPrintln("No more lines in macro buffer, stopping macro execution"); }
 
   }
     
 
 }
 
-void resetManualSpindleRampState() {
-
-  isManualSpindleRampActive = false;
-  manualSpindleRampLastStepMs = 0;
-  manualSpindleRampIntervalMs = 0;
-  manualSpindleRampTargetRPM = 0;
-  manualSpindleRampNextRPM = 0;
-  manualSpindleRampLastCommandedRPM = 0;
-  manualSpindleRampAwaitingDrain = false;
-  manualSpindleRampDrainStartedMs = 0;
-  manualSpindleRampSettlePending = false;
-
-}
 
 // Clears the modal spindle memory (M3 on-flag, memorized S, last commanded RPM)
 // and drops any line held for a ramp. Called on M5/M30, GRBL reset, job stop and
@@ -3450,9 +1139,6 @@ void resetSpindleModalState(bool keepMemorisedRpm) {
   if (!keepMemorisedRpm)
     lastRequestedSpindleRPM = 0;
   commandedSpindleRPM = 0;
-  isSpindleLineHeld = false;
-  heldSpindleLineIsJob = false;
-  arrayUtil.clearCharArray(heldSpindleLineBuffer, LINE_BUFFER_CHARACTERS);
 
 }
 
@@ -3664,25 +1350,6 @@ bool isWithinSoftLimitRange(float x, float y, float z) {
 // converted to machine coordinates via the active WCO and checked against the
 // soft-limit range together with the current machine Z (Z is held constant during
 // these scans).
-bool isScanRectWithinSoftLimitRange(float originX, float originY, float sizeX, float sizeY) {
-
-  const float maxX = originX + sizeX;
-  const float minY = originY - sizeY;
-  const float corners[4][2] = {
-    { originX, originY },
-    { maxX,    originY },
-    { originX, minY    },
-    { maxX,    minY    },
-  };
-  for (uint8_t i = 0; i < 4; i++) {
-    const float machineX = corners[i][0] + wcoX;
-    const float machineY = corners[i][1] + wcoY;
-    if (!isWithinSoftLimitRange(machineX, machineY, currentMachinePositionZ))
-      return false;
-  }
-  return true;
-
-}
 
 bool evaluateAndApplySoftLimitsForOutgoingLine(const char* lineBuffer) {
 
@@ -3881,13 +1548,7 @@ const char* getOutgoingLineRejectErrorJsonValue() {
 
 void stopJobWithReset() {
 
-  if (isLaserEdgeProbingActive) {
-    pushLaserEdgeProbingCompletedEvent(false);
-  }
 
-  if (isLaserMaterialBoundsProbingActive) {
-    pushLaserMaterialBoundsCompletedEvent(false);
-  }
 
   // If pause/hold toggled spindle stop (0x9E), untoggle it before reset so the
   // next job does not inherit a stopped spindle output state.
@@ -3899,10 +1560,7 @@ void stopJobWithReset() {
   // not survive a stop: grblHAL re-evaluates the door signal as it restarts, and with the door
   // still asserted it comes back up in STATE_SAFETY_DOOR ([MSG:Check Door]) instead of Idle — the
   // job would never stop. Releasing first means grbl restarts with the door closed.
-  // Note: with allowMotionWhenDoorOpen == false and the lid still open, the policy immediately
   // re-asserts on the next pass — correct, since motion is not permitted in that configuration.
-  virtualDoorLatched = false;
-  handleVirtualDoorSignal();
 
   serialManager.CPUASerialWrite(GRBL_STOP_RESET);
 
@@ -3912,11 +1570,7 @@ void stopJobWithReset() {
   isJobPaused = false;
   isResuming = false;
   pauseResumeSpindleRestorePending = false;
-  pendingPauseSpindleStop = false;
   pauseHoldRequestedMs = 0;
-  isResumeSpindleOverrideRampActive = false;
-  resumeMotionAfterOverrideRampPending = false;
-  resumeSpindleRestoreStage = RESUME_RESTORE_DROP;
   // GRBL soft-reset returns all real-time overrides to 100%; sync local cache.
   spindleOverride = GRBL_OVERRIDE_DEFAULT;
   pauseResumeOriginalSpindleOverride = GRBL_OVERRIDE_DEFAULT;
@@ -3928,23 +1582,12 @@ void stopJobWithReset() {
   resumeCompletionPending = false;
   isPauseFeedDropActive = false;
   isMacroRunning = false;
-  isProbeZ0MacroRunning = false;
-  isProbeToolLengthMacroRunning = false;
-  probeToolLengthZCaptured = false;
   isRotaryYLockBypassed = false;
-  isLaserEdgeProbingActive = false;
-  laserEdgeProbeSuppressAlarmAbort = false;
-  isLaserMaterialBoundsProbingActive = false;
-  laserMaterialBoundsProbeSuppressAlarmAbort = false;
   waitForOk = 0;
   jobStartMs = 0;
   jobLineIndex = 0;
   // Keep the height map on stop: the file stays open (rewound below), so the map remains valid and
   // bound to it. Only clear the "used" flag so compensation re-applies when this same file is run again.
-  heightMapUsedForCurrentFile = false;
-  jobLineSeg.active = false;
-  jobArcSeg.active  = false;
-  resetManualSpindleRampState();
   resetSpindleModalState(false);
 
   // Rewind the currently opened execution file so startJob restarts from line 1.
@@ -3961,7 +1604,6 @@ void stopJobWithReset() {
 }
 
 // The lowest spindle override percent that still leaves the spindle at or above
-// SPINDLE_OVERRIDE_MIN_EFFECTIVE_RPM.
 //
 // GRBL scales the PROGRAMMED S word by the override (spindle_set_rpm: `rpm *= 0.01f * override`),
 // so the floor is a percentage of whatever the job asked for and moves with it.
@@ -3970,50 +1612,10 @@ void stopJobWithReset() {
 // GRBL scales. Deliberately NOT currentSpindleRPM: that is GRBL's already-overridden report coming
 // back in the status line, so using it would compound the override with itself, and it lags during
 // a job (status polling is throttled while streaming).
-int minimumSpindleOverridePercent() {
-
-  const long programmedRPM = commandedSpindleRPM;
-
-  // Spindle off: nothing is turning, so there is nothing to protect.
-  if (programmedRPM <= 0)
-    return GRBL_OVERRIDE_MIN;
-
-  // Rounded UP. A truncating divide picks the percent just BELOW the floor, which is the one step
-  // this whole function exists to refuse: at S9000 the exact answer is 33.3%, and 33% is 2970 rpm.
-  long percent = ((long)SPINDLE_OVERRIDE_MIN_EFFECTIVE_RPM * 100L + programmedRPM - 1) / programmedRPM;
-
-  if (percent < GRBL_OVERRIDE_MIN)
-    percent = GRBL_OVERRIDE_MIN;
-
-  // Capped at 100%: a spindle programmed at or under the floor works out to 100% or more here, and
-  // what that has to mean is "no reduction allowed", never "speed it up". The override cannot make
-  // a slow spindle faster -- 100% of a programmed S2500 is still 2500 rpm -- it can only be stopped
-  // from making it slower, which is what this cap does.
-  if (percent > GRBL_OVERRIDE_DEFAULT)
-    percent = GRBL_OVERRIDE_DEFAULT;
-
-  return (int)percent;
-
-}
 
 // Where a spindle-override step lands, or -1 when it is refused for taking the spindle below the
 // floor. `delta` is signed: -GRBL_OVERRIDE_COARSE_STEP for a coarse decrease, +1 for a fine
 // increase. Increases are never refused -- the floor is a floor, not a range.
-int spindleOverrideAfterStep(int currentPercent, int delta, int floorPercent) {
-
-  int next = currentPercent + delta;
-
-  if (next > GRBL_OVERRIDE_MAX)
-    next = GRBL_OVERRIDE_MAX;
-  if (next < GRBL_OVERRIDE_MIN)
-    next = GRBL_OVERRIDE_MIN;
-
-  if (delta < 0 && next < floorPercent)
-    return -1;
-
-  return next;
-
-}
 
 // The refusal, in one place: both decrease actions report it identically, and it has to say more
 // than "failure". An override that simply stops moving with no reason given reads as a dead button,
@@ -4051,104 +1653,8 @@ bool scheduleWorkMove(const char* axisWords, float feedRate, bool relative) {
 
 }
 
-void sendSpindleOverrideFloorRefusal() {
 
-  if(debuggingSettings.debuggingSpindle){
 
-    char dbg[176];
-    snprintf(dbg, sizeof(dbg),
-             "Spindle override held at %d%%: a further step would take the programmed %ld rpm below the %d rpm override floor",
-             spindleOverride, commandedSpindleRPM, (int)SPINDLE_OVERRIDE_MIN_EFFECTIVE_RPM);
-    serialManager.USBSerialPrint(FROM_CPUB);
-    serialManager.USBSerialPrintln(dbg);
-
-  }
-
-  if(!jsonSettings.enableJsonResponse)
-    return;
-
-  clearResponseJsonBuffer();
-  responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-  responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_SPINDLE_RPM_BELOW_MINIMUM_STR;
-  // The unchanged value, so a client that optimistically stepped its own display can put it back.
-  responseJsonBuffer[JSON_KEY_SPINDLE_OVERRIDE_STR] = spindleOverride;
-  responseJsonBuffer[JSON_KEY_MINIMUM_SPINDLE_RPM_STR] = SPINDLE_OVERRIDE_MIN_EFFECTIVE_RPM;
-  serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-  sendJsonResponse();
-
-}
-
-void sendManualSpindleRampCommand(long spindleRPM) {
-
-  char spindleCommand[32];
-  arrayUtil.clearCharArray(spindleCommand, sizeof(spindleCommand));
-  snprintf(spindleCommand, sizeof(spindleCommand), "M3 S%ld", spindleRPM);
-
-  serialManager.CPUASerialPrintln(spindleCommand);
-  ++waitForOk;
-
-  manualSpindleRampLastStepMs = millis();
-  manualSpindleRampLastCommandedRPM = spindleRPM;
-  commandedSpindleRPM = spindleRPM;
-
-  if (debuggingSettings.debuggingSpindle) {
-    serialManager.USBSerialPrint("Manual spindle ramp step sent: ");
-    serialManager.USBSerialPrintln(spindleRPM);
-  }
-
-}
-
-bool startManualSpindleRamp(long targetRPM) {
-
-  if (MANUAL_SPINDLE_RAMP_RPM_INCREMENT <= 0)
-    return false;
-
-  // Base the ramp on what we last COMMANDED, never on the status-report RPM:
-  // status polling is throttled during a job, so currentSpindleRPM can be stale
-  // (e.g. still showing the old speed after an M5) and a base derived from it
-  // would make the ramp start with exactly the jump it is meant to prevent.
-  long startRPM = commandedSpindleRPM > 0 ? commandedSpindleRPM : 0;
-
-  if (isManualSpindleRampActive && manualSpindleRampLastCommandedRPM > startRPM)
-    startRPM = manualSpindleRampLastCommandedRPM;
-
-  if (targetRPM <= startRPM)
-    return false;
-
-  const unsigned long rpmDelta = static_cast<unsigned long>(targetRPM - startRPM);
-  const unsigned long steps = (rpmDelta + MANUAL_SPINDLE_RAMP_RPM_INCREMENT - 1) / MANUAL_SPINDLE_RAMP_RPM_INCREMENT;
-
-  if (steps == 0)
-    return false;
-
-  manualSpindleRampIntervalMs = (MANUAL_SPINDLE_RAMP_TOTAL_TIME_MS + steps - 1) / steps;
-  if (manualSpindleRampIntervalMs == 0)
-    manualSpindleRampIntervalMs = 1;
-
-  manualSpindleRampTargetRPM = targetRPM;
-  manualSpindleRampNextRPM = startRPM + MANUAL_SPINDLE_RAMP_RPM_INCREMENT;
-  if (manualSpindleRampNextRPM > manualSpindleRampTargetRPM)
-    manualSpindleRampNextRPM = manualSpindleRampTargetRPM;
-
-  manualSpindleRampLastCommandedRPM = startRPM;
-  manualSpindleRampLastStepMs = millis();
-  isManualSpindleRampActive = true;
-
-  if (debuggingSettings.debuggingSpindle) {
-    serialManager.USBSerialPrint("Starting manual spindle ramp from ");
-    serialManager.USBSerialPrint(startRPM);
-    serialManager.USBSerialPrint(" to ");
-    serialManager.USBSerialPrint(targetRPM);
-    serialManager.USBSerialPrint(" rpm in steps of ");
-    serialManager.USBSerialPrint(MANUAL_SPINDLE_RAMP_RPM_INCREMENT);
-    serialManager.USBSerialPrint(" every ");
-    serialManager.USBSerialPrint(manualSpindleRampIntervalMs);
-    serialManager.USBSerialPrintln(" ms");
-  }
-
-  return true;
-
-}
 
 // Core pause action shared by the pauseJob API command and the door-sensor safety
 // pause. Sends GRBL feed-hold, arms the deferred spindle stop if the spindle is
@@ -4161,73 +1667,11 @@ void pauseJobInternal(bool rampFeedFirst) {
   // on resume ('~') grblHAL restarts the spindle (with a spin-up dwell) and plunges Z back.
   // The old CPUB pause sequence (feed-drop + deferred 0x9E) is kept below, disabled (#if 0).
   (void)rampFeedFirst;
-  resetManualSpindleRampState();  // stop any CPUB-driven spindle ramp so it can't fight grbl
   serialManager.CPUASerialWrite(static_cast<byte>(GRBL_SAFETY_DOOR));
   currentMachineState = HOLD;     // snappy UI; grbl reports Door, masked to Hold on parse
   isJobPaused = true;
   isResuming = false;             // a new pause supersedes any in-progress resume
 
-#if 0  // ─── OLD CPUB pause procedure (disabled; kept for revert) ───
-  // If a resume spindle "recycle" is still running, abort it cleanly. The spindle
-  // is already running at this point (it was restarted at full when the resume
-  // began), so we just cancel the override cycle and fall through to the normal
-  // pause below, which stops the spindle via the deferred 0x9E. The override is
-  // somewhere between floor and target mid-cycle; restore the captured target so
-  // the deferred pause snapshots the right value.
-  const bool wasRestoringSpindle = isResumeSpindleOverrideRampActive;
-  if (wasRestoringSpindle) {
-    spindleOverride = resumeSpindleOverrideRampTargetPercent;
-    isResumeSpindleOverrideRampActive = false;
-    resumeMotionAfterOverrideRampPending = false;
-    resumeSpindleRestoreStage = RESUME_RESTORE_DROP;
-  }
-
-  // Likewise abort any in-progress resume FEED ramp; restore the local feed-override
-  // counter to the value it is ramping toward so the pause snapshot below is sane.
-  if (isResumeFeedRampActive) {
-    feedRateOverride = resumeFeedRampTargetPercent;
-    isResumeFeedRampActive = false;
-    resumeFeedRampStage = RESUME_FEED_IDLE;
-  }
-  resumeCompletionPending = false;
-  isPauseFeedDropActive = false;  // cancel any prior pause feed-drop (double pause)
-
-  long spindleReferenceRPM = currentSpindleRPM;
-  if (commandedSpindleRPM > spindleReferenceRPM)
-    spindleReferenceRPM = commandedSpindleRPM;
-
-  // Force the spindle-stop path when aborting a restore: the spindle is (or was
-  // just) running but the cached RPM may still read stale/zero.
-  const bool willStopSpindle = wasRestoringSpindle || (spindleReferenceRPM >= MINIMUM_SPINDLE_RPM);
-
-  resetManualSpindleRampState();
-
-  // Capture the pre-pause overrides so resume can restore them.
-  pauseResumeOriginalSpindleOverride = spindleOverride;
-  pauseResumeOriginalFeedOverride = feedRateOverride;
-
-  if (rampFeedFirst && feedRateOverride > RESUME_FEED_START_PERCENT) {
-    // Gentle (API) pause: ramp the FEED override DOWN to the resume floor WHILE STILL MOVING,
-    // then hold. grblHAL honors feed-override changes during motion and the value persists
-    // through the hold, so motion later RESUMES at this low feed — eliminating the full-speed
-    // window on resume. handlePauseFeedDrop() sends '!' and arms the spindle stop at the floor.
-    pauseWillStopSpindle = willStopSpindle;
-    isPauseFeedDropActive = true;
-    pauseFeedDropLastStepMs = millis() - RESUME_FEED_DROP_STEP_MS;  // first step ASAP
-  } else {
-    // Immediate hold: door-sensor safety pause (must not keep cutting), or feed already low.
-    serialManager.CPUASerialWrite(GRBL_HOLD);
-    if (willStopSpindle) {
-      // Defer the 0x9E spindle-stop toggle until GRBL actually reaches HOLD; GRBL-HAL ignores
-      // 0x9E while motion is still decelerating, so sending it right after '!' can be dropped.
-      pendingPauseSpindleStop = true;
-      pauseHoldRequestedMs = millis();
-    }
-  }
-
-  currentMachineState = HOLD;
-  isJobPaused = true;
-#endif  // ─── end OLD CPUB pause procedure ───
 
 }
 
@@ -4257,7 +1701,6 @@ void handlePauseFeedDrop() {
   isPauseFeedDropActive = false;
 
   if (pauseWillStopSpindle) {
-    pendingPauseSpindleStop = true;
     pauseHoldRequestedMs = millis();
   }
 
@@ -4290,152 +1733,21 @@ MachineState getReportedMachineState() {
 
 }
 
-void handleManualSpindleRamp() {
 
-  if (!isManualSpindleRampActive)
-    return;
-
-  // Lid opened (or the job was paused) mid-ramp: abandon the remaining steps instead of
-  // keeping "M3 S..." flowing to GRBL. The pause path stops the spindle itself.
-  if (isSpindleStartBlocked()) {
-
-    resetManualSpindleRampState();
-
-    if (debuggingSettings.debuggingSpindle) {
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln("Spindle ramp aborted (lid open or job paused)");
-    }
-
-    return;
-  }
-
-  if (waitForOk > 0)
-    return;
-
-  // Job-triggered ramp: let GRBL finish what it already accepted, so the machine is stopped before
-  // the spindle starts climbing and motion only resumes once the ramp has finished.
-  if (manualSpindleRampAwaitingDrain) {
-
-    const bool drainTimedOut =
-      (millis() - manualSpindleRampDrainStartedMs) >= SPINDLE_RAMP_JOB_DRAIN_TIMEOUT_MS;
-
-    if (!drainTimedOut && currentMachineState != IDLE)
-      return;
-
-    manualSpindleRampAwaitingDrain = false;
-
-    if (debuggingSettings.debuggingSpindle) {
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln(drainTimedOut
-        ? "Spindle ramp: gave up waiting for the planner to drain, ramping anyway"
-        : "Spindle ramp: motion stopped, ramping now");
-    }
-
-  }
-
-  if ((millis() - manualSpindleRampLastStepMs) < manualSpindleRampIntervalMs)
-    return;
-
-  // The final speed was sent and has now had SPINDLE_RAMP_FINAL_SETTLE_MS to take effect.
-  if (manualSpindleRampSettlePending) {
-
-    if (debuggingSettings.debuggingSpindle) {
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln("Spindle ramp complete and settled, releasing motion");
-    }
-
-    resetManualSpindleRampState();
-    return;
-  }
-
-  const long spindleRPM = manualSpindleRampNextRPM;
-  sendManualSpindleRampCommand(spindleRPM);
-
-  if (spindleRPM >= manualSpindleRampTargetRPM) {
-    // Target SENT, not yet REACHED: GRBL acks an "M3 S..." on acceptance, so releasing the job here
-    // would restart motion with the spindle still climbing. Hold one more interval.
-    manualSpindleRampSettlePending = true;
-    manualSpindleRampIntervalMs = SPINDLE_RAMP_FINAL_SETTLE_MS;
-    return;
-  }
-
-  manualSpindleRampNextRPM += MANUAL_SPINDLE_RAMP_RPM_INCREMENT;
-  if (manualSpindleRampNextRPM > manualSpindleRampTargetRPM)
-    manualSpindleRampNextRPM = manualSpindleRampTargetRPM;
-
-}
-
-void handlePendingPauseSpindleStop() {
-
-  if (!pendingPauseSpindleStop)
-    return;
-
-  if (currentMachineState != HOLD)
-    return;
-
-  // Only fire the 0x9E once a fresh GRBL status report (received AFTER the
-  // pause was requested) confirms HOLD. PAUSE_JOB sets currentMachineState
-  // to HOLD artificially for UI snappiness, so we must wait for a real
-  // status update; otherwise we'd send 0x9E while motion is still
-  // decelerating and GRBL would silently drop it.
-  if (lastGRBLStatusReceivedMs <= pauseHoldRequestedMs)
-    return;
-
-  serialManager.CPUASerialWrite(static_cast<byte>(GRBL_OVERRIDE_SPINDLE_STOP_TOGGLE));
-
-  pendingPauseSpindleStop = false;
-  pauseHoldRequestedMs = 0;
-  pauseResumeSpindleRestorePending = true;
-
-}
 
 // Starts the resume spindle "recycle". The caller resumes motion ('~') and
 // restarts the spindle at full (untoggle 0x9E) FIRST — GRBL-HAL applies spindle
 // overrides only out of HOLD — then this runs as a paced, single real-time-byte-
 // per-step state machine driven by handleResumeSpindleOverrideRamp:
-//   1. RESUME_RESTORE_DROP — pace the override DOWN to the floor
-//                            (RESUME_SPINDLE_RESTORE_FLOOR_PERCENT, capped at target).
-//   2. RESUME_RESTORE_RAMP — pace the override back UP to targetPercent, so the
 //                            override ends explicitly driven to 100%.
-// (RESUME_RESTORE_RESTART is unused now — the spindle is restarted by the caller.)
 // Real-time override bytes are NEVER sent back-to-back: GRBL-HAL coalesces identical
 // override requests that arrive within one realtime-processing pass, so a tight burst
 // silently collapses into a single step and the local counter drifts. Hence the paced
-// RESUME_SPINDLE_OVERRIDE_STEP_INTERVAL_MS between every step.
-bool startResumeSpindleOverrideRamp(int targetPercent) {
-
-  if (targetPercent < GRBL_OVERRIDE_MIN)
-    targetPercent = GRBL_OVERRIDE_MIN;
-  if (targetPercent > GRBL_OVERRIDE_MAX)
-    targetPercent = GRBL_OVERRIDE_MAX;
-
-  resumeSpindleOverrideRampTargetPercent = targetPercent;
-  resumeSpindleOverrideRampIntervalMs = RESUME_SPINDLE_DROP_STEP_INTERVAL_MS;
-  resumeSpindleOverrideRampLastStepMs = millis();
-  resumeSpindleRestoreStage = RESUME_RESTORE_DROP;
-  isResumeSpindleOverrideRampActive = true;
-
-  if (debuggingSettings.debuggingSpindle) {
-    int floorPercent = RESUME_SPINDLE_RESTORE_FLOOR_PERCENT;
-    if (floorPercent > targetPercent)
-      floorPercent = targetPercent;
-    serialManager.USBSerialPrint("Resume spindle recycle: full, dip to ");
-    serialManager.USBSerialPrint(floorPercent);
-    serialManager.USBSerialPrint("%%, ramp back to ");
-    serialManager.USBSerialPrint(targetPercent);
-    serialManager.USBSerialPrint("%% at ");
-    serialManager.USBSerialPrint((int)RESUME_SPINDLE_OVERRIDE_STEP_INTERVAL_MS);
-    serialManager.USBSerialPrintln(" ms/step");
-  }
-
-  return true;
-
-}
 
 // Coordinates the single resumeCompleted event across the two parallel resume machines
 // (spindle recycle + feed ramp). Fires exactly once, only after BOTH have gone idle.
 void maybeCompleteResume() {
-  if (resumeCompletionPending && !isResumeSpindleOverrideRampActive && !isResumeFeedRampActive) {
+  if (resumeCompletionPending && !isResumeFeedRampActive) {
     resumeCompletionPending = false;
     pushResumeCompletedEvent();
   }
@@ -4537,190 +1849,12 @@ void handleResumeFeedRamp() {
 
 }
 
-void handleResumeSpindleOverrideRamp() {
-
-  if (!isResumeSpindleOverrideRampActive)
-    return;
-
-  if ((millis() - resumeSpindleOverrideRampLastStepMs) < resumeSpindleOverrideRampIntervalMs)
-    return;
-
-  switch (resumeSpindleRestoreStage) {
-
-    case RESUME_RESTORE_DROP: {
-      // Spindle is already running at full (restarted by the RESUME_JOB handler).
-      // Paced -10% down to the floor (capped at target), then ramp back up.
-      int floorPercent = RESUME_SPINDLE_RESTORE_FLOOR_PERCENT;
-      if (floorPercent > resumeSpindleOverrideRampTargetPercent)
-        floorPercent = resumeSpindleOverrideRampTargetPercent;
-      if (floorPercent < GRBL_OVERRIDE_MIN)
-        floorPercent = GRBL_OVERRIDE_MIN;
-      if (spindleOverride > floorPercent) {
-        serialManager.CPUASerialWrite(static_cast<byte>(GRBL_OVERRIDE_SPINDLE_DECREASE_COARSE));
-        spindleOverride -= GRBL_OVERRIDE_COARSE_STEP;
-        if (spindleOverride < floorPercent)
-          spindleOverride = floorPercent;
-        resumeSpindleOverrideRampLastStepMs = millis();
-      } else {
-        resumeSpindleRestoreStage = RESUME_RESTORE_RAMP;
-        resumeSpindleOverrideRampIntervalMs = RESUME_SPINDLE_OVERRIDE_STEP_INTERVAL_MS;
-        resumeSpindleOverrideRampLastStepMs = millis();
-        if (debuggingSettings.debuggingSpindle) {
-          serialManager.USBSerialPrint("Resume spindle recycle: at floor ");
-          serialManager.USBSerialPrint(spindleOverride);
-          serialManager.USBSerialPrint("%%, ramping back to ");
-          serialManager.USBSerialPrint(resumeSpindleOverrideRampTargetPercent);
-          serialManager.USBSerialPrintln("%%");
-        }
-      }
-      break;
-    }
-
-    case RESUME_RESTORE_RAMP:
-      // Paced +10% up to target, now that the machine is running.
-      if (spindleOverride < resumeSpindleOverrideRampTargetPercent) {
-        serialManager.CPUASerialWrite(static_cast<byte>(GRBL_OVERRIDE_SPINDLE_INCREASE_COARSE));
-        spindleOverride += GRBL_OVERRIDE_COARSE_STEP;
-        if (spindleOverride > resumeSpindleOverrideRampTargetPercent)
-          spindleOverride = resumeSpindleOverrideRampTargetPercent;
-        resumeSpindleOverrideRampLastStepMs = millis();
-      }
-      if (spindleOverride >= resumeSpindleOverrideRampTargetPercent) {
-        // Local counter reached target, but a coalesced/dropped override byte may have
-        // left GRBL short. Do NOT finish yet: hand off to the closed-loop CONFIRM stage.
-        resumeSpindleRestoreStage = RESUME_RESTORE_CONFIRM;
-        resumeConfirmEnteredMs = millis();
-        resumeConfirmLastActionMs = millis();
-        resumeConfirmReachedMs = 0;
-        resumeSpindleOverrideRampLastStepMs = millis();
-        if (debuggingSettings.debuggingSpindle)
-          serialManager.USBSerialPrintln("Resume spindle ramp reached target; confirming vs grbl Ov:");
-      }
-      break;
-
-    case RESUME_RESTORE_CONFIRM: {
-      // Verify GRBL actually reports the spindle override at target and hold a settle
-      // time before completing. This closes the loop the open-loop ramp cannot: if a
-      // +10% (or -10%) override byte was coalesced/dropped, GRBL ends off target while
-      // the local counter says "done"; here we read GRBL's "Ov:" and nudge it back.
-
-      // Overall safety timeout so CONFIRM can never hang (e.g. GRBL stops emitting Ov:).
-      if ((millis() - resumeConfirmEnteredMs) >= RESUME_SPINDLE_CONFIRM_TIMEOUT_MS) {
-        spindleOverride = resumeSpindleOverrideRampTargetPercent;
-        isResumeSpindleOverrideRampActive = false;
-        resumeSpindleRestoreStage = RESUME_RESTORE_DROP;
-        if (debuggingSettings.debuggingSpindle)
-          serialManager.USBSerialPrintln("Resume spindle confirm timed out; completing");
-        maybeCompleteResume();
-        break;
-      }
-
-      // Only act on a GRBL Ov: reading that post-dates our last action, so a stale or
-      // missing Ov: field cannot trigger an extra nudge (which would overshoot).
-      if (lastReportedSpindleOverrideMs <= resumeConfirmLastActionMs) {
-        resumeSpindleOverrideRampLastStepMs = millis();
-        break;
-      }
-
-      int overrideDiff = lastReportedSpindleOverride - resumeSpindleOverrideRampTargetPercent;
-      int overrideDiffAbs = overrideDiff < 0 ? -overrideDiff : overrideDiff;
-
-      if (lastReportedSpindleOverride >= 0 && overrideDiffAbs >= GRBL_OVERRIDE_COARSE_STEP) {
-        // GRBL is off target by a full coarse step or more — nudge back toward target.
-        byte overrideByte = (overrideDiff < 0)
-                              ? static_cast<byte>(GRBL_OVERRIDE_SPINDLE_INCREASE_COARSE)
-                              : static_cast<byte>(GRBL_OVERRIDE_SPINDLE_DECREASE_COARSE);
-        serialManager.CPUASerialWrite(overrideByte);
-        resumeConfirmReachedMs = 0;             // not settled yet
-        resumeConfirmLastActionMs = millis();
-        resumeSpindleOverrideRampLastStepMs = millis();
-        if (debuggingSettings.debuggingSpindle) {
-          serialManager.USBSerialPrint("Resume spindle confirm: grbl Ov: ");
-          serialManager.USBSerialPrint(lastReportedSpindleOverride);
-          serialManager.USBSerialPrint("%% vs target ");
-          serialManager.USBSerialPrint(resumeSpindleOverrideRampTargetPercent);
-          serialManager.USBSerialPrintln("%%, nudging");
-        }
-        break;
-      }
-
-      // GRBL is within a coarse step of target: start/continue the settle timer.
-      if (resumeConfirmReachedMs == 0)
-        resumeConfirmReachedMs = millis();
-
-      if ((millis() - resumeConfirmReachedMs) >= RESUME_SPINDLE_CONFIRM_SETTLE_MS) {
-        spindleOverride = resumeSpindleOverrideRampTargetPercent;
-        isResumeSpindleOverrideRampActive = false;
-        resumeSpindleRestoreStage = RESUME_RESTORE_DROP;
-        if (debuggingSettings.debuggingSpindle)
-          serialManager.USBSerialPrintln("Resume spindle restore confirmed at target");
-        maybeCompleteResume();
-      } else {
-        resumeSpindleOverrideRampLastStepMs = millis();
-      }
-      break;
-    }
-
-  }
-
-}
 
 // True when the line consists ONLY of spindle words (M3 and/or S, plus optional
 // N line numbers, whitespace and comments). Such a line can be consumed outright —
 // the ramp's own "M3 S..." steps replace it. Any other content (motion, feed,
 // other M codes) means the line must be forwarded, or held and released after the
 // ramp so nothing is lost.
-bool isSpindleOnlyLine(const char* lineBuffer) {
-
-  if (lineBuffer == nullptr)
-    return false;
-
-  bool hasSpindleWord = false;
-
-  for (int index = 0; lineBuffer[index] != NULL_CHAR; ) {
-
-    const char currentChar = lineBuffer[index];
-
-    if (currentChar == NEWLINE || currentChar == RETURN || currentChar == ';')
-      break;
-
-    if (currentChar == ' ' || currentChar == '\t') {
-      ++index;
-      continue;
-    }
-
-    if (currentChar == '(') {
-      while (lineBuffer[index] != NULL_CHAR && lineBuffer[index] != ')')
-        ++index;
-      if (lineBuffer[index] == ')')
-        ++index;
-      continue;
-    }
-
-    const char upper = static_cast<char>(toupper(static_cast<unsigned char>(currentChar)));
-
-    if (upper != 'M' && upper != 'S' && upper != 'N')
-      return false;
-
-    char* endPtr = nullptr;
-    const long wordValue = strtol(lineBuffer + index + 1, &endPtr, 10);
-
-    if (endPtr == lineBuffer + index + 1)
-      return false; // word letter with no number: not a plain spindle line
-
-    if (upper == 'M' && wordValue != 3)
-      return false; // any M other than M3 must be forwarded
-
-    if (upper == 'M' || upper == 'S')
-      hasSpindleWord = true;
-
-    index = static_cast<int>(endPtr - lineBuffer);
-
-  }
-
-  return hasSpindleWord;
-
-}
 
 // True when the line would make the spindle turn: an explicit spindle-on M-code (M3/M4) or
 // an S>0 while the modal spindle is already on (GRBL applies a bare S immediately in that
@@ -4789,162 +1923,10 @@ bool lineCommandsSpindleOn(const char* lineBuffer) {
 //   - M5/M30              -> clear ALL modal spindle state (S does not survive M5)
 // Lines carrying more than spindle words are held and released after the ramp.
 // Returns true when the line was consumed (or held) and must NOT be forwarded.
-bool handleSpindleRampCommand(const char* lineBuffer, bool allowDuringJob) {
-
-  if (lineBuffer == nullptr || isMacroRunning)
-    return false;
-
-  // Spindle-start gate (lid open with the housing installed, or job paused). The callers
-  // check this first and decide what to do with the line; this is the last-resort guard so
-  // no path can ever start a ramp or leak an M3 to GRBL. Reported as consumed, never
-  // forwarded. M5/M30 fall through below: turning the spindle OFF is always allowed.
-  if (isSpindleStartBlocked() && lineCommandsSpindleOn(lineBuffer)) {
-
-    if (debuggingSettings.debuggingSpindle) {
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrint("Spindle-on line blocked (lid open or job paused): ");
-      serialManager.USBSerialPrintln(lineBuffer);
-    }
-
-    return true;
-  }
-
-  if (!allowDuringJob && isJobRunning)
-    return false;
-
-  long mCode = -1;
-  const bool hasMCode = tryParseGCodeWordLongValue(lineBuffer, 'M', &mCode);
-
-  if (hasMCode && (mCode == 5 || mCode == 30)) {
-    resetSpindleModalState(true);   // keep the memorised S so a later bare M3 still ramps to it
-    resetManualSpindleRampState();
-    return false;
-  }
-
-  const bool hasM3 = hasMCode && (mCode == 3);
-
-  long sValue = -1;
-  const bool hasSWord = tryParseGCodeWordLongValue(lineBuffer, 'S', &sValue) && sValue >= 0;
-
-  if (!hasM3 && !hasSWord)
-    return false;
-
-  if (hasSWord)
-    lastRequestedSpindleRPM = sValue; // modal S memory
-
-  if (hasM3)
-    isSpindleOnCommanded = true;
-
-  // Spindle not commanded on: the S is memorized for the next M3, the line
-  // itself passes through untouched (harmless with the spindle off).
-  if (!isSpindleOnCommanded)
-    return false;
-
-  const long targetRPM = hasSWord ? sValue : lastRequestedSpindleRPM;
-
-  // M3 with no S ever seen behaves like M3 S0: nothing to ramp, forward as-is.
-  if (targetRPM <= 0)
-    return false;
-
-  long baseRPM = commandedSpindleRPM;
-  if (isManualSpindleRampActive && manualSpindleRampLastCommandedRPM > baseRPM)
-    baseRPM = manualSpindleRampLastCommandedRPM;
-
-  // Ramping down (or same speed): applied instantly, no booster stress. Abort
-  // any in-flight ramp and let the line through directly.
-  if (targetRPM <= baseRPM) {
-    if (isManualSpindleRampActive)
-      resetManualSpindleRampState();
-    commandedSpindleRPM = targetRPM;
-    return false;
-  }
-
-  // Small upward bump below one ramp increment: not worth a ramp (and, mid-job,
-  // not worth a motion dwell) — forward directly.
-  if (!isManualSpindleRampActive && (targetRPM - baseRPM) < MANUAL_SPINDLE_RAMP_RPM_INCREMENT) {
-    commandedSpindleRPM = targetRPM;
-    return false;
-  }
-
-  // An M3 read from the job pauses motion first. handleJob already stops streaming while a ramp is
-  // active, but lines GRBL has already ACCEPTED keep executing -- an "ok" means accepted, not done --
-  // so without the drain wait the machine carries on moving while the spindle climbs.
-  const bool rampFromJob = allowDuringJob && isJobRunning && !isJobPaused;
-
-  if (!startManualSpindleRamp(targetRPM)) {
-    // Defensive: ramp refused (should not happen after the checks above) —
-    // forward the line directly so the command is never lost.
-    commandedSpindleRPM = targetRPM;
-    return false;
-  }
-
-  if (rampFromJob) {
-    manualSpindleRampAwaitingDrain = true;
-    manualSpindleRampDrainStartedMs = millis();
-  }
-
-  // Line carries more than spindle words (e.g. "G1 X10 S9000"): hold it and
-  // release it once the ramp completes, so the motion waits for the spindle.
-  if (!isSpindleOnlyLine(lineBuffer)) {
-    arrayUtil.clearCharArray(heldSpindleLineBuffer, LINE_BUFFER_CHARACTERS);
-    strncpy(heldSpindleLineBuffer, lineBuffer, LINE_BUFFER_CHARACTERS - 1);
-    heldSpindleLineIsJob = allowDuringJob && isJobRunning;
-    isSpindleLineHeld = true;
-
-    if (debuggingSettings.debuggingSpindle) {
-      serialManager.USBSerialPrint("Line held until spindle ramp completes: ");
-      serialManager.USBSerialPrintln(heldSpindleLineBuffer);
-    }
-  }
-
-  return true;
-
-}
 
 // Releases a CONSOLE line that was held while the spindle ramped (job-held lines
 // are released inside handleJob so they go through the full job pipeline). Sent
 // through the same soft-limit check as any other passthrough line.
-void handleHeldSpindleLineRelease() {
-
-  if (!isSpindleLineHeld || heldSpindleLineIsJob)
-    return;
-
-  if (isManualSpindleRampActive)
-    return;
-
-  if (waitForOk > 0)
-    return;
-
-  // The gate closed while the line waited (lid opened mid-ramp, or the job was paused): the
-  // held line still carries the spindle words that started the ramp, so drop it instead of
-  // releasing it to GRBL.
-  if (isSpindleStartBlocked() && lineCommandsSpindleOn(heldSpindleLineBuffer)) {
-
-    isSpindleLineHeld = false;
-
-    serialManager.USBSerialPrint(FROM_CPUB);
-    serialManager.USBSerialPrint("Held spindle line dropped (lid open or job paused): ");
-    serialManager.USBSerialPrintln(heldSpindleLineBuffer);
-
-    arrayUtil.clearCharArray(heldSpindleLineBuffer, LINE_BUFFER_CHARACTERS);
-    return;
-
-  }
-
-  isSpindleLineHeld = false;
-
-  if (!evaluateAndApplySoftLimitsForOutgoingLine(heldSpindleLineBuffer))
-    return;
-
-  ++waitForOk;
-  writeLineCPUA(heldSpindleLineBuffer);
-
-  if (debuggingSettings.debuggingSpindle) {
-    serialManager.USBSerialPrint("Held line released after spindle ramp: ");
-    serialManager.USBSerialPrintln(heldSpindleLineBuffer);
-  }
-
-}
 
 void handleRawPassthroughLine(const char* lineBuffer) {
 
@@ -4963,8 +1945,8 @@ void handleRawPassthroughLine(const char* lineBuffer) {
   if (lineBuffer[0] == '{')
     return;
 
-  // Spindle-start gate: never forward a line that would make the spindle turn while the
-  // housing is installed and the lid is open, or while the job is paused. The whole line is
+  // Spindle-start gate: never forward a line that would make the spindle turn while the job
+  // is paused. The whole line is
   // dropped rather than stripped — a console line mixing motion with M3 is unsafe as a unit.
   if (isSpindleStartBlocked() && lineCommandsSpindleOn(lineBuffer)) {
 
@@ -4975,8 +1957,6 @@ void handleRawPassthroughLine(const char* lineBuffer) {
 
   }
 
-  if (handleSpindleRampCommand(lineBuffer, false))
-    return;
 
   if (!evaluateAndApplySoftLimitsForOutgoingLine(lineBuffer))
     return;
@@ -5012,7 +1992,6 @@ void askGRBLStatus() {
   // A job-triggered spindle ramp waits for GRBL to report Idle before it starts stepping, and during
   // a job status is not otherwise requested at all -- so without this exception that wait could only
   // ever end on its timeout. Nothing is being streamed while it waits, so the poll costs nothing.
-  if(isJobRunning && !isJobPaused && !manualSpindleRampAwaitingDrain)
     return; //if a job is running (not paused) we do not ask for the status
 
   // A ramp is no reason to stop polling either. '?' cannot disturb the ramp's own line sends (it is
@@ -5034,68 +2013,12 @@ void askGRBLStatus() {
 
 // ─── Height map Z compensation ─────────────────────────────────────────────
 
-// (hmPhysToScanIdx / hmMedian now live next to the height map scan state machine, which fills the map.)
 
 // Post-scan spike removal: any cell that deviates from its 8-neighbour median by more than
-// HEIGHT_MAP_OUTLIER_THRESHOLD_MM is a spurious spike (reflective copper, trace edge, bad read) and
 // is replaced with that median. This stops the compensation from lifting the tool off the work at
 // those cells while leaving the real (smooth) surface untouched. In-place, single pass — fine for
 // isolated spikes, which is the case on a flat PCB. Disabled when the threshold is 0.
-void filterHeightMapOutliers() {
-  if (HEIGHT_MAP_OUTLIER_THRESHOLD_MM <= 0.0f) return;
-  if (heightMapGridPointsX < 3 || heightMapGridPointsY < 3) return;
 
-  int replaced = 0;
-  for (int row = 0; row < (int)heightMapGridPointsY; row++) {
-    for (int col = 0; col < (int)heightMapGridPointsX; col++) {
-      float neigh[8];
-      int n = 0;
-      for (int dr = -1; dr <= 1; dr++) {
-        for (int dc = -1; dc <= 1; dc++) {
-          if (dr == 0 && dc == 0) continue;
-          int r = row + dr, c = col + dc;
-          if (r < 0 || r >= (int)heightMapGridPointsY || c < 0 || c >= (int)heightMapGridPointsX) continue;
-          neigh[n++] = heightMapRelativeMm[hmPhysToScanIdx((uint16_t)r, (uint16_t)c)];
-        }
-      }
-      if (n < 3) continue;
-      float med = hmMedian(neigh, n);
-      uint16_t idx = hmPhysToScanIdx((uint16_t)row, (uint16_t)col);
-      if (fabsf(heightMapRelativeMm[idx] - med) > HEIGHT_MAP_OUTLIER_THRESHOLD_MM) {
-        heightMapRelativeMm[idx] = med;
-        replaced++;
-      }
-    }
-  }
-
-  char dbg[64];
-  snprintf(dbg, sizeof(dbg), "HeightMap outlier filter: replaced %d cell(s)", replaced);
-  serialManager.USBSerialPrint(FROM_CPUB);
-  serialManager.USBSerialPrintln(dbg);
-}
-
-float interpolateHeightMapZ(float workX, float workY) {
-  if (heightMapGridPointsX == 0 || heightMapGridPointsY == 0) return 0.0f;
-  float colF = (workX - heightMapOriginX) / heightMapSpacingXmm;
-  float rowF = (heightMapOriginY - workY) / heightMapSpacingYmm;
-  if (colF < 0.0f) colF = 0.0f;
-  if (colF > (float)(heightMapGridPointsX - 1)) colF = (float)(heightMapGridPointsX - 1);
-  if (rowF < 0.0f) rowF = 0.0f;
-  if (rowF > (float)(heightMapGridPointsY - 1)) rowF = (float)(heightMapGridPointsY - 1);
-  uint16_t col0 = (uint16_t)colF;
-  uint16_t row0 = (uint16_t)rowF;
-  uint16_t col1 = (col0 + 1 < heightMapGridPointsX) ? col0 + 1 : col0;
-  uint16_t row1 = (row0 + 1 < heightMapGridPointsY) ? row0 + 1 : row0;
-  float tx = colF - (float)col0;
-  float ty = rowF - (float)row0;
-  float z00 = heightMapRelativeMm[hmPhysToScanIdx(row0, col0)];
-  float z10 = heightMapRelativeMm[hmPhysToScanIdx(row0, col1)];
-  float z01 = heightMapRelativeMm[hmPhysToScanIdx(row1, col0)];
-  float z11 = heightMapRelativeMm[hmPhysToScanIdx(row1, col1)];
-  float z0 = z00 + tx * (z10 - z00);
-  float z1 = z01 + tx * (z11 - z01);
-  return z0 + ty * (z1 - z0);
-}
 
 static void rewriteZWordInLine(char* buf, size_t bufSize, float zValue) {
   char newZ[24];
@@ -5130,266 +2053,14 @@ static void rewriteZWordInLine(char* buf, size_t bufSize, float zValue) {
   memcpy(buf + insertAt + 1, newZ, newZLen);
 }
 
-void applyHeightMapZToLine(char* line, size_t bufSize) {
-  // Only supported in absolute mode; skip G91 (relative) moves
-  if (!outboundAbsoluteMode) return;
-  // Determine if this line is G0 or G1 (explicit or modal)
-  bool sawG0 = false, sawG1 = false, sawG2 = false, sawG3 = false, sawAnyG = false;
-  for (int i = 0; line[i] != '\0'; i++) {
-    if (line[i] == ';' || line[i] == '\n' || line[i] == '\r') break;
-    if (line[i] == '(') { while (line[i] != '\0' && line[i] != ')') i++; continue; }
-    if (toupper((unsigned char)line[i]) != 'G') continue;
-    char* ep;
-    long g = strtol(line + i + 1, &ep, 10);
-    if (ep == line + i + 1) continue;
-    sawAnyG = true;
-    if (g == 0) sawG0 = true;
-    else if (g == 1) sawG1 = true;
-    else if (g == 2) sawG2 = true;
-    else if (g == 3) sawG3 = true;
-    i = (int)(ep - line) - 1;
-  }
-  bool isG0 = sawG0 || (!sawAnyG && outboundLastMotionMode == 1);
-  bool isG1 = sawG1 || (!sawAnyG && outboundLastMotionMode == 2);
-  bool isArc = sawG2 || sawG3
-    || (!sawAnyG && (outboundLastMotionMode == 3 || outboundLastMotionMode == 4));
-  if (!isG0 && !isG1 && !isArc) return;
-  float parsedX = 0.0f, parsedY = 0.0f, parsedZ = 0.0f;
-  bool hasX = tryParseGCodeWordFloatValue(line, 'X', &parsedX);
-  bool hasY = tryParseGCodeWordFloatValue(line, 'Y', &parsedY);
-  bool hasZ = tryParseGCodeWordFloatValue(line, 'Z', &parsedZ);
-  // Update tracked work position
-  float targetX = outboundCurrentWorkX;
-  float targetY = outboundCurrentWorkY;
-  if (hasX) { outboundCurrentWorkX = parsedX; targetX = parsedX; }
-  if (hasY) { outboundCurrentWorkY = parsedY; targetY = parsedY; }
-  if (hasZ) outboundCurrentWorkZ = parsedZ;
-  // Arcs are deliberately left uncompensated: they hold whatever Z the last compensated move left
-  // them at. Their endpoint still has to be TRACKED though -- returning before the parsing above
-  // would leave outboundCurrentWork* stale, and every following modal line would then compute its
-  // offset at the wrong XY and inject a stale Z.
-  if (isArc) return;
-  // For G0: only compensate when Z is explicitly in the line
-  if (isG0 && !hasZ) return;
-  float offset = interpolateHeightMapZ(targetX, targetY);
-  rewriteZWordInLine(line, bufSize, outboundCurrentWorkZ + offset);
-}
 
 // Emit the next G1 sub-move for a segmented linear G1 command.
-static void emitNextLinearSegment() {
-  float remaining = jobLineSeg.totalLen - jobLineSeg.sentLen;
-  bool isLast = (remaining <= jobLineSeg.stepLen * 1.001f);
-
-  float targetX, targetY, targetZProg;
-  if (isLast) {
-    targetX     = jobLineSeg.x1;
-    targetY     = jobLineSeg.y1;
-    targetZProg = jobLineSeg.z1;
-  } else {
-    float t = (jobLineSeg.sentLen + jobLineSeg.stepLen) / jobLineSeg.totalLen;
-    targetX     = jobLineSeg.x0 + t * (jobLineSeg.x1 - jobLineSeg.x0);
-    targetY     = jobLineSeg.y0 + t * (jobLineSeg.y1 - jobLineSeg.y0);
-    targetZProg = jobLineSeg.z0 + t * (jobLineSeg.z1 - jobLineSeg.z0);
-  }
-
-  float offset = interpolateHeightMapZ(targetX, targetY);
-  char sub[80];
-  snprintf(sub, sizeof(sub), "G1 X%.4f Y%.4f Z%.4f F%.1f",
-           targetX, targetY, targetZProg + offset, jobLineSeg.feedRate);
-
-  if (!evaluateAndApplySoftLimitsForOutgoingLine(sub)) {
-    jobLineSeg.active = false;
-    stopJobWithReset();
-    return;
-  }
-  serialManager.CPUASerialPrintln(sub);
-  ++waitForOk;
-
-  if (isLast) {
-    outboundCurrentWorkX = jobLineSeg.x1;
-    outboundCurrentWorkY = jobLineSeg.y1;
-    outboundCurrentWorkZ = jobLineSeg.z1;
-    jobLineSeg.active = false;
-    ++jobLineIndex;
-  } else {
-    jobLineSeg.sentLen += jobLineSeg.stepLen;
-  }
-}
 
 // Emit the next G1 sub-move for a segmented G2/G3 arc command.
-static void emitNextArcSegment() {
-  float remaining = jobArcSeg.totalAngle - jobArcSeg.angleCompleted;
-  bool isLast = (remaining <= jobArcSeg.stepAngle * 1.001f);
-
-  float targetX, targetY, t;
-  if (isLast) {
-    targetX = jobArcSeg.x1;
-    targetY = jobArcSeg.y1;
-    t       = 1.0f;
-  } else {
-    float nextAngle = jobArcSeg.clockwise
-      ? jobArcSeg.currentAngle - jobArcSeg.stepAngle
-      : jobArcSeg.currentAngle + jobArcSeg.stepAngle;
-    targetX = jobArcSeg.cx + jobArcSeg.radius * cosf(nextAngle);
-    targetY = jobArcSeg.cy + jobArcSeg.radius * sinf(nextAngle);
-    t = (jobArcSeg.angleCompleted + jobArcSeg.stepAngle) / jobArcSeg.totalAngle;
-    if (t > 1.0f) t = 1.0f;
-  }
-
-  float targetZProg = jobArcSeg.z0 + t * (jobArcSeg.z1 - jobArcSeg.z0);
-  float offset = interpolateHeightMapZ(targetX, targetY);
-  char sub[80];
-  snprintf(sub, sizeof(sub), "G1 X%.4f Y%.4f Z%.4f F%.1f",
-           targetX, targetY, targetZProg + offset, jobArcSeg.feedRate);
-
-  if (!evaluateAndApplySoftLimitsForOutgoingLine(sub)) {
-    jobArcSeg.active = false;
-    stopJobWithReset();
-    return;
-  }
-  serialManager.CPUASerialPrintln(sub);
-  ++waitForOk;
-
-  if (isLast) {
-    outboundCurrentWorkX = jobArcSeg.x1;
-    outboundCurrentWorkY = jobArcSeg.y1;
-    outboundCurrentWorkZ = jobArcSeg.z1;
-    jobArcSeg.active = false;
-    ++jobLineIndex;
-  } else {
-    jobArcSeg.angleCompleted += jobArcSeg.stepAngle;
-    if (jobArcSeg.clockwise)
-      jobArcSeg.currentAngle -= jobArcSeg.stepAngle;
-    else
-      jobArcSeg.currentAngle += jobArcSeg.stepAngle;
-  }
-}
 
 // Check whether the given line starts a long G1 or a G2/G3 arc, and if so
 // activate the corresponding segmentation state for height-map Z compensation.
 // Returns true when segmentation starts; caller must NOT also send the original
-// line or call applyHeightMapZToLine.
-bool tryStartSegmentation(char* line) {
-  if (!outboundAbsoluteMode) return false;
-
-  // First pass: detect G-words and apply inline modal state changes
-  bool sawG1 = false, sawG2 = false, sawG3 = false, sawAnyMotionG = false;
-  for (int i = 0; line[i] != '\0'; i++) {
-    if (line[i] == ';' || line[i] == '\n' || line[i] == '\r') break;
-    if (line[i] == '(') { while (line[i] != '\0' && line[i] != ')') i++; continue; }
-    if (toupper((unsigned char)line[i]) != 'G') continue;
-    char* ep;
-    long g = strtol(line + i + 1, &ep, 10);
-    if (ep == line + i + 1) continue;
-    if      (g == 1)  { sawG1 = true; sawAnyMotionG = true; }
-    else if (g == 2)  { sawG2 = true; sawAnyMotionG = true; }
-    else if (g == 3)  { sawG3 = true; sawAnyMotionG = true; }
-    else if (g == 90) { outboundAbsoluteMode = true; }
-    else if (g == 91) { outboundAbsoluteMode = false; }
-    else if (g == 21) { outboundMetricUnits  = true; }
-    else if (g == 20) { outboundMetricUnits  = false; }
-    i = (int)(ep - line) - 1;
-  }
-
-  if (!outboundAbsoluteMode) return false;
-  if (!outboundMetricUnits)  return false; // segmentation emits mm coords; skip imperial files
-
-  bool isG1 = sawG1 || (!sawAnyMotionG && outboundLastMotionMode == 2);
-  bool isG2 = sawG2;
-  bool isG3 = sawG3;
-  if (!isG1 && !isG2 && !isG3) return false;
-
-  // Parse position and arc words
-  float parsedX = 0.0f, parsedY = 0.0f, parsedZ = 0.0f;
-  float parsedI = 0.0f, parsedJ = 0.0f, parsedF = 0.0f;
-  bool hasX = tryParseGCodeWordFloatValue(line, 'X', &parsedX);
-  bool hasY = tryParseGCodeWordFloatValue(line, 'Y', &parsedY);
-  bool hasZ = tryParseGCodeWordFloatValue(line, 'Z', &parsedZ);
-  bool hasI = tryParseGCodeWordFloatValue(line, 'I', &parsedI);
-  bool hasJ = tryParseGCodeWordFloatValue(line, 'J', &parsedJ);
-  bool hasF = tryParseGCodeWordFloatValue(line, 'F', &parsedF);
-
-  if (hasF) outboundCurrentFeedRate = parsedF;
-  float feedRate = outboundCurrentFeedRate;
-
-  float x0 = outboundCurrentWorkX;
-  float y0 = outboundCurrentWorkY;
-  float z0 = outboundCurrentWorkZ;
-  float x1 = hasX ? parsedX : x0;
-  float y1 = hasY ? parsedY : y0;
-  float z1 = hasZ ? parsedZ : z0;
-
-  if (isG1) {
-    float dx = x1 - x0, dy = y1 - y0;
-    float len = sqrtf(dx*dx + dy*dy);
-    float minSpacing = heightMapSpacingXmm < heightMapSpacingYmm
-      ? heightMapSpacingXmm : heightMapSpacingYmm;
-    // Only segment if the move spans more than one grid cell
-    if (minSpacing <= 0.0f || len <= minSpacing) return false;
-
-    jobLineSeg.active   = true;
-    jobLineSeg.x0       = x0;  jobLineSeg.y0    = y0;  jobLineSeg.z0    = z0;
-    jobLineSeg.x1       = x1;  jobLineSeg.y1    = y1;  jobLineSeg.z1    = z1;
-    jobLineSeg.totalLen = len;
-    jobLineSeg.sentLen  = 0.0f;
-    jobLineSeg.stepLen  = minSpacing * 0.5f;
-    jobLineSeg.feedRate = feedRate;
-    outboundLastMotionMode = 2;
-    return true;
-  }
-
-  // Arcs are not height-map compensated at all. Segmenting them was the only way they ever could be
-  // (applyHeightMapZToLine covers G0/G1 only), so declining here means an arc is forwarded untouched
-  // and simply keeps the Z the preceding compensated move left it at. applyHeightMapZToLine still
-  // tracks the arc's endpoint so the following lines compensate from the right position.
-  // The emitNextArcSegment machinery below is left in place, unreachable, to make this reversible.
-  if (isG2 || isG3)
-    return false;
-
-#if 0  // ─── arc segmentation, disabled: arcs are not compensated ───
-  if (isG2 || isG3) {
-    if (!hasI && !hasJ) return false;
-    bool clockwise = isG2;
-    float cx     = x0 + parsedI;
-    float cy     = y0 + parsedJ;
-    float radius = sqrtf(parsedI*parsedI + parsedJ*parsedJ);
-    if (radius < 0.001f) return false;
-
-    float startAngle = atan2f(y0 - cy, x0 - cx);
-    float endAngle   = atan2f(y1 - cy, x1 - cx);
-    float totalAngle;
-    if (clockwise) {
-      totalAngle = startAngle - endAngle;
-      if (totalAngle <= 0.0f) totalAngle += 2.0f * 3.14159265358979323846f;
-    } else {
-      totalAngle = endAngle - startAngle;
-      if (totalAngle <= 0.0f) totalAngle += 2.0f * 3.14159265358979323846f;
-    }
-
-    float minSpacing = heightMapSpacingXmm < heightMapSpacingYmm
-      ? heightMapSpacingXmm : heightMapSpacingYmm;
-    if (minSpacing <= 0.0f) minSpacing = 0.5f;
-    float stepAngle = (minSpacing * 0.5f) / radius;
-    if (stepAngle > totalAngle) stepAngle = totalAngle;
-
-    jobArcSeg.active         = true;
-    jobArcSeg.cx             = cx;         jobArcSeg.cy            = cy;
-    jobArcSeg.radius         = radius;
-    jobArcSeg.currentAngle   = startAngle;
-    jobArcSeg.totalAngle     = totalAngle;
-    jobArcSeg.angleCompleted = 0.0f;
-    jobArcSeg.stepAngle      = stepAngle;
-    jobArcSeg.z0             = z0;          jobArcSeg.z1           = z1;
-    jobArcSeg.feedRate       = feedRate;
-    jobArcSeg.x1             = x1;          jobArcSeg.y1           = y1;
-    jobArcSeg.clockwise      = clockwise;
-    outboundLastMotionMode = clockwise ? 3 : 4;
-    return true;
-  }
-#endif  // ─── end arc segmentation ───
-
-  return false;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -5428,15 +2099,11 @@ void handleJob(){
 
   }
 
-  if (isManualSpindleRampActive)
     return;
   
   if(waitForOk > 0)
     return;
 
-  // Drain any pending height-map segmented sub-moves before reading the next SD line
-  if (jobLineSeg.active) { emitNextLinearSegment(); return; }
-  if (jobArcSeg.active)  { emitNextArcSegment();    return; }
 
   // Ensure dry-run feed rate is applied before forwarding the first dry-run move.
   if(isDryRunActive && pendingDryRunFeedRate) {
@@ -5464,37 +2131,6 @@ void handleJob(){
   //here we read the file line by line and send it to GRBL
   arrayUtil.clearCharArray(gcodeLineBuffer, LINE_BUFFER_CHARACTERS);
 
-  if (isSpindleLineHeld && heldSpindleLineIsJob) {
-
-    // Release the motion line that was held while the spindle ramped. It re-enters
-    // the normal pipeline below exactly like a freshly read SD line (the ramp check
-    // now resolves to a direct forward since the RPM already matches, then height
-    // map and soft limits apply as usual).
-    strncpy(gcodeLineBuffer, heldSpindleLineBuffer, LINE_BUFFER_CHARACTERS - 1);
-    isSpindleLineHeld = false;
-
-  } else if(!sdCardManager.readGCodeLine(gcodeLineBuffer, LINE_BUFFER_CHARACTERS)) {
-
-    isJobRunning = false;
-    isDryRunActive = false;
-    pendingDryRunFeedRate = false;
-    isJobPaused = false;
-    jobStartMs = 0;
-
-    // rewind file so the same file can be started again without re-opening
-    sdCardManager.closeFile();
-    sdCardManager.openGCodeFiletoRead(openedReadFileName);
-    jobLineIndex = 0;
-    // Keep the height map: the same file stays open, so the map stays valid for the next run. Only
-    // clear the "used" flag so compensation re-applies if this file is run again.
-    heightMapUsedForCurrentFile = false;
-    jobLineSeg.active = false;
-    jobArcSeg.active  = false;
-
-    if(debuggingSettings.debuggingJob) { serialManager.USBSerialPrintln("Reached end of opened SD card file, stopping job."); }
-    return;
-
-  }
 
   if(gcodeLineBuffer[0] != NULL_CHAR){
 
@@ -5532,51 +2168,8 @@ void handleJob(){
 
     }
 
-    // Spindle-start gate. A job can only reach this point with the lid open when the housing
-    // preference allows motion with the lid open and the spindle was off (otherwise the door
-    // interlock already paused). The file now wants the spindle ON: hold the line and pause
-    // instead of forwarding it. Continuing with a dead spindle would drive the tool into the
-    // material, so pausing — not skipping — is the safe answer. Closing the lid and resuming
-    // releases the held line and the spindle starts normally; resuming with the lid still
-    // open lands back here and pauses again.
-    if (isDoorInterlockActive() && lineCommandsSpindleOn(gcodeLineBuffer)) {
 
-      arrayUtil.clearCharArray(heldSpindleLineBuffer, LINE_BUFFER_CHARACTERS);
-      strncpy(heldSpindleLineBuffer, gcodeLineBuffer, LINE_BUFFER_CHARACTERS - 1);
-      heldSpindleLineIsJob = true;
-      isSpindleLineHeld = true;
 
-      pauseJobInternal(true);
-
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrint("Job paused, spindle start requested with the lid open: ");
-      serialManager.USBSerialPrintln(gcodeLineBuffer);
-
-      return;
-
-    }
-
-    if (handleSpindleRampCommand(gcodeLineBuffer, true)) {
-
-      // A held line is NOT counted here: it will be re-processed and counted
-      // when it is released after the ramp completes.
-      if (!(isSpindleLineHeld && heldSpindleLineIsJob))
-        ++jobLineIndex;
-
-      if(debuggingSettings.debuggingJob) { serialManager.USBSerialPrint("G-code line ramped instead of forwarded directly: "); }
-      if(debuggingSettings.debuggingJob) { serialManager.USBSerialPrintln(gcodeLineBuffer); }
-
-      return;
-    }
-
-    if (heightMapCompensationEnabled && heightMapReady) {
-      if (tryStartSegmentation(gcodeLineBuffer)) {
-        if(debuggingSettings.debuggingJob) { serialManager.USBSerialPrint("G-code line queued for segmentation: "); }
-        if(debuggingSettings.debuggingJob) { serialManager.USBSerialPrintln(gcodeLineBuffer); }
-        return;
-      }
-      applyHeightMapZToLine(gcodeLineBuffer, LINE_BUFFER_CHARACTERS);
-    }
 
     if(!evaluateAndApplySoftLimitsForOutgoingLine(gcodeLineBuffer)) {
       stopJobWithReset();
@@ -5942,1549 +2535,12 @@ void pushResumeCompletedEvent() {
 
 }
 
-void pushProbeZ0CompletedEvent(bool success) {
 
-  if (!jsonSettings.enableJsonResponse)
-    return;
 
-  InputSource savedSource = currentInputSource;
-  currentInputSource = probeZ0MacroInputSource;
 
-  clearResponseJsonBuffer();
-  responseJsonBuffer[JSON_KEY_TYPE_STR] = JSON_VALUE_EVENT_PROBE_Z0_COMPLETED_STR;
-  responseJsonBuffer[JSON_KEY_RESULT_STR] = success ? JSON_VALUE_RESULT_SUCCESS_STR : JSON_VALUE_RESULT_FAILURE_STR;
-  serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-  sendJsonResponse();
 
-  currentInputSource = savedSource;
-  isProbeZ0MacroRunning = false;
 
-}
 
-void pushProbeToolLengthCompletedEvent(bool success) {
-
-  if (!jsonSettings.enableJsonResponse)
-    return;
-
-  InputSource savedSource = currentInputSource;
-  currentInputSource = probeToolLengthMacroInputSource;
-
-  clearResponseJsonBuffer();
-  responseJsonBuffer[JSON_KEY_TYPE_STR] = JSON_VALUE_EVENT_PROBE_TOOL_LENGTH_COMPLETED_STR;
-  responseJsonBuffer[JSON_KEY_RESULT_STR] = success ? JSON_VALUE_RESULT_SUCCESS_STR : JSON_VALUE_RESULT_FAILURE_STR;
-  if (success)
-    responseJsonBuffer[JSON_KEY_TOOL_LENGTH_STR] = toolLength;
-  serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-  sendJsonResponse();
-
-  currentInputSource = savedSource;
-  isProbeToolLengthMacroRunning = false;
-  probeToolLengthZCaptured = false;
-
-}
-
-void pushLaserEdgeProbingCompletedEvent(bool success) {
-
-  InputSource savedSource = currentInputSource;
-
-  if (jsonSettings.enableJsonResponse) {
-    currentInputSource = laserEdgeProbeInputSource;
-
-    clearResponseJsonBuffer();
-    responseJsonBuffer[JSON_KEY_TYPE_STR] = JSON_VALUE_EVENT_LASER_EDGE_PROBING_COMPLETED_STR;
-    responseJsonBuffer[JSON_KEY_RESULT_STR] = success ? JSON_VALUE_RESULT_SUCCESS_STR : JSON_VALUE_RESULT_FAILURE_STR;
-    if (success) {
-      responseJsonBuffer[JSON_KEY_LASER_EDGE_X_MIN_STR] = laserEdgeProbeXNeg;
-      responseJsonBuffer[JSON_KEY_LASER_EDGE_Y_MIN_STR] = laserEdgeProbeYNeg;
-    }
-    serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-    sendJsonResponse();
-
-    currentInputSource = savedSource;
-  }
-
-  isLaserEdgeProbingActive = false;
-  isMacroRunning = false;
-  laserEdgeProbeSuppressAlarmAbort = false;
-  laserEdgeProbeWaitingForInitialUnlock = false;
-  laserEdgeProbeState = LASER_EDGE_PROBE_IDLE;
-  laserEdgeProbeSubState = LASER_EDGE_SUB_SEND;
-  laserEdgeProbeCurrentDir = PROBE_DIR_XNEG;
-  laserEdgeProbeFirstDir = PROBE_DIR_XNEG;
-  laserEdgeProbeSecondDir = PROBE_DIR_YNEG;
-  laserEdgeProbeXOffset = 0.0f;
-  laserEdgeProbeYOffset = 0.0f;
-  laserEdgeProbeXNeg = 0.0f;
-  laserEdgeProbeYNeg = 0.0f;
-  laserEdgeProbeTraveled = 0.0f;
-  laserEdgeProbeRoughEdge = 0.0f;
-  laserEdgeProbeBaselineSampleSum = 0.0f;
-  laserEdgeProbeReturnTargetX = 0.0f;
-  laserEdgeProbeReturnTargetY = 0.0f;
-  laserEdgeProbeSetOriginStep = 0;
-  laserEdgeProbeBaselineSampleCount = 0;
-  laserEdgeProbeReturnMotionObserved = false;
-  laserEdgeProbeRecoveryNeedsReset = false;
-
-}
-
-void pushLaserMaterialBoundsCompletedEvent(bool success) {
-
-  InputSource savedSource = currentInputSource;
-
-  if (jsonSettings.enableJsonResponse) {
-    currentInputSource = laserMaterialBoundsProbeInputSource;
-
-    clearResponseJsonBuffer();
-    responseJsonBuffer[JSON_KEY_TYPE_STR] = JSON_VALUE_EVENT_LASER_MATERIAL_BOUNDS_COMPLETED_STR;
-    responseJsonBuffer[JSON_KEY_RESULT_STR] = success ? JSON_VALUE_RESULT_SUCCESS_STR : JSON_VALUE_RESULT_FAILURE_STR;
-    if (success) {
-      lastDetectedMaterialCenterX = laserMaterialBoundsProbeCenterX;
-      lastDetectedMaterialCenterY = laserMaterialBoundsProbeCenterY;
-      hasLastDetectedMaterialCenter = true;
-      responseJsonBuffer[JSON_KEY_LASER_EDGE_X_MIN_STR] = laserMaterialBoundsProbeXMin;
-      responseJsonBuffer[JSON_KEY_LASER_EDGE_X_MAX_STR] = laserMaterialBoundsProbeXMax;
-      responseJsonBuffer[JSON_KEY_LASER_EDGE_Y_MIN_STR] = laserMaterialBoundsProbeYMin;
-      responseJsonBuffer[JSON_KEY_LASER_EDGE_Y_MAX_STR] = laserMaterialBoundsProbeYMax;
-      responseJsonBuffer[JSON_KEY_MATERIAL_CENTER_X_STR] = laserMaterialBoundsProbeCenterX;
-      responseJsonBuffer[JSON_KEY_MATERIAL_CENTER_Y_STR] = laserMaterialBoundsProbeCenterY;
-    } else {
-      if (laserMaterialBoundsProbeAbortStage != nullptr)
-        responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ABORT_STAGE_STR] = laserMaterialBoundsProbeAbortStage;
-      if (laserMaterialBoundsProbeAbortDetail != nullptr)
-        responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ABORT_DETAIL_STR] = laserMaterialBoundsProbeAbortDetail;
-    }
-    serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-    sendJsonResponse();
-
-    currentInputSource = savedSource;
-  }
-
-  isLaserMaterialBoundsProbingActive = false;
-  isMacroRunning = false;
-  laserMaterialBoundsProbeSuppressAlarmAbort = false;
-  laserMaterialBoundsProbeWaitingForInitialUnlock = false;
-  laserMaterialBoundsProbeState = LASER_MATERIAL_BOUNDS_PROBE_IDLE;
-  laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_SEND;
-  laserMaterialBoundsProbeCurrentDir = PROBE_DIR_XNEG;
-  laserMaterialBoundsProbeBaselineMm = 0.0f;
-  laserMaterialBoundsProbeStartX = 0.0f;
-  laserMaterialBoundsProbeStartY = 0.0f;
-  laserMaterialBoundsProbeXMin = 0.0f;
-  laserMaterialBoundsProbeXMax = 0.0f;
-  laserMaterialBoundsProbeYMin = 0.0f;
-  laserMaterialBoundsProbeYMax = 0.0f;
-  laserMaterialBoundsProbeRoughEdge = 0.0f;
-  laserMaterialBoundsProbeCoarseCurrentTarget = 0.0f;
-  laserMaterialBoundsProbeTraveled = 0.0f;
-  laserMaterialBoundsProbeCenterX = 0.0f;
-  laserMaterialBoundsProbeCenterY = 0.0f;
-  laserMaterialBoundsProbeReturnTargetX = 0.0f;
-  laserMaterialBoundsProbeReturnTargetY = 0.0f;
-  laserMaterialBoundsProbeBaselineSampleSum = 0.0f;
-  laserMaterialBoundsProbeBaselineSampleCount = 0;
-  laserMaterialBoundsProbeStepSentMs = 0;
-  laserMaterialBoundsProbeReturnMotionObserved = false;
-  laserMaterialBoundsProbeRecoveryNeedsReset = false;
-  laserMaterialBoundsProbeAbortStage = nullptr;
-  laserMaterialBoundsProbeAbortDetail = nullptr;
-
-}
-
-void abortLaserMaterialBoundsProbe(const char* stage, const char* detail) {
-
-  laserMaterialBoundsProbeAbortStage = stage;
-  laserMaterialBoundsProbeAbortDetail = detail;
-  pushLaserMaterialBoundsCompletedEvent(false);
-
-}
-
-void handleLaserMaterialBoundsProbing() {
-
-  if (!isLaserMaterialBoundsProbingActive)
-    return;
-
-  if (laserMaterialBoundsProbeWaitingForInitialUnlock) {
-    if (currentMachineState == ALARM)
-      return;
-    if (currentMachineState != IDLE)
-      return;
-    laserMaterialBoundsProbeWaitingForInitialUnlock = false;
-    laserMaterialBoundsProbeSuppressAlarmAbort = false;
-  }
-
-  if (currentMachineState == ALARM && !laserMaterialBoundsProbeSuppressAlarmAbort)
-    return;
-
-  char cmd[MACRO_LINE_BUFFER_CHARS];
-
-  switch (laserMaterialBoundsProbeState) {
-
-    case LASER_MATERIAL_BOUNDS_PROBE_COARSE_SCAN: {
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_SEND) {
-        if (waitForOk > 0) return;
-        if (currentMachineState != IDLE) return;
-        serialManager.CPUASerialPrintln("G90");
-        ++waitForOk;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_SEND_MOTION;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_SEND_MOTION) {
-        if (waitForOk > 0) return;
-        float dirSign = (laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XPOS || laserMaterialBoundsProbeCurrentDir == PROBE_DIR_YPOS) ? 1.0f : -1.0f;
-        bool isX = (laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XNEG ||
-                    laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XPOS);
-        float startAxis = isX ? laserMaterialBoundsProbeStartX : laserMaterialBoundsProbeStartY;
-        laserMaterialBoundsProbeCoarseCurrentTarget = startAxis + dirSign * LASER_EDGE_PROBE_COARSE_INCREMENT_MM;
-        laserMaterialBoundsProbeTraveled = LASER_EDGE_PROBE_COARSE_INCREMENT_MM;
-        if (isX)
-          snprintf(cmd, sizeof(cmd), "G1 X%.3f F%d", laserMaterialBoundsProbeCoarseCurrentTarget, LASER_EDGE_PROBE_COARSE_FEED_RATE_MM_MIN);
-        else
-          snprintf(cmd, sizeof(cmd), "G1 Y%.3f F%d", laserMaterialBoundsProbeCoarseCurrentTarget, LASER_EDGE_PROBE_COARSE_FEED_RATE_MM_MIN);
-        serialManager.CPUASerialPrintln(cmd);
-        ++waitForOk;
-        laserMaterialBoundsProbeStepSentMs = millis();
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_MONITOR;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_MONITOR) {
-        if (laserMaterialBoundsProbeTraveled <= LASER_EDGE_PROBE_COARSE_INCREMENT_MM &&
-            millis() - laserMaterialBoundsProbeStepSentMs < 400) return;
-
-        if (currentMachineState == IDLE) {
-          abortLaserMaterialBoundsProbe("COARSE_SCAN", "no_edge_in_range");
-          return;
-        }
-
-        if (currentMachineState != RUN) return;
-
-        bool isX = (laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XNEG ||
-                    laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XPOS);
-        float dirSign = (laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XPOS || laserMaterialBoundsProbeCurrentDir == PROBE_DIR_YPOS) ? 1.0f : -1.0f;
-
-        if (waitForOk == 0 && laserMaterialBoundsProbeTraveled < LASER_EDGE_PROBE_MAX_TRAVEL_MM) {
-          float currentAxisPos = isX ? currentJobPositionX : currentJobPositionY;
-          float distToTarget = fabsf(currentAxisPos - laserMaterialBoundsProbeCoarseCurrentTarget);
-          if (distToTarget <= LASER_EDGE_PROBE_COARSE_TRIGGER_RANGE_MM) {
-            laserMaterialBoundsProbeCoarseCurrentTarget += dirSign * LASER_EDGE_PROBE_COARSE_INCREMENT_MM;
-            laserMaterialBoundsProbeTraveled += LASER_EDGE_PROBE_COARSE_INCREMENT_MM;
-            if (isX)
-              snprintf(cmd, sizeof(cmd), "G1 X%.3f F%d", laserMaterialBoundsProbeCoarseCurrentTarget, LASER_EDGE_PROBE_COARSE_FEED_RATE_MM_MIN);
-            else
-              snprintf(cmd, sizeof(cmd), "G1 Y%.3f F%d", laserMaterialBoundsProbeCoarseCurrentTarget, LASER_EDGE_PROBE_COARSE_FEED_RATE_MM_MIN);
-            serialManager.CPUASerialPrintln(cmd);
-            ++waitForOk;
-          }
-        }
-
-        float distMm = 0.0f;
-        bool outOfRange = false;
-        bool readOk = readDistanceLaserMm(&distMm, &outOfRange);
-
-        bool edgeDetected = false;
-        if (!readOk && outOfRange) {
-          edgeDetected = true;
-        } else if (readOk) {
-          edgeDetected = fabsf(distMm - laserMaterialBoundsProbeBaselineMm) >= LASER_EDGE_PROBE_THRESHOLD_MM;
-        }
-
-        if (edgeDetected) {
-          serialManager.CPUASerialWrite(GRBL_HOLD);
-          laserMaterialBoundsProbeSuppressAlarmAbort = true;
-          laserMaterialBoundsProbeState = LASER_MATERIAL_BOUNDS_PROBE_COARSE_STOP;
-          laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_WAIT_HOLD;
-        }
-        return;
-      }
-
-      break;
-    }
-
-    case LASER_MATERIAL_BOUNDS_PROBE_COARSE_STOP: {
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_WAIT_HOLD) {
-        if (currentMachineState != HOLD && currentMachineState != IDLE) return;
-        if (currentFeedRate > 0) return;
-        switch (laserMaterialBoundsProbeCurrentDir) {
-          case PROBE_DIR_XNEG:
-          case PROBE_DIR_XPOS:
-            laserMaterialBoundsProbeRoughEdge = currentJobPositionX;
-            break;
-          case PROBE_DIR_YNEG:
-          case PROBE_DIR_YPOS:
-            laserMaterialBoundsProbeRoughEdge = currentJobPositionY;
-            break;
-          default:
-            abortLaserMaterialBoundsProbe("COARSE_STOP", "invalid_direction");
-            return;
-        }
-        laserMaterialBoundsProbeStepSentMs = millis();
-        laserMaterialBoundsProbeRecoveryNeedsReset = true;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_WAIT;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_WAIT) {
-        if (millis() - laserMaterialBoundsProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS) return;
-        serialManager.CPUASerialWrite(GRBL_STOP_RESET);
-        waitForOk = 0;
-        laserMaterialBoundsProbeRecoveryNeedsReset = false;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_WAIT_ALARM;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_WAIT_ALARM) {
-        if (currentMachineState == ALARM) {
-          serialManager.CPUASerialPrintln(GRBL_UNLOCK);
-          ++waitForOk;
-          laserMaterialBoundsProbeStepSentMs = 0;
-          laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_WAIT_IDLE;
-          return;
-        }
-        if (currentMachineState == IDLE) {
-          laserMaterialBoundsProbeStepSentMs = 0;
-          laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_WAIT_IDLE;
-          return;
-        }
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_WAIT_IDLE) {
-        if (waitForOk > 0) return;
-        if (currentMachineState != IDLE) {
-          laserMaterialBoundsProbeStepSentMs = 0;
-          return;
-        }
-        if (laserMaterialBoundsProbeStepSentMs == 0) {
-          laserMaterialBoundsProbeStepSentMs = millis();
-          return;
-        }
-        if (millis() - laserMaterialBoundsProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS) return;
-        laserMaterialBoundsProbeStepSentMs = 0;
-        laserMaterialBoundsProbeSuppressAlarmAbort = false;
-        laserMaterialBoundsProbeState = LASER_MATERIAL_BOUNDS_PROBE_RETURN_FINE;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_SEND;
-        return;
-      }
-
-      break;
-    }
-
-    case LASER_MATERIAL_BOUNDS_PROBE_RETURN_FINE: {
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_SEND) {
-        if (waitForOk > 0) return;
-        serialManager.CPUASerialPrintln("G90");
-        ++waitForOk;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_SEND_MOTION;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_SEND_MOTION) {
-        if (waitForOk > 0) return;
-        float fineStart = 0.0f;
-        switch (laserMaterialBoundsProbeCurrentDir) {
-          case PROBE_DIR_XNEG:
-            fineStart = laserMaterialBoundsProbeRoughEdge + LASER_EDGE_PROBE_FINE_BACKOFF_MM;
-            if (fineStart > laserMaterialBoundsProbeStartX) fineStart = laserMaterialBoundsProbeStartX;
-            laserMaterialBoundsProbeReturnTargetX = fineStart;
-            laserMaterialBoundsProbeReturnTargetY = currentJobPositionY;
-            snprintf(cmd, sizeof(cmd), "G1 X%.3f F%d", fineStart, LASER_EDGE_PROBE_RETURN_FEED_RATE_MM_MIN);
-            break;
-          case PROBE_DIR_XPOS:
-            fineStart = laserMaterialBoundsProbeRoughEdge - LASER_EDGE_PROBE_FINE_BACKOFF_MM;
-            if (fineStart < laserMaterialBoundsProbeStartX) fineStart = laserMaterialBoundsProbeStartX;
-            laserMaterialBoundsProbeReturnTargetX = fineStart;
-            laserMaterialBoundsProbeReturnTargetY = currentJobPositionY;
-            snprintf(cmd, sizeof(cmd), "G1 X%.3f F%d", fineStart, LASER_EDGE_PROBE_RETURN_FEED_RATE_MM_MIN);
-            break;
-          case PROBE_DIR_YNEG:
-            fineStart = laserMaterialBoundsProbeRoughEdge + LASER_EDGE_PROBE_FINE_BACKOFF_MM;
-            if (fineStart > laserMaterialBoundsProbeStartY) fineStart = laserMaterialBoundsProbeStartY;
-            laserMaterialBoundsProbeReturnTargetX = currentJobPositionX;
-            laserMaterialBoundsProbeReturnTargetY = fineStart;
-            snprintf(cmd, sizeof(cmd), "G1 Y%.3f F%d", fineStart, LASER_EDGE_PROBE_RETURN_FEED_RATE_MM_MIN);
-            break;
-          case PROBE_DIR_YPOS:
-            fineStart = laserMaterialBoundsProbeRoughEdge - LASER_EDGE_PROBE_FINE_BACKOFF_MM;
-            if (fineStart < laserMaterialBoundsProbeStartY) fineStart = laserMaterialBoundsProbeStartY;
-            laserMaterialBoundsProbeReturnTargetX = currentJobPositionX;
-            laserMaterialBoundsProbeReturnTargetY = fineStart;
-            snprintf(cmd, sizeof(cmd), "G1 Y%.3f F%d", fineStart, LASER_EDGE_PROBE_RETURN_FEED_RATE_MM_MIN);
-            break;
-        }
-        laserMaterialBoundsProbeReturnMotionObserved = false;
-        laserMaterialBoundsProbeStepSentMs = 0;
-        serialManager.CPUASerialPrintln(cmd);
-        ++waitForOk;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_WAIT;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_WAIT) {
-        if (waitForOk > 0) return;
-        bool isX = (laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XNEG ||
-                    laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XPOS);
-        float currentAxis = isX ? currentJobPositionX : currentJobPositionY;
-        float targetAxis = isX ? laserMaterialBoundsProbeReturnTargetX : laserMaterialBoundsProbeReturnTargetY;
-        if (!laserMaterialBoundsProbeReturnMotionObserved) {
-          if (currentMachineState == RUN || fabsf(currentAxis - targetAxis) <= 0.25f) {
-            laserMaterialBoundsProbeReturnMotionObserved = true;
-          } else {
-            return;
-          }
-        }
-        if (currentMachineState != IDLE) {
-          laserMaterialBoundsProbeStepSentMs = 0;
-          return;
-        }
-        if (fabsf(currentAxis - targetAxis) > 0.25f) return;
-        if (laserMaterialBoundsProbeStepSentMs == 0) {
-          laserMaterialBoundsProbeStepSentMs = millis();
-          return;
-        }
-        if (millis() - laserMaterialBoundsProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS) return;
-        laserMaterialBoundsProbeStepSentMs = 0;
-        laserMaterialBoundsProbeState = LASER_MATERIAL_BOUNDS_PROBE_FINE_SCAN;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_SEND;
-        return;
-      }
-
-      break;
-    }
-
-    case LASER_MATERIAL_BOUNDS_PROBE_FINE_SCAN: {
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_SEND) {
-        if (waitForOk > 0) return;
-        serialManager.CPUASerialPrintln("G90");
-        ++waitForOk;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_SEND_MOTION;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_SEND_MOTION) {
-        if (waitForOk > 0) return;
-        float dirSign = (laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XPOS || laserMaterialBoundsProbeCurrentDir == PROBE_DIR_YPOS) ? 1.0f : -1.0f;
-        bool isX = (laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XNEG ||
-                    laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XPOS);
-        float fineEnd = laserMaterialBoundsProbeRoughEdge + dirSign * LASER_EDGE_PROBE_FINE_BACKOFF_MM;
-        if (isX)
-          snprintf(cmd, sizeof(cmd), "G1 X%.3f F%d", fineEnd, LASER_EDGE_PROBE_FINE_FEED_RATE_MM_MIN);
-        else
-          snprintf(cmd, sizeof(cmd), "G1 Y%.3f F%d", fineEnd, LASER_EDGE_PROBE_FINE_FEED_RATE_MM_MIN);
-        serialManager.CPUASerialPrintln(cmd);
-        ++waitForOk;
-        laserMaterialBoundsProbeStepSentMs = millis();
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_MONITOR;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_MONITOR) {
-        if (millis() - laserMaterialBoundsProbeStepSentMs < 200) return;
-
-        if (currentMachineState == IDLE) {
-          abortLaserMaterialBoundsProbe("FINE_SCAN", "no_edge_in_scan_range");
-          return;
-        }
-
-        if (currentMachineState != RUN) return;
-
-        float distMm = 0.0f;
-        bool outOfRange = false;
-        bool readOk = readDistanceLaserMm(&distMm, &outOfRange);
-
-        bool edgeDetected = false;
-        if (!readOk && outOfRange) {
-          edgeDetected = true;
-        } else if (!readOk) {
-          abortLaserMaterialBoundsProbe("FINE_SCAN", "sample_read_failed");
-          return;
-        } else {
-          edgeDetected = fabsf(distMm - laserMaterialBoundsProbeBaselineMm) >= LASER_EDGE_PROBE_THRESHOLD_MM;
-        }
-
-        if (edgeDetected) {
-          serialManager.CPUASerialWrite(GRBL_HOLD);
-          laserMaterialBoundsProbeSuppressAlarmAbort = true;
-          laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_WAIT_HOLD;
-        }
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_WAIT_HOLD) {
-        if (currentMachineState != HOLD && currentMachineState != IDLE) return;
-        if (currentFeedRate > 0) return;
-
-        float dirSign = (laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XPOS || laserMaterialBoundsProbeCurrentDir == PROBE_DIR_YPOS) ? 1.0f : -1.0f;
-        float captured = 0.0f;
-        switch (laserMaterialBoundsProbeCurrentDir) {
-          case PROBE_DIR_XNEG:
-            laserMaterialBoundsProbeXMin = currentJobPositionX - dirSign * LASER_EDGE_PROBE_EDGE_OFFSET_MM;
-            captured = laserMaterialBoundsProbeXMin;
-            break;
-          case PROBE_DIR_XPOS:
-            laserMaterialBoundsProbeXMax = currentJobPositionX - dirSign * LASER_EDGE_PROBE_EDGE_OFFSET_MM;
-            captured = laserMaterialBoundsProbeXMax;
-            break;
-          case PROBE_DIR_YNEG:
-            laserMaterialBoundsProbeYMin = currentJobPositionY - dirSign * LASER_EDGE_PROBE_EDGE_OFFSET_MM;
-            captured = laserMaterialBoundsProbeYMin;
-            break;
-          case PROBE_DIR_YPOS:
-            laserMaterialBoundsProbeYMax = currentJobPositionY - dirSign * LASER_EDGE_PROBE_EDGE_OFFSET_MM;
-            captured = laserMaterialBoundsProbeYMax;
-            break;
-        }
-        (void)captured;
-
-        laserMaterialBoundsProbeStepSentMs = millis();
-        laserMaterialBoundsProbeRecoveryNeedsReset = true;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_WAIT;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_WAIT) {
-        if (millis() - laserMaterialBoundsProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS) return;
-        serialManager.CPUASerialWrite(GRBL_STOP_RESET);
-        waitForOk = 0;
-        laserMaterialBoundsProbeRecoveryNeedsReset = false;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_WAIT_ALARM;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_WAIT_ALARM) {
-        if (currentMachineState == ALARM) {
-          serialManager.CPUASerialPrintln(GRBL_UNLOCK);
-          ++waitForOk;
-          laserMaterialBoundsProbeStepSentMs = 0;
-          laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_WAIT_IDLE;
-          return;
-        }
-        if (currentMachineState == IDLE) {
-          laserMaterialBoundsProbeStepSentMs = 0;
-          laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_WAIT_IDLE;
-          return;
-        }
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_WAIT_IDLE) {
-        if (waitForOk > 0) return;
-        if (currentMachineState != IDLE) {
-          laserMaterialBoundsProbeStepSentMs = 0;
-          return;
-        }
-        if (laserMaterialBoundsProbeStepSentMs == 0) {
-          laserMaterialBoundsProbeStepSentMs = millis();
-          return;
-        }
-        if (millis() - laserMaterialBoundsProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS) return;
-        laserMaterialBoundsProbeStepSentMs = 0;
-        laserMaterialBoundsProbeSuppressAlarmAbort = false;
-        laserMaterialBoundsProbeState = LASER_MATERIAL_BOUNDS_PROBE_FINE_RETURN;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_SEND;
-        return;
-      }
-
-      break;
-    }
-
-    case LASER_MATERIAL_BOUNDS_PROBE_FINE_RETURN: {
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_SEND) {
-        if (waitForOk > 0) return;
-        serialManager.CPUASerialPrintln("G90");
-        ++waitForOk;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_SEND_MOTION;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_SEND_MOTION) {
-        if (waitForOk > 0) return;
-        laserMaterialBoundsProbeReturnTargetX = laserMaterialBoundsProbeStartX;
-        laserMaterialBoundsProbeReturnTargetY = laserMaterialBoundsProbeStartY;
-        laserMaterialBoundsProbeReturnMotionObserved = false;
-        snprintf(cmd, sizeof(cmd), "G1 X%.3f Y%.3f F%d",
-                 laserMaterialBoundsProbeStartX, laserMaterialBoundsProbeStartY,
-                 LASER_EDGE_PROBE_FINE_RETURN_FEED_RATE_MM_MIN);
-        serialManager.CPUASerialPrintln(cmd);
-        ++waitForOk;
-        laserMaterialBoundsProbeStepSentMs = 0;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_READ;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_READ) {
-        if (waitForOk > 0) return;
-        if (currentMachineState == RUN)
-          laserMaterialBoundsProbeReturnMotionObserved = true;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_WAIT;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_WAIT) {
-        if (!laserMaterialBoundsProbeReturnMotionObserved) {
-          if (currentMachineState == RUN ||
-              (fabsf(currentJobPositionX - laserMaterialBoundsProbeReturnTargetX) <= 0.25f &&
-               fabsf(currentJobPositionY - laserMaterialBoundsProbeReturnTargetY) <= 0.25f)) {
-            laserMaterialBoundsProbeReturnMotionObserved = true;
-            laserMaterialBoundsProbeStepSentMs = 0;
-          } else {
-            return;
-          }
-        }
-        if (currentMachineState != IDLE) {
-          laserMaterialBoundsProbeStepSentMs = 0;
-          return;
-        }
-        if (fabsf(currentJobPositionX - laserMaterialBoundsProbeReturnTargetX) > 0.25f ||
-            fabsf(currentJobPositionY - laserMaterialBoundsProbeReturnTargetY) > 0.25f) return;
-        if (laserMaterialBoundsProbeStepSentMs == 0) {
-          laserMaterialBoundsProbeStepSentMs = millis();
-          return;
-        }
-        if (millis() - laserMaterialBoundsProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS) return;
-        laserMaterialBoundsProbeStepSentMs = 0;
-
-        if (laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XNEG) {
-          laserMaterialBoundsProbeCurrentDir = PROBE_DIR_XPOS;
-          laserMaterialBoundsProbeState = LASER_MATERIAL_BOUNDS_PROBE_COARSE_SCAN;
-        } else if (laserMaterialBoundsProbeCurrentDir == PROBE_DIR_XPOS) {
-          laserMaterialBoundsProbeCurrentDir = PROBE_DIR_YNEG;
-          laserMaterialBoundsProbeState = LASER_MATERIAL_BOUNDS_PROBE_AXIS_BASELINE;
-        } else if (laserMaterialBoundsProbeCurrentDir == PROBE_DIR_YNEG) {
-          laserMaterialBoundsProbeCurrentDir = PROBE_DIR_YPOS;
-          laserMaterialBoundsProbeState = LASER_MATERIAL_BOUNDS_PROBE_COARSE_SCAN;
-        } else if (laserMaterialBoundsProbeCurrentDir == PROBE_DIR_YPOS) {
-          laserMaterialBoundsProbeCenterX = (laserMaterialBoundsProbeXMin + laserMaterialBoundsProbeXMax) * 0.5f;
-          laserMaterialBoundsProbeCenterY = (laserMaterialBoundsProbeYMin + laserMaterialBoundsProbeYMax) * 0.5f;
-          laserMaterialBoundsProbeState = LASER_MATERIAL_BOUNDS_PROBE_CENTER_MOVE;
-        } else {
-          abortLaserMaterialBoundsProbe("FINE_RETURN", "invalid_direction");
-          return;
-        }
-        laserMaterialBoundsProbeTraveled = 0.0f;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_SEND;
-        return;
-      }
-
-      break;
-    }
-
-    case LASER_MATERIAL_BOUNDS_PROBE_AXIS_BASELINE: {
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_SEND) {
-        laserMaterialBoundsProbeBaselineSampleSum = 0.0f;
-        laserMaterialBoundsProbeBaselineSampleCount = 0;
-        laserMaterialBoundsProbeStepSentMs = millis();
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_WAIT;
-        return;
-      }
-
-      if (laserMaterialBoundsProbeSubState == LASER_EDGE_SUB_WAIT) {
-        if (millis() - laserMaterialBoundsProbeStepSentMs < 75) return;
-
-        float baselineMm = 0.0f;
-        bool outOfRange = false;
-        bool readOk = readDistanceLaserMm(&baselineMm, &outOfRange);
-
-        if (!readOk) {
-          abortLaserMaterialBoundsProbe("AXIS_BASELINE", outOfRange ? "baseline_out_of_range" : "baseline_read_failed");
-          return;
-        }
-
-        laserMaterialBoundsProbeBaselineSampleSum += baselineMm;
-        ++laserMaterialBoundsProbeBaselineSampleCount;
-
-        if (laserMaterialBoundsProbeBaselineSampleCount < 3) {
-          laserMaterialBoundsProbeStepSentMs = millis();
-          return;
-        }
-
-        laserMaterialBoundsProbeBaselineMm = laserMaterialBoundsProbeBaselineSampleSum / laserMaterialBoundsProbeBaselineSampleCount;
-        laserMaterialBoundsProbeState = LASER_MATERIAL_BOUNDS_PROBE_COARSE_SCAN;
-        laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_SEND;
-        return;
-      }
-
-      break;
-    }
-
-    case LASER_MATERIAL_BOUNDS_PROBE_CENTER_MOVE: {
-
-      if (waitForOk > 0)
-        return;
-      if (currentMachineState != IDLE)
-        return;
-
-      serialManager.CPUASerialPrintln("G90");
-      ++waitForOk;
-      snprintf(cmd, sizeof(cmd), "G1 X%.3f Y%.3f F%d", laserMaterialBoundsProbeCenterX, laserMaterialBoundsProbeCenterY, LASER_EDGE_PROBE_FINE_RETURN_FEED_RATE_MM_MIN);
-      serialManager.CPUASerialPrintln(cmd);
-      ++waitForOk;
-      laserMaterialBoundsProbeReturnTargetX = laserMaterialBoundsProbeCenterX;
-      laserMaterialBoundsProbeReturnTargetY = laserMaterialBoundsProbeCenterY;
-      laserMaterialBoundsProbeReturnMotionObserved = false;
-      laserMaterialBoundsProbeState = LASER_MATERIAL_BOUNDS_PROBE_WAIT_CENTER;
-      laserMaterialBoundsProbeStepSentMs = millis();
-      return;
-    }
-
-    case LASER_MATERIAL_BOUNDS_PROBE_WAIT_CENTER: {
-
-      if (waitForOk > 0)
-        return;
-
-      if (!laserMaterialBoundsProbeReturnMotionObserved) {
-        if (currentMachineState == RUN ||
-            (fabsf(currentJobPositionX - laserMaterialBoundsProbeReturnTargetX) <= 0.25f &&
-             fabsf(currentJobPositionY - laserMaterialBoundsProbeReturnTargetY) <= 0.25f)) {
-          laserMaterialBoundsProbeReturnMotionObserved = true;
-          laserMaterialBoundsProbeStepSentMs = 0;
-        } else {
-          return;
-        }
-      }
-
-      if (currentMachineState != IDLE) {
-        laserMaterialBoundsProbeStepSentMs = 0;
-        return;
-      }
-
-      if (fabsf(currentJobPositionX - laserMaterialBoundsProbeReturnTargetX) > 0.25f ||
-          fabsf(currentJobPositionY - laserMaterialBoundsProbeReturnTargetY) > 0.25f)
-        return;
-
-      if (laserMaterialBoundsProbeStepSentMs == 0) {
-        laserMaterialBoundsProbeStepSentMs = millis();
-        return;
-      }
-
-      if (millis() - laserMaterialBoundsProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS)
-        return;
-
-      pushLaserMaterialBoundsCompletedEvent(true);
-      return;
-    }
-
-    default:
-      break;
-  }
-
-}
-
-void handleLaserEdgeProbing() {
-
-  if (!isLaserEdgeProbingActive) return;
-
-  if (laserEdgeProbeWaitingForInitialUnlock) {
-    if (currentMachineState == ALARM)
-      return;
-    if (currentMachineState != IDLE)
-      return;
-    laserEdgeProbeWaitingForInitialUnlock = false;
-    laserEdgeProbeSuppressAlarmAbort = false;
-  }
-
-  // When laserEdgeProbeSuppressAlarmAbort is set we intentionally caused an ALARM
-  // as part of the coarse-stop sequence — keep running in that case.
-  if (currentMachineState == ALARM && !laserEdgeProbeSuppressAlarmAbort) return;
-
-  char cmd[MACRO_LINE_BUFFER_CHARS];
-
-  switch (laserEdgeProbeState) {
-
-    // ── COARSE SCAN ────────────────────────────────────────────────────────────
-    // Stream absolute G90 increments (5 mm each at 200 mm/min).  The next increment
-    // is queued as soon as the machine is within TRIGGER_RANGE of the current target
-    // and all previous ok's have been received.  On edge detection a feed hold ('!')
-    // is sent; the rough edge is captured from the HOLD position in COARSE_STOP.
-    case LASER_EDGE_PROBE_COARSE_SCAN: {
-
-      // ── SEND: set G90 absolute mode ─────────────────────────────────────────
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_SEND) {
-        if (waitForOk > 0) return;
-        if (currentMachineState != IDLE) return;
-        serialManager.CPUASerialPrintln("G90");
-        ++waitForOk;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_SEND_MOTION;
-        return;
-      }
-
-      // ── SEND_MOTION: send the first absolute increment ───────────────────────
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_SEND_MOTION) {
-        if (waitForOk > 0) return;
-        float dirSign = (laserEdgeProbeCurrentDir == PROBE_DIR_XPOS || laserEdgeProbeCurrentDir == PROBE_DIR_YPOS) ? 1.0f : -1.0f;
-        bool isX = (laserEdgeProbeCurrentDir == PROBE_DIR_XNEG ||
-                    laserEdgeProbeCurrentDir == PROBE_DIR_XPOS);
-        float startAxis = isX ? laserEdgeProbeStartX : laserEdgeProbeStartY;
-        laserEdgeProbeCoarseCurrentTarget = startAxis + dirSign * LASER_EDGE_PROBE_COARSE_INCREMENT_MM;
-        laserEdgeProbeTraveled = LASER_EDGE_PROBE_COARSE_INCREMENT_MM;
-        if (isX)
-          snprintf(cmd, sizeof(cmd), "G1 X%.3f F%d", laserEdgeProbeCoarseCurrentTarget, LASER_EDGE_PROBE_COARSE_FEED_RATE_MM_MIN);
-        else
-          snprintf(cmd, sizeof(cmd), "G1 Y%.3f F%d", laserEdgeProbeCoarseCurrentTarget, LASER_EDGE_PROBE_COARSE_FEED_RATE_MM_MIN);
-        serialManager.CPUASerialPrintln(cmd);
-        ++waitForOk;
-        laserEdgeProbeStepSentMs = millis();
-        laserEdgeProbeSubState = LASER_EDGE_SUB_MONITOR;
-        return;
-      }
-
-      // ── MONITOR: streaming loop + edge detection ─────────────────────────────
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_MONITOR) {
-        // Guard: give the machine at least 400 ms to start on the first increment
-        if (laserEdgeProbeTraveled <= LASER_EDGE_PROBE_COARSE_INCREMENT_MM &&
-            millis() - laserEdgeProbeStepSentMs < 400) return;
-
-        // All queued increments finished without finding an edge → fail
-        if (currentMachineState == IDLE) {
-          pushLaserEdgeProbingCompletedEvent(false);
-          return;
-        }
-
-        if (currentMachineState != RUN) return; // wait until machine is moving
-
-        bool isX = (laserEdgeProbeCurrentDir == PROBE_DIR_XNEG ||
-                    laserEdgeProbeCurrentDir == PROBE_DIR_XPOS);
-        float dirSign = (laserEdgeProbeCurrentDir == PROBE_DIR_XPOS || laserEdgeProbeCurrentDir == PROBE_DIR_YPOS) ? 1.0f : -1.0f;
-
-        // ── Stream next increment when close to current target and buffer is free ──
-        if (waitForOk == 0 &&
-            laserEdgeProbeTraveled < LASER_EDGE_PROBE_MAX_TRAVEL_MM) {
-          float currentAxisPos = isX ? currentJobPositionX : currentJobPositionY;
-          float distToTarget = fabsf(currentAxisPos - laserEdgeProbeCoarseCurrentTarget);
-          if (distToTarget <= LASER_EDGE_PROBE_COARSE_TRIGGER_RANGE_MM) {
-            laserEdgeProbeCoarseCurrentTarget += dirSign * LASER_EDGE_PROBE_COARSE_INCREMENT_MM;
-            laserEdgeProbeTraveled            += LASER_EDGE_PROBE_COARSE_INCREMENT_MM;
-            if (isX)
-              snprintf(cmd, sizeof(cmd), "G1 X%.3f F%d", laserEdgeProbeCoarseCurrentTarget, LASER_EDGE_PROBE_COARSE_FEED_RATE_MM_MIN);
-            else
-              snprintf(cmd, sizeof(cmd), "G1 Y%.3f F%d", laserEdgeProbeCoarseCurrentTarget, LASER_EDGE_PROBE_COARSE_FEED_RATE_MM_MIN);
-            serialManager.CPUASerialPrintln(cmd);
-            ++waitForOk;
-          }
-        }
-
-        // ── Read laser and detect edge ───────────────────────────────────────────
-        float distMm  = 0.0f;
-        bool outOfRange = false;
-        bool readOk = readDistanceLaserMm(&distMm, &outOfRange);
-
-        bool edgeDetected = false;
-        if (!readOk && outOfRange) {
-          edgeDetected = true; // laser sees past the block edge
-        } else if (readOk) {
-          edgeDetected = fabsf(distMm - laserEdgeProbeBaselineMm) >= LASER_EDGE_PROBE_THRESHOLD_MM;
-        }
-        // readOk==false && !outOfRange → sensor comm error, skip sample
-
-        if (edgeDetected) {
-          if (debuggingSettings.debuggingMacroBuffer) {
-            char dbg[80];
-            snprintf(dbg, sizeof(dbg), "[LaserProbe] COARSE edge dir=%d dist=%.3f",
-                     (int)laserEdgeProbeCurrentDir, distMm);
-            serialManager.USBSerialPrintln(dbg);
-          }
-          // Rough edge position will be captured from the HOLD status in COARSE_STOP
-          serialManager.CPUASerialWrite(GRBL_HOLD);
-          laserEdgeProbeSuppressAlarmAbort = true;
-          laserEdgeProbeState    = LASER_EDGE_PROBE_COARSE_STOP;
-          laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT_HOLD;
-        }
-        return;
-      }
-
-      break;
-    }
-
-    // ── COARSE STOP ────────────────────────────────────────────────────────────
-    // Feed hold was sent on edge detection.  Wait for HOLD, capture rough edge
-    // from the stopped position, then soft-reset and unlock before continuing.
-    case LASER_EDGE_PROBE_COARSE_STOP: {
-
-      // Wait for machine to fully stop → record rough edge position.
-      // After feed-hold GRBL may report HOLD while decelerating, or it may
-      // already be back in IDLE by the next poll. Accept either stopped state
-      // once the feed reaches zero, then always force the reset/unlock recovery
-      // path so coarse recovery does not depend on which status sample arrived
-      // first.
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_WAIT_HOLD) {
-        if (currentMachineState != HOLD && currentMachineState != IDLE) return;
-        if (currentFeedRate > 0) return;
-        switch (laserEdgeProbeCurrentDir) {
-          case PROBE_DIR_XNEG:
-          case PROBE_DIR_XPOS: laserEdgeProbeRoughEdge = currentJobPositionX; break;
-          case PROBE_DIR_YNEG:
-          case PROBE_DIR_YPOS: laserEdgeProbeRoughEdge = currentJobPositionY; break;
-          default:
-            pushLaserEdgeProbingCompletedEvent(false);
-            return;
-        }
-        if (debuggingSettings.debuggingMacroBuffer) {
-          char dbg[120];
-          snprintf(dbg, sizeof(dbg),
-                   "[LaserProbe] COARSE HOLD state=%d feed=%ld rough=%.3f dir=%d",
-                   (int)currentMachineState, currentFeedRate,
-                   laserEdgeProbeRoughEdge, (int)laserEdgeProbeCurrentDir);
-          serialManager.USBSerialPrintln(dbg);
-        }
-        laserEdgeProbeStepSentMs = millis();
-        laserEdgeProbeRecoveryNeedsReset = true;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT;
-        return;
-      }
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_WAIT) {
-        if (millis() - laserEdgeProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS) return;
-        if (debuggingSettings.debuggingMacroBuffer) {
-          char dbg[100];
-          snprintf(dbg, sizeof(dbg),
-                   "[LaserProbe] COARSE RESET dir=%d after %lu ms",
-                   (int)laserEdgeProbeCurrentDir,
-                   (unsigned long)(millis() - laserEdgeProbeStepSentMs));
-          serialManager.USBSerialPrintln(dbg);
-        }
-        serialManager.CPUASerialWrite(GRBL_STOP_RESET);
-        waitForOk = 0;
-        laserEdgeProbeRecoveryNeedsReset = false;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT_ALARM;
-        return;
-      }
-
-      // After reset some controllers report ALARM and require $X, while others
-      // return directly to IDLE. Accept either recovery path.
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_WAIT_ALARM) {
-        if (currentMachineState == ALARM) {
-          if (debuggingSettings.debuggingMacroBuffer) {
-            char dbg[80];
-            snprintf(dbg, sizeof(dbg), "[LaserProbe] COARSE ALARM dir=%d sending $X",
-                     (int)laserEdgeProbeCurrentDir);
-            serialManager.USBSerialPrintln(dbg);
-          }
-          serialManager.CPUASerialPrintln(GRBL_UNLOCK);
-          ++waitForOk;
-          laserEdgeProbeStepSentMs = 0;
-          laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT_IDLE;
-          return;
-        }
-        if (currentMachineState == IDLE) {
-          if (debuggingSettings.debuggingMacroBuffer) {
-            char dbg[80];
-            snprintf(dbg, sizeof(dbg), "[LaserProbe] COARSE RESET dir=%d already IDLE",
-                     (int)laserEdgeProbeCurrentDir);
-            serialManager.USBSerialPrintln(dbg);
-          }
-          laserEdgeProbeStepSentMs = 0;
-          laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT_IDLE;
-          return;
-        }
-        return;
-      }
-
-      // Wait for IDLE → clear alarm suppression flag, proceed to fine scan
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_WAIT_IDLE) {
-        if (waitForOk > 0) return;
-        if (currentMachineState != IDLE) {
-          laserEdgeProbeStepSentMs = 0;
-          return;
-        }
-        if (laserEdgeProbeStepSentMs == 0) {
-          laserEdgeProbeStepSentMs = millis();
-          return;
-        }
-        if (millis() - laserEdgeProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS) return;
-        laserEdgeProbeStepSentMs = 0;
-        if (debuggingSettings.debuggingMacroBuffer) {
-          char dbg[80];
-          snprintf(dbg, sizeof(dbg), "[LaserProbe] COARSE IDLE dir=%d -> RETURN_FINE",
-                   (int)laserEdgeProbeCurrentDir);
-          serialManager.USBSerialPrintln(dbg);
-        }
-        laserEdgeProbeSuppressAlarmAbort = false;
-        laserEdgeProbeState    = LASER_EDGE_PROBE_RETURN_FINE;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_SEND;
-        return;
-      }
-
-      break;
-    }
-
-    // ── RETURN TO FINE-SCAN START ──────────────────────────────────────────────
-    // Move BACKOFF mm to the safe side of the rough edge (absolute G90 move).
-    // All positions are in work (job) coordinates.
-    case LASER_EDGE_PROBE_RETURN_FINE: {
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_SEND) {
-        if (waitForOk > 0) return;
-        // Set absolute mode as a separate command
-        serialManager.CPUASerialPrintln("G90");
-        ++waitForOk;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_SEND_MOTION;
-        return;
-      }
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_SEND_MOTION) {
-        if (waitForOk > 0) return;
-        // Approach from the side opposite to the scan direction.
-        // Clamp fineStart so it never overshoots startX/Y: the start position is
-        // guaranteed to be over the workpiece surface (the baseline was valid there),
-        // so starting the fine scan from beyond startX/Y would put the laser off the
-        // workpiece and cause an immediate false out-of-range detection.
-        float fineStart = 0.0f;
-        switch (laserEdgeProbeCurrentDir) {
-          case PROBE_DIR_XNEG:
-            fineStart = laserEdgeProbeRoughEdge + LASER_EDGE_PROBE_FINE_BACKOFF_MM;
-            if (fineStart > laserEdgeProbeStartX) fineStart = laserEdgeProbeStartX;
-            laserEdgeProbeReturnTargetX = fineStart;
-            laserEdgeProbeReturnTargetY = currentJobPositionY;
-            snprintf(cmd, sizeof(cmd), "G1 X%.3f F%d", fineStart, LASER_EDGE_PROBE_RETURN_FEED_RATE_MM_MIN);
-            break;
-          case PROBE_DIR_XPOS:
-            fineStart = laserEdgeProbeRoughEdge - LASER_EDGE_PROBE_FINE_BACKOFF_MM;
-            if (fineStart < laserEdgeProbeStartX) fineStart = laserEdgeProbeStartX;
-            laserEdgeProbeReturnTargetX = fineStart;
-            laserEdgeProbeReturnTargetY = currentJobPositionY;
-            snprintf(cmd, sizeof(cmd), "G1 X%.3f F%d", fineStart, LASER_EDGE_PROBE_RETURN_FEED_RATE_MM_MIN);
-            break;
-          case PROBE_DIR_YNEG:
-            fineStart = laserEdgeProbeRoughEdge + LASER_EDGE_PROBE_FINE_BACKOFF_MM;
-            if (fineStart > laserEdgeProbeStartY) fineStart = laserEdgeProbeStartY;
-            laserEdgeProbeReturnTargetX = currentJobPositionX;
-            laserEdgeProbeReturnTargetY = fineStart;
-            snprintf(cmd, sizeof(cmd), "G1 Y%.3f F%d", fineStart, LASER_EDGE_PROBE_RETURN_FEED_RATE_MM_MIN);
-            break;
-          case PROBE_DIR_YPOS:
-            fineStart = laserEdgeProbeRoughEdge - LASER_EDGE_PROBE_FINE_BACKOFF_MM;
-            if (fineStart < laserEdgeProbeStartY) fineStart = laserEdgeProbeStartY;
-            laserEdgeProbeReturnTargetX = currentJobPositionX;
-            laserEdgeProbeReturnTargetY = fineStart;
-            snprintf(cmd, sizeof(cmd), "G1 Y%.3f F%d", fineStart, LASER_EDGE_PROBE_RETURN_FEED_RATE_MM_MIN);
-            break;
-          default:
-            pushLaserEdgeProbingCompletedEvent(false);
-            return;
-        }
-        laserEdgeProbeReturnMotionObserved = false;
-        laserEdgeProbeStepSentMs = 0;
-        serialManager.CPUASerialPrintln(cmd);
-        ++waitForOk;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT;
-        return;
-      }
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_WAIT) {
-        if (waitForOk > 0) return;
-        bool isX = (laserEdgeProbeCurrentDir == PROBE_DIR_XNEG ||
-                    laserEdgeProbeCurrentDir == PROBE_DIR_XPOS);
-        float currentAxis = isX ? currentJobPositionX : currentJobPositionY;
-        float targetAxis = isX ? laserEdgeProbeReturnTargetX : laserEdgeProbeReturnTargetY;
-        if (!laserEdgeProbeReturnMotionObserved) {
-          if (currentMachineState == RUN || fabsf(currentAxis - targetAxis) <= 0.25f) {
-            laserEdgeProbeReturnMotionObserved = true;
-          } else {
-            return;
-          }
-        }
-        if (currentMachineState != IDLE) {
-          laserEdgeProbeStepSentMs = 0;
-          return;
-        }
-        if (fabsf(currentAxis - targetAxis) > 0.25f) return;
-        if (laserEdgeProbeStepSentMs == 0) {
-          laserEdgeProbeStepSentMs = millis();
-          return;
-        }
-        if (millis() - laserEdgeProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS) return;
-        laserEdgeProbeStepSentMs = 0;
-        laserEdgeProbeTraveled = 0.0f;
-        laserEdgeProbeState = LASER_EDGE_PROBE_FINE_SCAN;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_SEND;
-        return;
-      }
-
-      break;
-    }
-
-    // ── FINE SCAN ──────────────────────────────────────────────────────────────
-    // Single continuous slow G90 pass through the edge zone at 75 mm/min.
-    // Edge is detected in motion; a feed hold stops the machine.  The position
-    // captured at HOLD is corrected by LASER_EDGE_PROBE_EDGE_OFFSET_MM (applied
-    // against the scan direction) to yield the calibrated edge coordinate.
-    case LASER_EDGE_PROBE_FINE_SCAN: {
-
-      // ── SEND: set G90 absolute mode ─────────────────────────────────────────
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_SEND) {
-        if (waitForOk > 0) return;
-        serialManager.CPUASerialPrintln("G90");
-        ++waitForOk;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_SEND_MOTION;
-        return;
-      }
-
-      // ── SEND_MOTION: move slowly through the full fine-scan zone ────────────
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_SEND_MOTION) {
-        if (waitForOk > 0) return;
-        float dirSign = (laserEdgeProbeCurrentDir == PROBE_DIR_XPOS || laserEdgeProbeCurrentDir == PROBE_DIR_YPOS) ? 1.0f : -1.0f;
-        bool isX = (laserEdgeProbeCurrentDir == PROBE_DIR_XNEG ||
-                    laserEdgeProbeCurrentDir == PROBE_DIR_XPOS);
-        // Scan target: roughEdge + BACKOFF in the scan direction (scan well past expected edge)
-        float fineEnd = laserEdgeProbeRoughEdge + dirSign * LASER_EDGE_PROBE_FINE_BACKOFF_MM;
-        if (isX)
-          snprintf(cmd, sizeof(cmd), "G1 X%.3f F%d", fineEnd, LASER_EDGE_PROBE_FINE_FEED_RATE_MM_MIN);
-        else
-          snprintf(cmd, sizeof(cmd), "G1 Y%.3f F%d", fineEnd, LASER_EDGE_PROBE_FINE_FEED_RATE_MM_MIN);
-        serialManager.CPUASerialPrintln(cmd);
-        ++waitForOk;
-        laserEdgeProbeStepSentMs = millis();
-        laserEdgeProbeSubState = LASER_EDGE_SUB_MONITOR;
-        return;
-      }
-
-      // ── MONITOR: read laser continuously while moving ────────────────────────
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_MONITOR) {
-        // Give machine 200 ms to start moving
-        if (millis() - laserEdgeProbeStepSentMs < 200) return;
-
-        // Full fine-scan move finished without detecting edge → fail
-        if (currentMachineState == IDLE) {
-          if (debuggingSettings.debuggingMacroBuffer) {
-            char dbg[80];
-            snprintf(dbg, sizeof(dbg), "[LaserProbe] FINE FAIL dir=%d no edge in scan range",
-                     (int)laserEdgeProbeCurrentDir);
-            serialManager.USBSerialPrintln(dbg);
-          }
-          pushLaserEdgeProbingCompletedEvent(false);
-          return;
-        }
-
-        if (currentMachineState != RUN) return;
-
-        float distMm  = 0.0f;
-        bool outOfRange = false;
-        bool readOk = readDistanceLaserMm(&distMm, &outOfRange);
-
-        bool edgeDetected = false;
-        if (!readOk && outOfRange) {
-          edgeDetected = true;
-        } else if (!readOk) {
-          pushLaserEdgeProbingCompletedEvent(false); // sensor comm error
-          return;
-        } else {
-          edgeDetected = fabsf(distMm - laserEdgeProbeBaselineMm) >= LASER_EDGE_PROBE_THRESHOLD_MM;
-        }
-
-        if (edgeDetected) {
-          if (debuggingSettings.debuggingMacroBuffer) {
-            char dbg[100];
-            snprintf(dbg, sizeof(dbg),
-                     "[LaserProbe] FINE DETECT dir=%d dist=%.3f base=%.3f delta=%.3f OOR=%d",
-                     (int)laserEdgeProbeCurrentDir, distMm, laserEdgeProbeBaselineMm,
-                     fabsf(distMm - laserEdgeProbeBaselineMm), (int)outOfRange);
-            serialManager.USBSerialPrintln(dbg);
-          }
-          serialManager.CPUASerialWrite(GRBL_HOLD);
-          laserEdgeProbeSuppressAlarmAbort = true;
-          laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT_HOLD;
-        }
-        return;
-      }
-
-      // ── WAIT_HOLD: machine fully stopped → capture edge + apply calibration offset ─
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_WAIT_HOLD) {
-        if (currentMachineState != HOLD && currentMachineState != IDLE) return;
-        if (currentFeedRate > 0) return;
-        // The machine overshot the actual edge by the braking distance.
-        // Subtract offset in the scan direction to recover the true edge position.
-        float dirSign = (laserEdgeProbeCurrentDir == PROBE_DIR_XPOS || laserEdgeProbeCurrentDir == PROBE_DIR_YPOS) ? 1.0f : -1.0f;
-        float captured = 0.0f;
-        const char* dirName = nullptr;
-        switch (laserEdgeProbeCurrentDir) {
-          case PROBE_DIR_XNEG:
-          case PROBE_DIR_XPOS:
-            laserEdgeProbeXNeg = currentJobPositionX - dirSign * LASER_EDGE_PROBE_EDGE_OFFSET_MM;
-            captured = laserEdgeProbeXNeg;
-            dirName = "X";
-            break;
-          case PROBE_DIR_YNEG:
-          case PROBE_DIR_YPOS:
-            laserEdgeProbeYNeg = currentJobPositionY - dirSign * LASER_EDGE_PROBE_EDGE_OFFSET_MM;
-            captured = laserEdgeProbeYNeg;
-            dirName = "Y";
-            break;
-          default:
-            pushLaserEdgeProbingCompletedEvent(false);
-            return;
-        }
-        if (debuggingSettings.debuggingMacroBuffer) {
-          char dbg[120];
-          snprintf(dbg, sizeof(dbg),
-                   "[LaserProbe] FINE HOLD state=%d feed=%ld %s=%.3f",
-                   (int)currentMachineState, currentFeedRate, dirName, captured);
-          serialManager.USBSerialPrintln(dbg);
-        }
-        laserEdgeProbeStepSentMs = millis();
-        laserEdgeProbeRecoveryNeedsReset = true;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT;
-        return;
-      }
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_WAIT) {
-        if (millis() - laserEdgeProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS) return;
-        if (debuggingSettings.debuggingMacroBuffer) {
-          char dbg[100];
-          snprintf(dbg, sizeof(dbg),
-                   "[LaserProbe] FINE RESET dir=%d after %lu ms",
-                   (int)laserEdgeProbeCurrentDir,
-                   (unsigned long)(millis() - laserEdgeProbeStepSentMs));
-          serialManager.USBSerialPrintln(dbg);
-        }
-        serialManager.CPUASerialWrite(GRBL_STOP_RESET);
-        waitForOk = 0;
-        laserEdgeProbeRecoveryNeedsReset = false;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT_ALARM;
-        return;
-      }
-
-      // ── WAIT_ALARM: some controllers go ALARM->$X->IDLE, others reset
-      // directly to IDLE. Accept either path. ───────────────────────────────
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_WAIT_ALARM) {
-        if (currentMachineState == ALARM) {
-          if (debuggingSettings.debuggingMacroBuffer) {
-            char dbg[60];
-            snprintf(dbg, sizeof(dbg), "[LaserProbe] FINE ALARM dir=%d sending $X",
-                     (int)laserEdgeProbeCurrentDir);
-            serialManager.USBSerialPrintln(dbg);
-          }
-          serialManager.CPUASerialPrintln(GRBL_UNLOCK);
-          ++waitForOk;
-          laserEdgeProbeStepSentMs = 0;
-          laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT_IDLE;
-          return;
-        }
-        if (currentMachineState == IDLE) {
-          if (debuggingSettings.debuggingMacroBuffer) {
-            char dbg[60];
-            snprintf(dbg, sizeof(dbg), "[LaserProbe] FINE RESET dir=%d already IDLE",
-                     (int)laserEdgeProbeCurrentDir);
-            serialManager.USBSerialPrintln(dbg);
-          }
-          laserEdgeProbeStepSentMs = 0;
-          laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT_IDLE;
-          return;
-        }
-        return;
-      }
-
-      // ── WAIT_IDLE → clear flag and advance to the next phase ───────────────
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_WAIT_IDLE) {
-        if (waitForOk > 0) return;
-        if (currentMachineState != IDLE) {
-          laserEdgeProbeStepSentMs = 0;
-          return;
-        }
-        if (laserEdgeProbeStepSentMs == 0) {
-          laserEdgeProbeStepSentMs = millis();
-          return;
-        }
-        if (millis() - laserEdgeProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS) return;
-        laserEdgeProbeStepSentMs = 0;
-        if (debuggingSettings.debuggingMacroBuffer) {
-          char dbg[60];
-          snprintf(dbg, sizeof(dbg), "[LaserProbe] FINE IDLE dir=%d -> %s",
-                   (int)laserEdgeProbeCurrentDir,
-                   (laserEdgeProbeCurrentDir == laserEdgeProbeSecondDir) ? "GO_CORNER" : "FINE_RETURN");
-          serialManager.USBSerialPrintln(dbg);
-        }
-        laserEdgeProbeSuppressAlarmAbort = false;
-        laserEdgeProbeState = (laserEdgeProbeCurrentDir == laserEdgeProbeSecondDir)
-          ? LASER_EDGE_PROBE_GO_CORNER
-          : LASER_EDGE_PROBE_FINE_RETURN;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_SEND;
-        return;
-      }
-
-      break;
-    }
-
-    // ── FINE RETURN ────────────────────────────────────────────────────────────
-    // Return to the full start position (startX, startY) at 750 mm/min before
-    // probing the next direction.  Both axes are restored in a single G1 move so
-    // that Y probing always begins from the correct origin regardless of any drift
-    // introduced by the previous direction's stop sequence.
-    case LASER_EDGE_PROBE_FINE_RETURN: {
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_SEND) {
-        if (waitForOk > 0) return;
-        // Ensure absolute mode before the return move (soft reset clears modal state).
-        serialManager.CPUASerialPrintln("G90");
-        ++waitForOk;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_SEND_MOTION;
-        return;
-      }
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_SEND_MOTION) {
-        if (waitForOk > 0) return;
-        // Return to work-coordinate start position.  Work coords are stable during
-        // probing — G10 only fires in SET_ORIGIN which is the very last step.
-        laserEdgeProbeReturnTargetX = laserEdgeProbeStartX;
-        laserEdgeProbeReturnTargetY = laserEdgeProbeStartY;
-        laserEdgeProbeReturnMotionObserved = false;
-        snprintf(cmd, sizeof(cmd), "G1 X%.3f Y%.3f F%d",
-                 laserEdgeProbeStartX, laserEdgeProbeStartY,
-                 LASER_EDGE_PROBE_FINE_RETURN_FEED_RATE_MM_MIN);
-        if (debuggingSettings.debuggingMacroBuffer) {
-          char dbg[80];
-          snprintf(dbg, sizeof(dbg), "[LaserProbe] RETURN dir=%d -> work(%.3f,%.3f)",
-                   (int)laserEdgeProbeCurrentDir,
-                   laserEdgeProbeStartX, laserEdgeProbeStartY);
-          serialManager.USBSerialPrintln(dbg);
-        }
-        serialManager.CPUASerialPrintln(cmd);
-        ++waitForOk;
-        laserEdgeProbeStepSentMs = 0;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_READ;  // READ fires once when ack arrives
-        return;
-      }
-
-      // ── READ: fires exactly once when ack is received ───────────────────────
-      // Logs the machine state at that moment — if it's not RUN the command
-      // was rejected or the machine was already at the target.
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_READ) {
-        if (waitForOk > 0) return;
-        if (currentMachineState == RUN)
-          laserEdgeProbeReturnMotionObserved = true;
-        if (debuggingSettings.debuggingMacroBuffer) {
-          char dbg[80];
-          snprintf(dbg, sizeof(dbg), "[LaserProbe] RETURN ack dir=%d machState=%d pos=(%.3f,%.3f)",
-                   (int)laserEdgeProbeCurrentDir, (int)currentMachineState,
-                   currentMachinePositionX, currentMachinePositionY);
-          serialManager.USBSerialPrintln(dbg);
-        }
-        laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT;
-        return;
-      }
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_WAIT) {
-        if (!laserEdgeProbeReturnMotionObserved) {
-          if (currentMachineState == RUN ||
-              (fabsf(currentJobPositionX - laserEdgeProbeReturnTargetX) <= 0.25f &&
-               fabsf(currentJobPositionY - laserEdgeProbeReturnTargetY) <= 0.25f)) {
-            laserEdgeProbeReturnMotionObserved = true;
-            laserEdgeProbeStepSentMs = 0;
-          } else {
-            return;
-          }
-        }
-        if (currentMachineState != IDLE) {
-          laserEdgeProbeStepSentMs = 0;
-          return;
-        }
-        if (fabsf(currentJobPositionX - laserEdgeProbeReturnTargetX) > 0.25f ||
-            fabsf(currentJobPositionY - laserEdgeProbeReturnTargetY) > 0.25f) return;
-        if (laserEdgeProbeStepSentMs == 0) {
-          laserEdgeProbeStepSentMs = millis();
-          return;
-        }
-        if (millis() - laserEdgeProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS) return;
-        laserEdgeProbeStepSentMs = 0;
-        if (debuggingSettings.debuggingMacroBuffer) {
-          char dbg[60];
-          snprintf(dbg, sizeof(dbg), "[LaserProbe] RETURN IDLE dir=%d -> next",
-                   (int)laserEdgeProbeCurrentDir);
-          serialManager.USBSerialPrintln(dbg);
-        }
-        if (laserEdgeProbeCurrentDir == laserEdgeProbeSecondDir) {
-          // Both requested directions done.
-          laserEdgeProbeState = LASER_EDGE_PROBE_GO_CORNER;
-        } else if (laserEdgeProbeCurrentDir == laserEdgeProbeFirstDir) {
-          // After the X edge, switch to the corner's Y direction and take a
-          // fresh Y baseline first.
-          laserEdgeProbeCurrentDir = laserEdgeProbeSecondDir;
-          laserEdgeProbeState = LASER_EDGE_PROBE_Y_BASELINE;
-        } else {
-          pushLaserEdgeProbingCompletedEvent(false);
-          return;
-        }
-        laserEdgeProbeTraveled = 0.0f;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_SEND;
-        return;
-      }
-
-      break;
-    }
-
-    // ── RE-MEASURE BASELINE FOR Y PHASE ───────────────────────────────────────
-    // The machine has returned to (startX, startY).  Take a fresh laser reading
-    // so that the threshold check uses a baseline appropriate for Y-direction
-    // scanning (the laser geometry may differ from the X-phase baseline).
-    case LASER_EDGE_PROBE_Y_BASELINE: {
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_SEND) {
-        laserEdgeProbeBaselineSampleSum = 0.0f;
-        laserEdgeProbeBaselineSampleCount = 0;
-        laserEdgeProbeStepSentMs = millis();
-        laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT;
-        return;
-      }
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_WAIT) {
-        if (millis() - laserEdgeProbeStepSentMs < 75) return;
-
-        float yBaselineMm = 0.0f;
-        bool yOutOfRange = false;
-        bool yReadOk = readDistanceLaserMm(&yBaselineMm, &yOutOfRange);
-
-        if (!yReadOk) {
-          if (debuggingSettings.debuggingMacroBuffer) {
-            char dbg[96];
-            snprintf(dbg, sizeof(dbg), "[LaserProbe] Y BASELINE invalid read (outOfRange=%d)",
-                     (int)yOutOfRange);
-            serialManager.USBSerialPrintln(dbg);
-          }
-          // The start position is expected to be over the workpiece surface.
-          // An invalid/out-of-range baseline here would cause the Y scan to
-          // false-trigger almost immediately, so fail instead of proceeding.
-          pushLaserEdgeProbingCompletedEvent(false);
-          return;
-        }
-
-        laserEdgeProbeBaselineSampleSum += yBaselineMm;
-        ++laserEdgeProbeBaselineSampleCount;
-
-        if (laserEdgeProbeBaselineSampleCount < 3) {
-          laserEdgeProbeStepSentMs = millis();
-          return;
-        }
-
-        laserEdgeProbeBaselineMm = laserEdgeProbeBaselineSampleSum / laserEdgeProbeBaselineSampleCount;
-        if (debuggingSettings.debuggingMacroBuffer) {
-          char dbg[80];
-          snprintf(dbg, sizeof(dbg), "[LaserProbe] Y BASELINE=%.3f samples=%d",
-                   laserEdgeProbeBaselineMm, (int)laserEdgeProbeBaselineSampleCount);
-          serialManager.USBSerialPrintln(dbg);
-        }
-        laserEdgeProbeState = LASER_EDGE_PROBE_COARSE_SCAN;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_SEND;
-        return;
-      }
-
-      break;
-    }
-
-    // ── MOVE TO DETECTED CORNER ────────────────────────────────────────────────
-    case LASER_EDGE_PROBE_GO_CORNER: {
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_SEND) {
-        if (waitForOk > 0) return;
-        // Set absolute mode as a separate command
-        serialManager.CPUASerialPrintln("G90");
-        ++waitForOk;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_SEND_MOTION;
-        return;
-      }
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_SEND_MOTION) {
-        if (waitForOk > 0) return;
-        // Move to the detected corner, offset INTO the material on each axis.
-        // "Into the material" is opposite the edge/probe direction: for an X-
-        // (left) edge the interior is +X, for an X+ (right) edge it is -X; same
-        // for Y. A zero offset leaves the origin exactly on the corner.
-        float intoSignX = (laserEdgeProbeFirstDir == PROBE_DIR_XPOS) ? -1.0f : 1.0f;
-        float intoSignY = (laserEdgeProbeSecondDir == PROBE_DIR_YPOS) ? -1.0f : 1.0f;
-        float cornerX = laserEdgeProbeXNeg + intoSignX * laserEdgeProbeXOffset;
-        float cornerY = laserEdgeProbeYNeg + intoSignY * laserEdgeProbeYOffset;
-        laserEdgeProbeReturnTargetX = cornerX;
-        laserEdgeProbeReturnTargetY = cornerY;
-        laserEdgeProbeReturnMotionObserved = false;
-        if (debuggingSettings.debuggingMacroBuffer) {
-          char dbg[100];
-          snprintf(dbg, sizeof(dbg), "[LaserProbe] CORNER xNeg=%.3f yNeg=%.3f -> (%.3f,%.3f)",
-                   laserEdgeProbeXNeg, laserEdgeProbeYNeg,
-                   cornerX, cornerY);
-          serialManager.USBSerialPrintln(dbg);
-        }
-        snprintf(cmd, sizeof(cmd), "G1 X%.3f Y%.3f F%d", cornerX, cornerY, LASER_EDGE_PROBE_FINE_RETURN_FEED_RATE_MM_MIN);
-        serialManager.CPUASerialPrintln(cmd);
-        ++waitForOk;
-        laserEdgeProbeStepSentMs = 0;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT;
-        return;
-      }
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_WAIT) {
-        if (waitForOk > 0) return;
-        if (!laserEdgeProbeReturnMotionObserved) {
-          if (currentMachineState == RUN ||
-              (fabsf(currentJobPositionX - laserEdgeProbeReturnTargetX) <= 0.25f &&
-               fabsf(currentJobPositionY - laserEdgeProbeReturnTargetY) <= 0.25f)) {
-            laserEdgeProbeReturnMotionObserved = true;
-            laserEdgeProbeStepSentMs = 0;
-          } else {
-            return;
-          }
-        }
-        if (currentMachineState != IDLE) {
-          laserEdgeProbeStepSentMs = 0;
-          return;
-        }
-        if (fabsf(currentJobPositionX - laserEdgeProbeReturnTargetX) > 0.25f ||
-            fabsf(currentJobPositionY - laserEdgeProbeReturnTargetY) > 0.25f) return;
-        if (laserEdgeProbeStepSentMs == 0) {
-          laserEdgeProbeStepSentMs = millis();
-          return;
-        }
-        if (millis() - laserEdgeProbeStepSentMs < LASER_EDGE_PROBE_SETTLE_DELAY_MS) return;
-        laserEdgeProbeStepSentMs = 0;
-        laserEdgeProbeState = LASER_EDGE_PROBE_SET_ORIGIN;
-        laserEdgeProbeSetOriginStep = 0;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_SEND;
-        return;
-      }
-
-      break;
-    }
-
-    // ── SET WORK ORIGIN ────────────────────────────────────────────────────────
-    case LASER_EDGE_PROBE_SET_ORIGIN: {
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_SEND) {
-        if (waitForOk > 0) return;
-        if (laserEdgeProbeSetOriginStep == 0) {
-          snprintf(cmd, sizeof(cmd), "G90");
-          laserEdgeProbeSetOriginStep = 1;
-        } else {
-          snprintf(cmd, sizeof(cmd), "G10 L20 P1 X0 Y0");
-          laserEdgeProbeSetOriginStep = 2;
-        }
-        serialManager.CPUASerialPrintln(cmd);
-        ++waitForOk;
-        laserEdgeProbeSubState = LASER_EDGE_SUB_WAIT;
-        return;
-      }
-
-      if (laserEdgeProbeSubState == LASER_EDGE_SUB_WAIT) {
-        if (waitForOk > 0) return;
-        if (currentMachineState != IDLE) return;
-        if (laserEdgeProbeSetOriginStep == 1) {
-          laserEdgeProbeSubState = LASER_EDGE_SUB_SEND; // send G10 next
-        } else {
-          pushLaserEdgeProbingCompletedEvent(true); // done
-        }
-        return;
-      }
-
-      break;
-    }
-
-    default: break;
-  }
-
-}
 
 void handleUSBLine() {
 
@@ -7594,7 +2650,6 @@ void handleUSBLine() {
     ++subString;
     wantedSpindleRPM = atoi(subString);
 
-    if(wantedSpindleRPM < MINIMUM_SPINDLE_RPM)
       wantedSpindleRPM = 0;
 
   }
@@ -7610,13 +2665,11 @@ void handleUSBLine() {
     ++subString;
     wantedSpindleRPM = atoi(subString);
 
-    if(wantedSpindleRPM < MINIMUM_SPINDLE_RPM)
       wantedSpindleRPM = 0;
 
   }
 
   //set here the start of the ramping if a command is received!
-  if(wantedSpindleRPM > MINIMUM_SPINDLE_RPM && spindleEnabled)
     startRamping = true;
 
   if (DEBUGGING_SPINDLE) { serialManager.USBSerialPrint("Is spindle enabled: "); }
@@ -7641,7 +2694,6 @@ void handleCPUALine() {
   if (grblUtil.isResetReport(CPUALineArray)){
 
     waitForOk = 0;
-    resetManualSpindleRampState();
     resetSpindleModalState(false);
     return;
 
@@ -7711,10 +2763,7 @@ void handleCPUALine() {
       }
       // Always record GRBL's real override so the resume CONFIRM stage can close the
       // loop even while the ramp is active (adoption into spindleOverride stays gated).
-      lastReportedSpindleOverride = bufferSpindleOverride;
-      lastReportedSpindleOverrideMs = millis();
-      if (!isResumeSpindleOverrideRampActive)
-        spindleOverride = bufferSpindleOverride;
+      spindleOverride = bufferSpindleOverride;
     }
 
     currentMachineState = grblUtil.getMachineState(CPUALineArray);
@@ -7737,44 +2786,9 @@ void handleCPUALine() {
         pushHomingCompletedEvent(false);
     }
 
-    // Detect probe Z0 macro failure: ALARM while probe macro is active
-    if (isProbeZ0MacroRunning && currentMachineState == ALARM) {
-      arrayUtil.clear2DCharArray(bufferMacroLines);
-      isMacroRunning = false;
-      pushProbeZ0CompletedEvent(false);
-    }
 
-    // Detect tool length macro failure: ALARM while macro is active
-    if (isProbeToolLengthMacroRunning && currentMachineState == ALARM) {
-      arrayUtil.clear2DCharArray(bufferMacroLines);
-      isMacroRunning = false;
-      pushProbeToolLengthCompletedEvent(false);
-    }
 
-    // Detect laser edge probe failure: ALARM while probing is active
-    if (isLaserEdgeProbingActive && currentMachineState == ALARM && !laserEdgeProbeSuppressAlarmAbort) {
-      if (debuggingSettings.debuggingMacroBuffer) {
-        char dbg[80];
-        snprintf(dbg, sizeof(dbg),
-                 "[LaserProbe] ABORT unsuppressed ALARM state=%d sub=%d",
-                 (int)laserEdgeProbeState, (int)laserEdgeProbeSubState);
-        serialManager.USBSerialPrintln(dbg);
-      }
-      isMacroRunning = false;
-      pushLaserEdgeProbingCompletedEvent(false);
-    }
 
-    if (isLaserMaterialBoundsProbingActive && currentMachineState == ALARM && !laserMaterialBoundsProbeSuppressAlarmAbort) {
-      if (debuggingSettings.debuggingMacroBuffer) {
-        char dbg[96];
-        snprintf(dbg, sizeof(dbg),
-                 "[LaserBounds] ABORT unsuppressed ALARM state=%d",
-                 (int)laserMaterialBoundsProbeState);
-        serialManager.USBSerialPrintln(dbg);
-      }
-      isMacroRunning = false;
-      pushLaserMaterialBoundsCompletedEvent(false);
-    }
       
     if(debuggingSettings.debuggingStatus) {
       serialManager.USBSerialPrint("Machine state: ");
@@ -7810,8 +2824,6 @@ void handleCPUALine() {
       if(bufferPositionA != GRBL_NULL_POSITION)
         wcoA = bufferPositionA;
 
-      // A height map is only valid for the zero it was scanned against.
-      checkHeightMapWorkOffsetChange();
 
     }
 
@@ -7842,10 +2854,6 @@ void handleCPUALine() {
   // Capture Z from it — more reliable than polling |Pn:P| in status reports,
   // which may arrive after the retract has already released the probe pin.
   float prbZ;
-  if (isProbeToolLengthMacroRunning && !probeToolLengthZCaptured && grblUtil.parsePRBZ(CPUALineArray, &prbZ)) {
-    toolLength = prbZ - toolLengthReferenceSettings.refZ;
-    probeToolLengthZCaptured = true;
-  }
 
   //in case we are waiting for "ok" from grbl here we check if we have received one.
   //GRBL also sends "error:N" as a response to a command that failed — this also consumes a waitForOk slot.
@@ -7863,20 +2871,7 @@ void handleCPUALine() {
       --waitForOk;
     }
 
-    // An error response while probing Z0 means the probe didn't trigger (e.g. error:9).
-    // Push failure immediately without waiting for the next status poll.
-    if (isGrblError && isProbeZ0MacroRunning) {
-      arrayUtil.clear2DCharArray(bufferMacroLines);
-      isMacroRunning = false;
-      pushProbeZ0CompletedEvent(false);
-    }
 
-    // An error response while probing tool length means the probe didn't trigger.
-    if (isGrblError && isProbeToolLengthMacroRunning) {
-      arrayUtil.clear2DCharArray(bufferMacroLines);
-      isMacroRunning = false;
-      pushProbeToolLengthCompletedEvent(false);
-    }
 
     if (isGrblOk && !isGrblError)
       return; //we do not print the ok from GRBL to usb
@@ -8074,645 +3069,14 @@ void handleJsonCommand(){
 
     break;
   
-  case ENABLE_LASER_SENSOR:
 
-    requestDistanceLaserSensorInitialization(DISTANCE_LASER_SENSOR_INIT_DELAY_MS, true);
 
-    if(jsonSettings.enableJsonResponse){
 
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
 
-    }
 
-    break;
 
-  case DISABLE_LASER_SENSOR:
 
-    disableDistanceLaserSensor();
 
-    if(jsonSettings.enableJsonResponse){
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
-
-  case START_HEIGHT_MAP_SCAN: {
-
-    if (isJobRunning || isJobPaused || isMacroRunning || isLaserEdgeProbingActive || heightMapScanInProgress || pointCloudScanInProgress) {
-
-      if(jsonSettings.enableJsonResponse){
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MACRO_RUNNING_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    }
-
-    if (openedReadFileName[0] == NULL_CHAR) {
-
-      if(jsonSettings.enableJsonResponse){
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_NO_FILE_OPENED_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    }
-
-    bool useOpenedFileSize = receivedJsonBuffer[JSON_KEY_HEIGHT_MAP_USE_OPENED_FILE_SIZE_STR] | false;
-
-    if(!useOpenedFileSize && (receivedJsonBuffer[JSON_KEY_HEIGHT_MAP_SIZE_X_MM_STR].isNull() || receivedJsonBuffer[JSON_KEY_HEIGHT_MAP_SIZE_Y_MM_STR].isNull())) {
-
-      if(jsonSettings.enableJsonResponse){
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    }
-
-    if(receivedJsonBuffer[JSON_KEY_HEIGHT_MAP_DENSITY_STR].isNull()) {
-
-      if(jsonSettings.enableJsonResponse){
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    }
-
-    if (!hasDistanceLaserSensorPresence || !isDistanceLaserSensorInitialized) {
-
-      if(jsonSettings.enableJsonResponse){
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_DISTANCE_LASER_SENSOR_NOT_INITIALIZED_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    }
-
-    {
-      float requestedSizeX = 0.0f;
-      float requestedSizeY = 0.0f;
-      // Top-left corner of the opened file's toolpath, in job coordinates, when the metadata carries
-      // it. This is what the map has to be anchored to; the toolpath does NOT necessarily start at
-      // job zero.
-      bool haveFileOrigin = false;
-      float fileOriginX = 0.0f;
-      float fileOriginY = 0.0f;
-      // Top-left corner of an explicitly-sized patch, derived from the head position and the SIGN of
-      // the requested sizes.
-      bool haveExplicitOrigin = false;
-      float explicitOriginX = 0.0f;
-      float explicitOriginY = 0.0f;
-      const char* density = receivedJsonBuffer[JSON_KEY_HEIGHT_MAP_DENSITY_STR].as<const char*>();
-
-      if (useOpenedFileSize) {
-        char metadataLine[256];
-        float fileSizeX = 0.0f;
-        float fileSizeY = 0.0f;
-        float fileSizeZ = 0.0f;
-
-        bool metadataParsed = sdCardManager.readFirstLine(openedReadFileName, metadataLine, sizeof(metadataLine))
-          && GCodeBoundsUtil::parseMetadataLine(metadataLine, &fileSizeX, &fileSizeY, &fileSizeZ);
-
-        if (!metadataParsed || fileSizeX <= 0.0f || fileSizeY <= 0.0f) {
-
-          if(jsonSettings.enableJsonResponse){
-
-            clearResponseJsonBuffer();
-            responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-            responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_INVALID_JSON_VALUE_STR;
-            serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-            sendJsonResponse();
-
-          }
-
-          break;
-
-        }
-
-        requestedSizeX = fileSizeX;
-        requestedSizeY = fileSizeY;
-
-        // The metadata also carries the toolpath's actual extent, when the file was written by a
-        // version that emits MIN/MAX. Anchor the map on that: SIZEX/SIZEY alone say how big the
-        // toolpath is, not where it sits, and a toolpath that starts anywhere other than job zero
-        // would otherwise be compensated against a map offset by its own start coordinates.
-        // The map grows +X and -Y from its origin, so the anchor is (minX, maxY).
-        float boundsMinX = 0.0f, boundsMaxX = 0.0f, boundsMinY = 0.0f, boundsMaxY = 0.0f;
-        if (GCodeBoundsUtil::parseMetadataBounds(metadataLine, &boundsMinX, &boundsMaxX, &boundsMinY, &boundsMaxY)
-            && (boundsMaxX - boundsMinX) > 0.0f
-            && (boundsMaxY - boundsMinY) > 0.0f) {
-          haveFileOrigin = true;
-          fileOriginX = boundsMinX;
-          fileOriginY = boundsMaxY;
-          // Use the bounds for the extent too, so origin and size cannot disagree.
-          requestedSizeX = boundsMaxX - boundsMinX;
-          requestedSizeY = boundsMaxY - boundsMinY;
-        }
-      } else {
-        const float signedSizeX = receivedJsonBuffer[JSON_KEY_HEIGHT_MAP_SIZE_X_MM_STR].as<float>();
-        const float signedSizeY = receivedJsonBuffer[JSON_KEY_HEIGHT_MAP_SIZE_Y_MM_STR].as<float>();
-
-        // The SIGN says which way the patch extends from the head; the magnitude is its size.
-        //
-        // A patch used to always grow +X and -Y, which is only right when the head sits at the work's
-        // top-left. Zero a job at its bottom-right corner -- normal for the second side of a
-        // double-sided board -- and the scan headed away from the work entirely, off the far side of
-        // the table, and refused on a soft limit while the board sat well within reach.
-        //
-        //   sizeX > 0 extends +X      sizeX < 0 extends -X
-        //   sizeY > 0 extends -Y      sizeY < 0 extends +Y
-        //
-        // Normalised here to a top-left origin plus positive extents, which is what everything
-        // downstream expects: the soft-limit rectangle, the serpentine sweep, the column binning and
-        // the interpolation all assume the map grows +X and -Y from its origin. Positive values
-        // behave exactly as before, so nothing that already worked changes.
-        explicitOriginX = currentJobPositionX + ((signedSizeX < 0.0f) ? signedSizeX : 0.0f);
-        explicitOriginY = currentJobPositionY + ((signedSizeY < 0.0f) ? -signedSizeY : 0.0f);
-        haveExplicitOrigin = true;
-
-        requestedSizeX = fabsf(signedSizeX);
-        requestedSizeY = fabsf(signedSizeY);
-      }
-
-      if(requestedSizeX <= 0.0f || requestedSizeY <= 0.0f) {
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_INVALID_JSON_VALUE_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-        break;
-
-      }
-
-      if (density == nullptr
-          || (strcmp(density, JSON_VALUE_HEIGHT_MAP_DENSITY_COARSE_STR) != 0
-              && strcmp(density, JSON_VALUE_HEIGHT_MAP_DENSITY_FINE_STR) != 0)) {
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_INVALID_JSON_VALUE_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-        break;
-
-      }
-
-      heightMapSizeXmm = requestedSizeX;
-      heightMapSizeYmm = requestedSizeY;
-      heightMapFineDensity = (strcmp(density, JSON_VALUE_HEIGHT_MAP_DENSITY_FINE_STR) == 0);
-      heightMapConfigured = true;
-
-      float spacingMm = heightMapFineDensity ? HEIGHT_MAP_FINE_SPACING_MM : HEIGHT_MAP_COARSE_SPACING_MM;
-
-      uint16_t computedX = getHeightMapGridPointsForSize(heightMapSizeXmm, spacingMm, HEIGHT_MAP_MAX_POINTS_PER_AXIS);
-      uint16_t computedY = getHeightMapGridPointsForSize(heightMapSizeYmm, spacingMm, HEIGHT_MAP_MAX_POINTS_PER_AXIS);
-
-      if (computedX < 2 || computedY < 2) {
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_INVALID_JSON_VALUE_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-        break;
-
-      }
-
-      // Where the map's (0,0) cell sits, in job coordinates.
-      //
-      // Anchored on the opened file's own toolpath bounds when the metadata carries them, so "scan
-      // the opened file" covers exactly the rectangle the toolpath occupies no matter where the head
-      // happens to be parked. Jogging to look at something before pressing scan no longer slides the
-      // map off the work.
-      //
-      // Otherwise the head position is the anchor: with an explicit size the operator is deliberately
-      // scanning a patch, and for a file written before MIN/MAX metadata existed the head is the only
-      // information there is about where the toolpath sits. In that case park on the toolpath's
-      // top-left corner before starting. getHeightMapStatus reports the origin actually used.
-      float scanOriginX = haveFileOrigin ? fileOriginX
-                        : (haveExplicitOrigin ? explicitOriginX : currentJobPositionX);
-      float scanOriginY = haveFileOrigin ? fileOriginY
-                        : (haveExplicitOrigin ? explicitOriginY : currentJobPositionY);
-
-      // NOTE: there was a second pre-flight here requiring the laser to reach job (0,0), because the
-      // stationary reading used to be taken there. With a +9.21 mm Y laser offset and a machine whose
-      // Y ceiling is 0, that demanded job zero sit at least that far down the bed and refused almost
-      // every scan on a soft limit, whatever its size. The reading now happens over the map's own
-      // origin, which the rectangle check below already covers, so the extra constraint is gone.
-
-      // Pre-flight: ensure the scan rectangle fits within the configured soft limits.
-      // The scan drives the SPINDLE to gridTarget + laser offset (so the LASER lands on each
-      // grid point), so the spindle-travel rectangle is the job rectangle shifted by the laser
-      // offset. Check that shifted rectangle — this is why the usable scan area shrinks by the
-      // laser offset (~xBackMm in X / yBackMm in Y) near the envelope edges.
-      if (!isScanRectWithinSoftLimitRange(scanOriginX + laserOffsetZeroSettings.xBackMm,
-                                          scanOriginY + laserOffsetZeroSettings.yBackMm,
-                                          heightMapSizeXmm, heightMapSizeYmm)) {
-
-        // Say WHAT is out of reach and BY HOW MUCH. "softLimitExceeded" alone leaves no way to tell
-        // whether the scan is too big, the work is too close to an envelope edge, or the laser offset
-        // is eating the margin -- which are three different fixes. The numbers below are the SPINDLE
-        // rectangle in machine coordinates: the job rectangle shifted by the laser offset, because
-        // the spindle has to carry the laser to every grid point.
-        const float spindleMinX = scanOriginX + laserOffsetZeroSettings.xBackMm + wcoX;
-        const float spindleMaxX = spindleMinX + heightMapSizeXmm;
-        const float spindleMaxY = scanOriginY + laserOffsetZeroSettings.yBackMm + wcoY;
-        const float spindleMinY = spindleMaxY - heightMapSizeYmm;
-
-        char dbg[260];
-        snprintf(dbg, sizeof(dbg),
-                 "HeightMap soft limit: spindle would need machine X[%.2f..%.2f] Y[%.2f..%.2f]; limits are X[%.1f..%.1f] Y[%.1f..%.1f]. Over by X-%.2f X+%.2f Y-%.2f Y+%.2f (laser offset %.2f,%.2f; job zero at machine %.2f,%.2f)",
-                 spindleMinX, spindleMaxX, spindleMinY, spindleMaxY,
-                 (double)SOFT_LIMIT_MIN_X_MM, (double)SOFT_LIMIT_MAX_X_MM,
-                 (double)SOFT_LIMIT_MIN_Y_MM, (double)SOFT_LIMIT_MAX_Y_MM,
-                 spindleMinX < SOFT_LIMIT_MIN_X_MM ? (double)(SOFT_LIMIT_MIN_X_MM - spindleMinX) : 0.0,
-                 spindleMaxX > SOFT_LIMIT_MAX_X_MM ? (double)(spindleMaxX - SOFT_LIMIT_MAX_X_MM) : 0.0,
-                 spindleMinY < SOFT_LIMIT_MIN_Y_MM ? (double)(SOFT_LIMIT_MIN_Y_MM - spindleMinY) : 0.0,
-                 spindleMaxY > SOFT_LIMIT_MAX_Y_MM ? (double)(spindleMaxY - SOFT_LIMIT_MAX_Y_MM) : 0.0,
-                 laserOffsetZeroSettings.xBackMm, laserOffsetZeroSettings.yBackMm,
-                 wcoX, wcoY);
-        serialManager.USBSerialPrint(FROM_CPUB);
-        serialManager.USBSerialPrintln(dbg);
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_SOFT_LIMIT_EXCEEDED_STR;
-          // Where the map would have sat, so the frontend can show the operator what to move.
-          responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ORIGIN_X_MM_STR] = roundf(scanOriginX * 1000.0f) / 1000.0f;
-          responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ORIGIN_Y_MM_STR] = roundf(scanOriginY * 1000.0f) / 1000.0f;
-          responseJsonBuffer[JSON_KEY_HEIGHT_MAP_SIZE_X_MM_STR] = heightMapSizeXmm;
-          responseJsonBuffer[JSON_KEY_HEIGHT_MAP_SIZE_Y_MM_STR] = heightMapSizeYmm;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-        break;
-
-      }
-
-      invalidateHeightMap(false);
-      heightMapInputSource = currentInputSource;
-      heightMapGridPointsX = computedX;
-      heightMapGridPointsY = computedY;
-      heightMapTotalPoints = heightMapGridPointsX * heightMapGridPointsY;
-      heightMapSpacingXmm = (heightMapGridPointsX > 1) ? (heightMapSizeXmm / (float)(heightMapGridPointsX - 1)) : 0.0f;
-      heightMapSpacingYmm = (heightMapGridPointsY > 1) ? (heightMapSizeYmm / (float)(heightMapGridPointsY - 1)) : 0.0f;
-      heightMapOriginX = scanOriginX;
-      heightMapOriginY = scanOriginY;
-      // The scan still parks back where it was launched from, which is not the map origin when the
-      // map is anchored at job zero.
-      heightMapReturnX = currentJobPositionX;
-      heightMapReturnY = currentJobPositionY;
-      // Remember the work offset the map is being built against, so a later re-zero can be detected.
-      heightMapWcoX = wcoX;
-      heightMapWcoY = wcoY;
-      // With the offset applied to the scan moves, the laser now samples ON each grid point,
-      // so the map origin's sample sits at the spindle's start machine position (no laser-back
-      // subtraction). This anchors the machine-coord points export to the true sampled points.
-      heightMapStartMachineX = scanOriginX + wcoX;
-      heightMapStartMachineY = scanOriginY + wcoY;
-      // Ensure the laser stays enabled throughout scan acquisition.
-      bool laserWasDisabled = (digitalRead(LASER_SENSOR_ENABLE_PIN) != HIGH);
-      digitalWrite(LASER_SENSOR_ENABLE_PIN, HIGH);
-      heightMapScanInProgress = true;
-      heightMapSensorReadyMs = millis() + (laserWasDisabled ? LASER_SENSOR_ENABLE_RESPONSE_DELAY_MS : 0);
-      heightMapScanState = HEIGHT_MAP_SCAN_WAIT_SENSOR_READY;
-      heightMapNextPointIndex = 0;
-      heightMapWaitOkSinceMs = 0;
-    }
-
-    if(jsonSettings.enableJsonResponse){
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_GRID_POINTS_X_STR] = heightMapGridPointsX;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_GRID_POINTS_Y_STR] = heightMapGridPointsY;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_DENSITY_STR] =
-        heightMapFineDensity ? JSON_VALUE_HEIGHT_MAP_DENSITY_FINE_STR : JSON_VALUE_HEIGHT_MAP_DENSITY_COARSE_STR;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
-  }
-
-  case ENABLE_HEIGHT_MAP_COMPENSATION:
-
-    heightMapCompensationEnabled = true;
-
-    if(jsonSettings.enableJsonResponse){
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_COMPENSATION_ENABLED_STR] = true;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
-
-  case DISABLE_HEIGHT_MAP_COMPENSATION:
-
-    heightMapCompensationEnabled = false;
-
-    if(jsonSettings.enableJsonResponse){
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_COMPENSATION_ENABLED_STR] = false;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
-
-  case CLEAR_HEIGHT_MAP:
-
-    invalidateHeightMap(false);
-    heightMapCompensationEnabled = false;
-
-    if(jsonSettings.enableJsonResponse){
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
-
-  case START_POINT_CLOUD_SCAN:
-  {
-    if (isJobRunning || isJobPaused) {
-      if (jsonSettings.enableJsonResponse) {
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_JOB_RUNNING_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-      }
-      break;
-    }
-
-    if (pointCloudScanInProgress) {
-      if (jsonSettings.enableJsonResponse) {
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_POINT_CLOUD_SCAN_IN_PROGRESS_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-      }
-      break;
-    }
-
-    if (receivedJsonBuffer[JSON_KEY_POINT_CLOUD_SIZE_X_MM_STR].isNull()
-        || receivedJsonBuffer[JSON_KEY_POINT_CLOUD_SIZE_Y_MM_STR].isNull()
-        || receivedJsonBuffer[JSON_KEY_POINT_CLOUD_DENSITY_STR].isNull()
-        || receivedJsonBuffer[JSON_KEY_FILENAME_STR].isNull()) {
-      if (jsonSettings.enableJsonResponse) {
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-      }
-      break;
-    }
-
-    float requestedSizeX = receivedJsonBuffer[JSON_KEY_POINT_CLOUD_SIZE_X_MM_STR].as<float>();
-    float requestedSizeY = receivedJsonBuffer[JSON_KEY_POINT_CLOUD_SIZE_Y_MM_STR].as<float>();
-    const char* density  = receivedJsonBuffer[JSON_KEY_POINT_CLOUD_DENSITY_STR].as<const char*>();
-    const char* userFilename = receivedJsonBuffer[JSON_KEY_FILENAME_STR].as<const char*>();
-
-    if (requestedSizeX <= 0.0f || requestedSizeX > POINT_CLOUD_MAX_SCAN_DIMENSION_X_MM
-        || requestedSizeY <= 0.0f || requestedSizeY > POINT_CLOUD_MAX_SCAN_DIMENSION_Y_MM) {
-      if (jsonSettings.enableJsonResponse) {
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_INVALID_JSON_VALUE_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-      }
-      break;
-    }
-
-    // Pre-flight: ensure the scan rectangle fits within the configured soft limits
-    // (machine coords). Origin is the current job position; rectangle extends to
-    // (originX + sizeX, originY + sizeY). Reject before any state mutation.
-    if (!isScanRectWithinSoftLimitRange(currentJobPositionX, currentJobPositionY,
-                                        requestedSizeX, requestedSizeY)) {
-      if (jsonSettings.enableJsonResponse) {
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_SOFT_LIMIT_EXCEEDED_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-      }
-      break;
-    }
-
-    float spacing = 0.0f;
-    if (strcmp(density, JSON_VALUE_POINT_CLOUD_DENSITY_ULTRAFINE_STR) == 0)
-      spacing = POINT_CLOUD_SPACING_ULTRAFINE_MM;
-    else if (strcmp(density, JSON_VALUE_POINT_CLOUD_DENSITY_FINE_STR) == 0)
-      spacing = POINT_CLOUD_SPACING_FINE_MM;
-    else if (strcmp(density, JSON_VALUE_POINT_CLOUD_DENSITY_MEDIUM_STR) == 0)
-      spacing = POINT_CLOUD_SPACING_MEDIUM_MM;
-    else if (strcmp(density, JSON_VALUE_POINT_CLOUD_DENSITY_COARSE_STR) == 0)
-      spacing = POINT_CLOUD_SPACING_COARSE_MM;
-    else {
-      if (jsonSettings.enableJsonResponse) {
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_INVALID_JSON_VALUE_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-      }
-      break;
-    }
-
-    if (userFilename == nullptr || userFilename[0] == NULL_CHAR
-        || strlen(userFilename) >= (SD_MAX_FILE_NAME_LENGTH - 4)) {
-      if (jsonSettings.enableJsonResponse) {
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_INVALID_JSON_VALUE_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-      }
-      break;
-    }
-
-    uint16_t gx = (uint16_t)((requestedSizeX / spacing) + 1.5f);
-    uint16_t gy = (uint16_t)((requestedSizeY / spacing) + 1.5f);
-    if (gx < 2) gx = 2;
-    if (gy < 2) gy = 2;
-    if (gx > POINT_CLOUD_MAX_POINTS_PER_AXIS) gx = POINT_CLOUD_MAX_POINTS_PER_AXIS;
-    if (gy > POINT_CLOUD_MAX_POINTS_PER_AXIS) gy = POINT_CLOUD_MAX_POINTS_PER_AXIS;
-
-    arrayUtil.clearCharArray(pointCloudFilename, SD_MAX_FILE_NAME_LENGTH);
-    snprintf(pointCloudFilename, SD_MAX_FILE_NAME_LENGTH, "%s%s", userFilename, POINT_CLOUD_FILENAME_SUFFIX);
-    arrayUtil.clearCharArray(pointCloudDensityStr, sizeof(pointCloudDensityStr));
-    strncpy(pointCloudDensityStr, density, sizeof(pointCloudDensityStr) - 1);
-
-    pointCloudSizeXmm = requestedSizeX;
-    pointCloudSizeYmm = requestedSizeY;
-    pointCloudSpacingMm = spacing;
-    pointCloudGridPointsX = 0;        // unknown in line scan mode
-    pointCloudGridPointsY = gy;
-    pointCloudTotalPoints = 0;        // unknown in line scan mode
-    pointCloudOriginX = currentJobPositionX;
-    pointCloudOriginY = currentJobPositionY;
-    pointCloudNextPointIndex = 0;
-    pointCloudWaitOkSinceMs = 0;
-    pointCloudReady = false;
-    pointCloudInputSource = currentInputSource;
-    pointCloudAbortStage = nullptr;
-    pointCloudAbortDetail = nullptr;
-
-    pointCloudFileYear = 0;
-    pointCloudFileMonth = 0;
-    pointCloudFileDay = 0;
-    pointCloudFileHour = 0;
-    pointCloudFileMinute = 0;
-    pointCloudFileSecond = 0;
-    if (!receivedJsonBuffer[JSON_KEY_FILE_DATE_STR].isNull()) {
-      const char* dateStr = receivedJsonBuffer[JSON_KEY_FILE_DATE_STR].as<const char*>();
-      sscanf(dateStr, "%hu-%hhu-%hhu %hhu:%hhu:%hhu",
-        &pointCloudFileYear, &pointCloudFileMonth, &pointCloudFileDay,
-        &pointCloudFileHour, &pointCloudFileMinute, &pointCloudFileSecond);
-    }
-
-    bool laserWasDisabled = (digitalRead(LASER_SENSOR_ENABLE_PIN) != HIGH);
-    digitalWrite(LASER_SENSOR_ENABLE_PIN, HIGH);
-    pointCloudScanInProgress = true;
-    pointCloudSensorReadyMs = millis() + (laserWasDisabled ? LASER_SENSOR_ENABLE_RESPONSE_DELAY_MS : 0);
-    pointCloudScanState = POINT_CLOUD_SCAN_WAIT_SENSOR_READY;
-
-    if (jsonSettings.enableJsonResponse) {
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_POINT_CLOUD_FILENAME_STR] = pointCloudFilename;
-      responseJsonBuffer[JSON_KEY_POINT_CLOUD_GRID_POINTS_X_STR] = pointCloudGridPointsX;
-      responseJsonBuffer[JSON_KEY_POINT_CLOUD_GRID_POINTS_Y_STR] = pointCloudGridPointsY;
-      responseJsonBuffer[JSON_KEY_POINT_CLOUD_POINTS_TOTAL_STR] = pointCloudTotalPoints;
-      responseJsonBuffer[JSON_KEY_POINT_CLOUD_DENSITY_STR] = pointCloudDensityStr;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-    }
-  }
-  break;
-
-  case ABORT_POINT_CLOUD_SCAN:
-
-    if (!pointCloudScanInProgress) {
-      if (jsonSettings.enableJsonResponse) {
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_NO_POINT_CLOUD_SCAN_IN_PROGRESS_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-      }
-      break;
-    }
-
-    abortPointCloudScan("ABORT", "user_requested");
-
-    if (jsonSettings.enableJsonResponse) {
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-    }
-
-    break;
-
-  case ABORT_HEIGHT_MAP_SCAN:
-
-    if (!heightMapScanInProgress) {
-      if (jsonSettings.enableJsonResponse) {
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_NO_HEIGHT_MAP_SCAN_IN_PROGRESS_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-      }
-      break;
-    }
-
-    abortHeightMapScan("ABORT", "user_requested");
-
-    if (jsonSettings.enableJsonResponse) {
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-    }
-
-    break;
 
     case MOVE_TO_ROTARY_POSITION_MACRO:
 
@@ -8755,11 +3119,6 @@ void handleJsonCommand(){
 
       arrayUtil.clear2DCharArray(bufferMacroLines);
       arrayUtil.copyMacro(bufferMacroLines, MOVE_TO_ROTARY_POSITION);
-
-      // Override the rotary Y target (index 1: "G53 Y...") with the value for the
-      // installed spindle variant, since the two spindles seat the rotary differently.
-      snprintf(bufferMacroLines[1], MACRO_LINE_BUFFER_CHARS, "G53 Y%.3f",
-               (INSTALLED_SPINDLE_TYPE == SPINDLE_48V) ? MOVE_TO_ROTARY_Y_48V : MOVE_TO_ROTARY_Y_24V);
 
       clearResponseJsonBuffer();
       responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
@@ -8946,124 +3305,7 @@ void handleJsonCommand(){
 
       break;
 
-    case PROBE_SET_JOB_Z0_MACRO:
 
-      if(isJobRunning || isJobPaused){
-      
-        if(jsonSettings.enableJsonResponse){
-      
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;        
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_JOB_ALREADY_RUNNING_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-        
-        }
-
-        break;
-
-      }
-
-      if(isMacroRunning){
-
-         if(jsonSettings.enableJsonResponse){
-      
-            clearResponseJsonBuffer();
-            responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;        
-            responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MACRO_ALREADY_RUNNING_STR;
-            serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-            sendJsonResponse();
-        
-          }
-
-          break;
-
-      }
-
-      if(jsonSettings.enableJsonResponse){
-
-        isMacroRunning = true;
-        isProbeZ0MacroRunning = true;
-        probeZ0MacroInputSource = currentInputSource;
-
-        arrayUtil.clear2DCharArray(bufferMacroLines);
-        arrayUtil.copyMacro(bufferMacroLines, PROBE_SET_JOB_Z0);
-
-        // Build the Z-offset lines at runtime from the EEPROM-backed probe Z0
-        // offset (see setProbeHeight): the touch point becomes Z = offset and
-        // the retract goes to offset + margin. The values in JobMacros.h are
-        // placeholders overwritten here.
-        snprintf(bufferMacroLines[3], MACRO_LINE_BUFFER_CHARS, "G10 L20 P1 Z%.3f", probeHeightSettings.heightMm);
-        snprintf(bufferMacroLines[4], MACRO_LINE_BUFFER_CHARS, "G1 Z%.3f F250", probeHeightSettings.heightMm + PROBE_HEIGHT_RETRACT_MARGIN_MM);
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    case PROBE_TOOL_LENGTH_MACRO:
-
-      if(isJobRunning || isJobPaused){
-      
-        if(jsonSettings.enableJsonResponse){
-      
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;        
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_JOB_ALREADY_RUNNING_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-        
-        }
-
-        break;
-
-      }
-
-      if(isMacroRunning){
-
-        if(jsonSettings.enableJsonResponse){
-      
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;        
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MACRO_ALREADY_RUNNING_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-        
-        }
-
-        break;
-
-      }
-
-      if(jsonSettings.enableJsonResponse){
-
-        isMacroRunning = true;
-        isProbeToolLengthMacroRunning = true;
-        probeToolLengthZCaptured = false;
-        probeToolLengthMacroInputSource = currentInputSource;
-
-        // Build probe line dynamically: travel to just above soft limit from current Z,
-        // so it works regardless of where Z currently is.
-        float probeTravel = (SOFT_LIMIT_MIN_Z_MM + 0.5f) - currentMachinePositionZ;
-        arrayUtil.clear2DCharArray(bufferMacroLines);
-        strncpy(bufferMacroLines[0], "G91", MACRO_LINE_BUFFER_CHARS - 1);
-        snprintf(bufferMacroLines[1], MACRO_LINE_BUFFER_CHARS, "G38.2 Z%.3f F%d", probeTravel, TOOL_LENGTH_PROBE_FEED_RATE_MM_MIN);
-        snprintf(bufferMacroLines[2], MACRO_LINE_BUFFER_CHARS, "G1 Z%d F250", TOOL_LENGTH_PROBE_RETRACT_MM);
-        strncpy(bufferMacroLines[3], "G90", MACRO_LINE_BUFFER_CHARS - 1);
-        bufferMacroLines[4][0] = '\0';
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
 
     case RETURN_JOB_XY0_MACRO:
 
@@ -9115,152 +3357,7 @@ void handleJsonCommand(){
 
       break;
 
-    case MOVE_TO_LASER_OFFSET_ZERO_MACRO:
 
-      if(isJobRunning || isJobPaused){
-      
-        if(jsonSettings.enableJsonResponse){
-      
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;        
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_JOB_ALREADY_RUNNING_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-        
-        }
-
-        break;
-
-      }
-
-      if(isMacroRunning){
-
-         if(jsonSettings.enableJsonResponse){
-      
-            clearResponseJsonBuffer();
-            responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;        
-            responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MACRO_ALREADY_RUNNING_STR;
-            serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-            sendJsonResponse();
-        
-          }
-
-          break;
-
-      }
-
-      if(jsonSettings.enableJsonResponse){
-
-        isMacroRunning = true;
-
-        arrayUtil.clear2DCharArray(bufferMacroLines);
-        strncpy(bufferMacroLines[0], "G91", MACRO_LINE_BUFFER_CHARS - 1);
-        snprintf(
-          bufferMacroLines[1],
-          MACRO_LINE_BUFFER_CHARS,
-          "G1 X-%.3f Y-%.3f F%d",
-          laserOffsetZeroSettings.xBackMm,
-          laserOffsetZeroSettings.yBackMm,
-          LASER_OFFSET_ZERO_FEED_RATE_MM_MIN
-        );
-        strncpy(bufferMacroLines[2], "G90", MACRO_LINE_BUFFER_CHARS - 1);
-        strncpy(bufferMacroLines[3], "G10 L20 P1 X0 Y0", MACRO_LINE_BUFFER_CHARS - 1);
-        bufferMacroLines[4][0] = '\0';
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    case CONFIRM_MATERIAL_CENTER_AND_SET_ZERO:
-
-      if(isJobRunning || isJobPaused){
-      
-        if(jsonSettings.enableJsonResponse){
-      
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;        
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_JOB_ALREADY_RUNNING_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-        
-        }
-
-        break;
-
-      }
-
-      if(isMacroRunning || isLaserEdgeProbingActive || isLaserMaterialBoundsProbingActive){
-
-         if(jsonSettings.enableJsonResponse){
-      
-            clearResponseJsonBuffer();
-            responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;        
-            responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MACRO_ALREADY_RUNNING_STR;
-            serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-            sendJsonResponse();
-        
-          }
-
-          break;
-
-      }
-
-      if(!hasLastDetectedMaterialCenter){
-
-        if(jsonSettings.enableJsonResponse){
-      
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;        
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MATERIAL_CENTER_NOT_AVAILABLE_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-        
-        }
-
-        break;
-
-      }
-
-      if(jsonSettings.enableJsonResponse){
-
-        isMacroRunning = true;
-
-        arrayUtil.clear2DCharArray(bufferMacroLines);
-        strncpy(bufferMacroLines[0], "G90", MACRO_LINE_BUFFER_CHARS - 1);
-        snprintf(
-          bufferMacroLines[1],
-          MACRO_LINE_BUFFER_CHARS,
-          "G1 X%.3f Y%.3f F%d",
-          lastDetectedMaterialCenterX,
-          lastDetectedMaterialCenterY,
-          LASER_EDGE_PROBE_RETURN_FEED_RATE_MM_MIN
-        );
-        strncpy(bufferMacroLines[2], "G91", MACRO_LINE_BUFFER_CHARS - 1);
-        snprintf(
-          bufferMacroLines[3],
-          MACRO_LINE_BUFFER_CHARS,
-          "G1 X-%.3f Y-%.3f F%d",
-          laserOffsetZeroSettings.xBackMm,
-          laserOffsetZeroSettings.yBackMm,
-          LASER_OFFSET_ZERO_FEED_RATE_MM_MIN
-        );
-        strncpy(bufferMacroLines[4], "G90", MACRO_LINE_BUFFER_CHARS - 1);
-        strncpy(bufferMacroLines[5], "G10 L20 P1 X0 Y0", MACRO_LINE_BUFFER_CHARS - 1);
-        bufferMacroLines[6][0] = '\0';
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
   
   case OPEN_GCODE_FILE:
 
@@ -9279,10 +3376,6 @@ void handleJsonCommand(){
 
         openedReadFileTotalLines = executableFileTotalLines > 0 ? (unsigned long)executableFileTotalLines : 0;
         jobLineIndex = 0;
-        // Drop the height map only when opening a DIFFERENT file than the one it's bound to; re-opening
-        // the same file keeps its map so compensation survives until another file is opened.
-        if (strcmp(openedReadFileName, heightMapBoundFile) != 0)
-          invalidateHeightMap(false);
 
         if(jsonSettings.enableJsonResponse){
 
@@ -9298,7 +3391,6 @@ void handleJsonCommand(){
         arrayUtil.clearCharArray(openedReadFileName, SD_MAX_FILE_NAME_LENGTH);
         openedReadFileTotalLines = 0;
         jobLineIndex = 0;
-        invalidateHeightMap(false);
 
         if(jsonSettings.enableJsonResponse){
 
@@ -9349,7 +3441,6 @@ void handleJsonCommand(){
       arrayUtil.clearCharArray(openedReadFileName, SD_MAX_FILE_NAME_LENGTH);
       openedReadFileTotalLines = 0;
       jobLineIndex = 0;
-      invalidateHeightMap(false);
 
       if(jsonSettings.enableJsonResponse){
 
@@ -9507,8 +3598,6 @@ void handleJsonCommand(){
         sendJsonResponse();
       }
 
-      if (renamed)
-        invalidateHeightMap(false);
     }
 
     break;
@@ -9824,27 +3913,6 @@ void handleJsonCommand(){
 
     }
 
-    // Housing installed + lid open: a real job cuts, so it is refused outright rather than
-    // started and paused at the first M3. Dry runs stay allowed — sanitizeLineForDryRun
-    // strips every M/S/Z word, so nothing spins and nothing plunges.
-    if(isDoorInterlockActiveNow() && !dryRunEnabled){
-
-      if(jsonSettings.enableJsonResponse){
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_DOOR_OPEN_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln("Job start refused: lid open (housing installed). Only dry runs are allowed.");
-
-      break;
-
-    }
 
     if(isJobRunning){
 
@@ -9861,84 +3929,10 @@ void handleJsonCommand(){
     }else
     if(openedReadFileName[0] != NULL_CHAR ){
 
-      if (heightMapCompensationEnabled) {
-        bool heightMapBoundMatches = (strcmp(openedReadFileName, heightMapBoundFile) == 0);
-        if (!heightMapReady || !heightMapBoundMatches || heightMapUsedForCurrentFile) {
-
-          if(jsonSettings.enableJsonResponse){
-
-            clearResponseJsonBuffer();
-            responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-            responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_HEIGHT_MAP_RESCAN_REQUIRED_STR;
-            serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-            sendJsonResponse();
-
-          }
-
-          break;
-        }
-
-        // The map must actually COVER the toolpath. interpolateHeightMapZ clamps any lookup that
-        // falls outside the scanned rectangle to the nearest edge cell, silently -- so a map anchored
-        // over the wrong area does not fail, it feeds edge values to the whole job and the tool rides
-        // at a constant error for the entire run. Checked on every start, including when the map was
-        // sized from this same file: matching SIZES do not imply matching POSITIONS.
-        {
-          bool coverageKnown = false;
-          bool covers = doesHeightMapCoverOpenedJob(&coverageKnown);
-
-          if (coverageKnown) {
-
-            float jobMinX = 0.0f, jobMaxX = 0.0f, jobMinY = 0.0f, jobMaxY = 0.0f;
-            readOpenedFileBounds(&jobMinX, &jobMaxX, &jobMinY, &jobMaxY);
-            float mapMinX = heightMapOriginX;
-            float mapMaxX = heightMapOriginX + heightMapSizeXmm;
-            float mapMaxY = heightMapOriginY;
-            float mapMinY = heightMapOriginY - heightMapSizeYmm;
-
-            if (!covers) {
-
-              char dbg[200];
-              snprintf(dbg, sizeof(dbg),
-                       "HeightMap does not cover the job: job X[%.3f..%.3f] Y[%.3f..%.3f] map X[%.3f..%.3f] Y[%.3f..%.3f]",
-                       jobMinX, jobMaxX, jobMinY, jobMaxY, mapMinX, mapMaxX, mapMinY, mapMaxY);
-              serialManager.USBSerialPrint(FROM_CPUB);
-              serialManager.USBSerialPrintln(dbg);
-
-              if(jsonSettings.enableJsonResponse){
-
-                clearResponseJsonBuffer();
-                responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-                responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_HEIGHT_MAP_DOES_NOT_COVER_JOB_STR;
-                // Where the map actually is, so the frontend can say what to rescan.
-                responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ORIGIN_X_MM_STR] = roundf(heightMapOriginX * 1000.0f) / 1000.0f;
-                responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ORIGIN_Y_MM_STR] = roundf(heightMapOriginY * 1000.0f) / 1000.0f;
-                responseJsonBuffer[JSON_KEY_HEIGHT_MAP_SIZE_X_MM_STR] = heightMapSizeXmm;
-                responseJsonBuffer[JSON_KEY_HEIGHT_MAP_SIZE_Y_MM_STR] = heightMapSizeYmm;
-                serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-                sendJsonResponse();
-
-              }
-
-              break;
-
-            }
-
-          } else {
-
-            // Written before MIN/MAX metadata existed, so coverage cannot be verified here. The scan
-            // anchor falls back to the head position for such files too, so it is on the operator to
-            // have started the scan on the toolpath's top-left corner.
-            serialManager.USBSerialPrint(FROM_CPUB);
-            serialManager.USBSerialPrintln("HeightMap coverage NOT verified: opened file carries no MIN/MAX metadata");
-
-          }
-        }
-      }
 
       // Clear any leftover outstanding-ok count from a prior operation. If
       // waitForOk leaked > 0 (e.g. an aborted probe/scan or a lost status ok),
-      // handleJob() and handleManualSpindleRamp() would both stall at the start
+      // handleJob() would stall at the start
       // of this job — the job would show as running but neither the first line
       // nor the spindle ramp would be sent. Reset before the dry-run block so
       // its homing-Z ++waitForOk below is preserved.
@@ -9950,17 +3944,11 @@ void handleJsonCommand(){
       // never fully restored, GRBL keeps that reduced override — which would make
       // every commanded RPM in this new file run low for the whole job. Clear any
       // leftover resume-restore state and reset the override to 100% so the file
-      // relies solely on the normal manual RPM ramp (handleManualSpindleRamp),
-      // never the resume override ramp. The modal spindle memory (M3 flag,
+      // starts from a clean override. The modal spindle memory (M3 flag,
       // memorized S, held line) is also cleared so nothing leaks from the
       // console or a previous file into this job.
-      resetManualSpindleRampState();
       resetSpindleModalState(false);
-      isResumeSpindleOverrideRampActive = false;
-      resumeMotionAfterOverrideRampPending = false;
-      resumeSpindleRestoreStage = RESUME_RESTORE_DROP;
       pauseResumeSpindleRestorePending = false;
-      pendingPauseSpindleStop = false;
       pauseHoldRequestedMs = 0;
       serialManager.CPUASerialWrite(static_cast<byte>(GRBL_OVERRIDE_SPINDLE_RESET));
       spindleOverride = GRBL_OVERRIDE_DEFAULT;
@@ -9998,8 +3986,6 @@ void handleJsonCommand(){
       isJobRunning = true;
       jobLineIndex = 0;
       jobStartMs = millis();
-      if (heightMapCompensationEnabled)
-        heightMapUsedForCurrentFile = true;
 
       // Job launched: log "<startTime>,<jobFileName>" to the hidden SD job log and
       // bump the lifetime job counter. startTime is client-provided (no onboard RTC).
@@ -10128,34 +4114,11 @@ void handleJsonCommand(){
   }
     */
   
-  // A resume IS a spindle start: grblHAL's parking restore restarts the spindle on '~' by
-  // itself, which no M3 filtering on our side can intercept. So the same rule as startJob
-  // applies — refuse while the housing is installed and the lid is open. A dry run has no
-  // spindle to restore and stays resumable.
-  if(isDoorInterlockActiveNow() && !isDryRunActive){
-
-    if(jsonSettings.enableJsonResponse){
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-      responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_DOOR_OPEN_STR;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    serialManager.USBSerialPrint(FROM_CPUB);
-    serialManager.USBSerialPrintln("Resume refused: lid open (housing installed)");
-
-    break;
-
-  }
 
   // Release grblHAL's virtual safety door before the cycle start — while it is asserted grblHAL
   // will (correctly) refuse to restore. The door check above already guarantees the lid is closed,
   // so this only forwards a state change the next loop pass would have sent anyway; doing it here
   // removes the one-loop window between closing the lid and pressing resume.
-  handleVirtualDoorSignal();
 
   // ── RESUME offloaded to grblHAL (safety-door parking). ──
   // grblHAL is parked; a cycle-start ('~') restarts the spindle (with a spin-up dwell) and
@@ -10163,60 +4126,6 @@ void handleJsonCommand(){
   // is disabled below.
   serialManager.CPUASerialWrite(GRBL_RESUME);
 
-#if 0  // ─── OLD CPUB resume procedure (disabled; kept for revert) ───
-  // A resume arriving mid pause-feed-drop (before the hold completed) cancels it.
-  isPauseFeedDropActive = false;
-
-  // If a deferred pause-stop never fired (resume pressed before GRBL
-  // reached HOLD), the spindle was never toggled off via 0x9E, so we can
-  // just resume motion immediately without any spindle restore.
-  if (!pauseResumeSpindleRestorePending) {
-    pendingPauseSpindleStop = false;
-    pauseHoldRequestedMs = 0;
-    serialManager.CPUASerialWrite(GRBL_RESUME);
-  } else {
-    // The spindle is currently stopped via 0x9E. Resume motion ('~') and restart
-    // the spindle at full at the same instant, then "recycle" the override:
-    // startResumeSpindleOverrideRamp paces it DOWN to the floor and back UP to the
-    // captured target. GRBL-HAL applies overrides only out of HOLD, so the cycle
-    // runs after '~' while the spindle is already spinning. '~' and 0x9E are
-    // distinct realtime bytes, so sending them back-to-back is safe.
-    pauseResumeSpindleRestorePending = false;
-    pendingPauseSpindleStop = false;
-    pauseHoldRequestedMs = 0;
-
-    const int targetOverride = (pauseResumeOriginalSpindleOverride >= GRBL_OVERRIDE_MIN)
-                                 ? pauseResumeOriginalSpindleOverride
-                                 : GRBL_OVERRIDE_DEFAULT;
-
-    serialManager.CPUASerialWrite(GRBL_RESUME);
-    serialManager.CPUASerialWrite(static_cast<byte>(GRBL_OVERRIDE_SPINDLE_STOP_TOGGLE));
-
-    // The override was never altered during pause/resume, so the spindle restarts
-    // at the captured target; keep the local counter consistent before the cycle.
-    spindleOverride = targetOverride;
-
-    const bool rampStarted = startResumeSpindleOverrideRamp(targetOverride);
-
-    if (rampStarted) {
-      // Motion + spindle are already resumed above; the cycle must NOT re-send '~'.
-      resumeMotionAfterOverrideRampPending = false;
-      // Remember who asked to resume so the deferred resumeCompleted event
-      // (pushed when the ramp finishes) is routed back to that client.
-      resumeInputSource = currentInputSource;
-    }
-
-    // Motion has resumed; protect the tool while the spindle spins back up by ramping the
-    // FEED (motion) speed: drop it immediately, then ramp it back to the captured pre-pause
-    // value. grblHAL ignores feed-override changes during HOLD, so this must run AFTER '~'.
-    // resumeCompleted is deferred until BOTH this feed ramp and the spindle recycle finish.
-    resumeCompletionPending = true;
-    const int feedTarget = (pauseResumeOriginalFeedOverride >= GRBL_OVERRIDE_MIN)
-                             ? pauseResumeOriginalFeedOverride
-                             : GRBL_OVERRIDE_DEFAULT;
-    startResumeFeedRamp(feedTarget);
-  }
-#endif  // ─── end OLD CPUB resume procedure ───
 
   isJobPaused = false;
   isResuming = true;  // grblHAL now ramps the spindle + descends Z; cleared when it reaches Run
@@ -10921,21 +4830,6 @@ void handleJsonCommand(){
       sendJsonResponse();
     }
 
-  }else if(isMotionBlockedByDoor()){
-
-    // Housing installed, lid open, and `allowMotionWhenDoorOpen` is false: refuse the jog up
-    // front. Without this the jog would start and the door interlock would park the machine
-    // ~50 ms later — a visible lurch, plus a pause latch the user then has to clear. Placed
-    // before the `isJogging` keep-alive branch so a press held across a lid-open also starts
-    // reporting the refusal instead of acking.
-    if(jsonSettings.enableJsonResponse){
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-      responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_DOOR_OPEN_STR;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-    }
-
   }else if(receivedJsonBuffer[JSON_KEY_FEED_RATE_STR].isNull()
         || (receivedJsonBuffer[JSON_KEY_MOVE_X_STR].isNull()
             && receivedJsonBuffer[JSON_KEY_MOVE_Y_STR].isNull()
@@ -11147,12 +5041,6 @@ void handleJsonCommand(){
     const char* action = receivedJsonBuffer[JSON_VALUE_OVERRIDE_ACTION_KEY_STR].as<const char*>();
     unsigned char overrideByte = 0;
 
-    // The reduction the spindle can still take before it drops below
-    // SPINDLE_OVERRIDE_MIN_EFFECTIVE_RPM. A step past it is refused here, where the override byte
-    // is forwarded, so no client can get around it: the byte is never sent, and GRBL therefore
-    // never sees the reduction at all.
-    const int spindleOverrideFloor = minimumSpindleOverridePercent();
-    int steppedOverride = spindleOverride;
 
     if(strcmp(action, JSON_VALUE_OVERRIDE_ACTION_RESET_STR) == 0){
       overrideByte = GRBL_OVERRIDE_SPINDLE_RESET;
@@ -11161,24 +5049,14 @@ void handleJsonCommand(){
       overrideByte = GRBL_OVERRIDE_SPINDLE_INCREASE_COARSE;
       spindleOverride = min(GRBL_OVERRIDE_MAX, spindleOverride + GRBL_OVERRIDE_COARSE_STEP);
     }else if(strcmp(action, JSON_VALUE_OVERRIDE_ACTION_DECREASE_COARSE_STR) == 0){
-      steppedOverride = spindleOverrideAfterStep(spindleOverride, -GRBL_OVERRIDE_COARSE_STEP, spindleOverrideFloor);
-      if(steppedOverride < 0){
-        sendSpindleOverrideFloorRefusal();
-        break;
-      }
       overrideByte = GRBL_OVERRIDE_SPINDLE_DECREASE_COARSE;
-      spindleOverride = steppedOverride;
+      spindleOverride = max(GRBL_OVERRIDE_MIN, spindleOverride - GRBL_OVERRIDE_COARSE_STEP);
     }else if(strcmp(action, JSON_VALUE_OVERRIDE_ACTION_INCREASE_FINE_STR) == 0){
       overrideByte = GRBL_OVERRIDE_SPINDLE_INCREASE_FINE;
       spindleOverride = min(GRBL_OVERRIDE_MAX, spindleOverride + 1);
     }else if(strcmp(action, JSON_VALUE_OVERRIDE_ACTION_DECREASE_FINE_STR) == 0){
-      steppedOverride = spindleOverrideAfterStep(spindleOverride, -1, spindleOverrideFloor);
-      if(steppedOverride < 0){
-        sendSpindleOverrideFloorRefusal();
-        break;
-      }
       overrideByte = GRBL_OVERRIDE_SPINDLE_DECREASE_FINE;
-      spindleOverride = steppedOverride;
+      spindleOverride = max(GRBL_OVERRIDE_MIN, spindleOverride - 1);
     }else{
       if(jsonSettings.enableJsonResponse){
         clearResponseJsonBuffer();
@@ -11203,183 +5081,6 @@ void handleJsonCommand(){
 
   break;
 
-  case PROBE_LASER_EDGES:
-
-    if (isJobRunning || isJobPaused) {
-
-      logLaserProbeStartFailure("job already running or paused");
-
-      if (jsonSettings.enableJsonResponse) {
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_JOB_ALREADY_RUNNING_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    }
-
-    if (isMacroRunning) {
-
-      logLaserProbeStartFailure("macro already running");
-
-      if (jsonSettings.enableJsonResponse) {
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MACRO_ALREADY_RUNNING_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    }
-
-    if (!hasDistanceLaserSensorPresence) {
-
-      logLaserProbeStartFailure("distance laser sensor not detected");
-
-      if (jsonSettings.enableJsonResponse) {
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_DISTANCE_LASER_SENSOR_NOT_INITIALIZED_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    }
-
-    if (digitalRead(LASER_SENSOR_ENABLE_PIN) != HIGH) {
-
-      logLaserProbeStartFailure("distance laser sensor enable pin is LOW");
-
-      if (jsonSettings.enableJsonResponse) {
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_DISTANCE_LASER_SENSOR_NOT_INITIALIZED_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    }
-
-    if (!isDistanceLaserSensorInitialized) {
-
-      logLaserProbeStartFailure("distance laser sensor not initialized");
-
-      if (jsonSettings.enableJsonResponse) {
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_DISTANCE_LASER_SENSOR_NOT_INITIALIZED_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    }
-
-    {
-      float baselineMm = 0.0f;
-      bool baselineOutOfRange = false;
-      bool baselineOk = readDistanceLaserMm(&baselineMm, &baselineOutOfRange);
-
-      if (!baselineOk && !baselineOutOfRange) {
-
-        logLaserProbeStartFailure("distance laser baseline read failed");
-
-        if (jsonSettings.enableJsonResponse) {
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_DISTANCE_LASER_READ_FAILED_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-        break;
-
-      }
-
-      isMacroRunning = true;
-      isLaserEdgeProbingActive = true;
-      laserEdgeProbeSuppressAlarmAbort = false;
-      laserEdgeProbeWaitingForInitialUnlock = false;
-      laserEdgeProbeInputSource = currentInputSource;
-      laserEdgeProbeBaselineMm = baselineOk ? baselineMm : 0.0f;
-      laserEdgeProbeStartX = currentJobPositionX;
-      laserEdgeProbeStartY = currentJobPositionY;
-      laserEdgeProbeStartMachineX = currentMachinePositionX;
-      laserEdgeProbeStartMachineY = currentMachinePositionY;
-      // Corner selector (default bottom-left) → the X/Y edge directions probed.
-      // left = X-, right = X+, bottom = Y-, top = Y+ (natural Cartesian mapping).
-      // Unknown / missing values fall through to the bottom-left default.
-      const char* cornerStr = receivedJsonBuffer[JSON_KEY_XY0_CORNER_STR] | JSON_VALUE_XY0_CORNER_BOTTOM_LEFT_STR;
-      LaserEdgeProbeDirState xDir = PROBE_DIR_XNEG;
-      LaserEdgeProbeDirState yDir = PROBE_DIR_YNEG;
-      if (strcmp(cornerStr, JSON_VALUE_XY0_CORNER_BOTTOM_RIGHT_STR) == 0) { xDir = PROBE_DIR_XPOS; yDir = PROBE_DIR_YNEG; }
-      else if (strcmp(cornerStr, JSON_VALUE_XY0_CORNER_TOP_LEFT_STR) == 0)  { xDir = PROBE_DIR_XNEG; yDir = PROBE_DIR_YPOS; }
-      else if (strcmp(cornerStr, JSON_VALUE_XY0_CORNER_TOP_RIGHT_STR) == 0) { xDir = PROBE_DIR_XPOS; yDir = PROBE_DIR_YPOS; }
-
-      laserEdgeProbeFirstDir  = xDir;   // X phase probes this direction first
-      laserEdgeProbeSecondDir = yDir;   // Y phase follows
-      // Offset moved INTO the material along each axis (mm); default 0 if omitted.
-      laserEdgeProbeXOffset = receivedJsonBuffer[JSON_KEY_XY0_X_OFFSET_STR] | 0.0f;
-      laserEdgeProbeYOffset = receivedJsonBuffer[JSON_KEY_XY0_Y_OFFSET_STR] | 0.0f;
-
-      laserEdgeProbeXNeg = 0.0f;
-      laserEdgeProbeYNeg = 0.0f;
-      laserEdgeProbeCurrentDir = laserEdgeProbeFirstDir;
-      laserEdgeProbeState = LASER_EDGE_PROBE_COARSE_SCAN;
-      laserEdgeProbeSubState = LASER_EDGE_SUB_SEND;
-      laserEdgeProbeTraveled = 0.0f;
-      laserEdgeProbeRoughEdge = 0.0f;
-      laserEdgeProbeSetOriginStep = 0;
-
-      if (currentMachineState == ALARM) {
-        scheduleOrSendCPUA(GRBL_UNLOCK);
-        laserEdgeProbeSuppressAlarmAbort = true;
-        laserEdgeProbeWaitingForInitialUnlock = true;
-      }
-
-      if (debuggingSettings.debuggingMacroBuffer) {
-        char dbg[120];
-        snprintf(dbg, sizeof(dbg), "[LaserProbe] START work=(%.3f,%.3f) machine=(%.3f,%.3f) baseline=%.3f",
-                 laserEdgeProbeStartX, laserEdgeProbeStartY,
-                 laserEdgeProbeStartMachineX, laserEdgeProbeStartMachineY,
-                 laserEdgeProbeBaselineMm);
-        serialManager.USBSerialPrintln(dbg);
-      }
-
-      if (jsonSettings.enableJsonResponse) {
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-    }
-
-    break;
 
   default:
 
@@ -11395,135 +5096,6 @@ void handleJsonCommand(){
 
     break;
 
-  case PROBE_LASER_MATERIAL_BOUNDS: {
-
-    if (isJobRunning || isJobPaused) {
-
-      if (jsonSettings.enableJsonResponse) {
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_JOB_ALREADY_RUNNING_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    }
-
-    if (isMacroRunning || isLaserEdgeProbingActive || isLaserMaterialBoundsProbingActive) {
-
-      if (jsonSettings.enableJsonResponse) {
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MACRO_ALREADY_RUNNING_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    }
-
-    if (!hasDistanceLaserSensorPresence || !isDistanceLaserSensorInitialized || digitalRead(LASER_SENSOR_ENABLE_PIN) != HIGH) {
-
-      if (jsonSettings.enableJsonResponse) {
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_DISTANCE_LASER_SENSOR_NOT_INITIALIZED_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-      break;
-
-    }
-
-    {
-      float baselineMm = 0.0f;
-      bool baselineOutOfRange = false;
-      bool baselineOk = readDistanceLaserMm(&baselineMm, &baselineOutOfRange);
-
-      if (!baselineOk || baselineOutOfRange) {
-
-        if (jsonSettings.enableJsonResponse) {
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_DISTANCE_LASER_READ_FAILED_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-        break;
-
-      }
-
-      isMacroRunning = true;
-      isLaserMaterialBoundsProbingActive = true;
-      laserMaterialBoundsProbeSuppressAlarmAbort = false;
-      laserMaterialBoundsProbeWaitingForInitialUnlock = false;
-      laserMaterialBoundsProbeInputSource = currentInputSource;
-      laserMaterialBoundsProbeBaselineMm = baselineOk ? baselineMm : 0.0f;
-      laserMaterialBoundsProbeStartX = currentJobPositionX;
-      laserMaterialBoundsProbeStartY = currentJobPositionY;
-      laserMaterialBoundsProbeXMin = 0.0f;
-      laserMaterialBoundsProbeXMax = 0.0f;
-      laserMaterialBoundsProbeYMin = 0.0f;
-      laserMaterialBoundsProbeYMax = 0.0f;
-      laserMaterialBoundsProbeRoughEdge = 0.0f;
-      laserMaterialBoundsProbeCoarseCurrentTarget = 0.0f;
-      laserMaterialBoundsProbeTraveled = 0.0f;
-      laserMaterialBoundsProbeCenterX = 0.0f;
-      laserMaterialBoundsProbeCenterY = 0.0f;
-      hasLastDetectedMaterialCenter = false;
-      lastDetectedMaterialCenterX = 0.0f;
-      lastDetectedMaterialCenterY = 0.0f;
-      laserMaterialBoundsProbeCurrentDir = PROBE_DIR_XNEG;
-      laserMaterialBoundsProbeState = LASER_MATERIAL_BOUNDS_PROBE_COARSE_SCAN;
-      laserMaterialBoundsProbeSubState = LASER_EDGE_SUB_SEND;
-      laserMaterialBoundsProbeBaselineSampleSum = 0.0f;
-      laserMaterialBoundsProbeBaselineSampleCount = 0;
-      laserMaterialBoundsProbeReturnMotionObserved = false;
-      laserMaterialBoundsProbeRecoveryNeedsReset = false;
-      laserMaterialBoundsProbeAbortStage = nullptr;
-      laserMaterialBoundsProbeAbortDetail = nullptr;
-
-      if (currentMachineState == ALARM) {
-        scheduleOrSendCPUA(GRBL_UNLOCK);
-        laserMaterialBoundsProbeSuppressAlarmAbort = true;
-        laserMaterialBoundsProbeWaitingForInitialUnlock = true;
-      }
-
-      if (debuggingSettings.debuggingMacroBuffer) {
-        char dbg[128];
-        snprintf(dbg, sizeof(dbg), "[LaserBounds] START work=(%.3f,%.3f) baseline=%.3f",
-                 laserMaterialBoundsProbeStartX,
-                 laserMaterialBoundsProbeStartY,
-                 laserMaterialBoundsProbeBaselineMm);
-        serialManager.USBSerialPrintln(dbg);
-      }
-
-      if (jsonSettings.enableJsonResponse) {
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-    }
-
-    break;
-  }
   }
 
 }
@@ -12516,233 +6088,10 @@ void handleJsonSet(){
 
     break;
 
-    case SET_TOOL_LENGTH_REFERENCES:
 
-      if(receivedJsonBuffer[JSON_KEY_TOOL_LENGTH_REFERENCE_Z_STR].isNull()){
 
-        if(jsonSettings.enableJsonResponse){
 
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
 
-        }
-
-        break;
-
-      }
-
-      toolLengthReferenceSettings.refZ      = receivedJsonBuffer[JSON_KEY_TOOL_LENGTH_REFERENCE_Z_STR].as<float>();
-      toolLengthReferenceSettings.checkChar = EEPROM_CHECK_CHAR;
-      eepromManager.saveToolLengthReferenceSettings(toolLengthReferenceSettings);
-
-      if(jsonSettings.enableJsonResponse){
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-        responseJsonBuffer[JSON_KEY_TOOL_LENGTH_REFERENCE_Z_STR] = toolLengthReferenceSettings.refZ;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-    break;
-
-    case SET_PROBE_HEIGHT:
-
-      if(receivedJsonBuffer[JSON_KEY_PROBE_HEIGHT_STR].isNull()){
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-        break;
-
-      }
-
-      {
-        const float requestedProbeHeightMm = receivedJsonBuffer[JSON_KEY_PROBE_HEIGHT_STR].as<float>();
-
-        // The offset is a physical touch-plate/reference thickness: it must be positive.
-        if(requestedProbeHeightMm <= 0.0f){
-
-          if(jsonSettings.enableJsonResponse){
-
-            clearResponseJsonBuffer();
-            responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-            responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_INVALID_JSON_VALUE_STR;
-            serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-            sendJsonResponse();
-
-          }
-
-          break;
-
-        }
-
-        probeHeightSettings.heightMm  = requestedProbeHeightMm;
-        probeHeightSettings.checkChar = EEPROM_CHECK_CHAR;
-        eepromManager.saveProbeHeightSettings(probeHeightSettings);
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-          responseJsonBuffer[JSON_KEY_PROBE_HEIGHT_STR] = probeHeightSettings.heightMm;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-      }
-
-    break;
-
-    case SET_LASER_OFFSET_ZERO_SETTINGS:
-
-      if(receivedJsonBuffer[JSON_KEY_LASER_OFFSET_ZERO_X_BACK_MM_STR].isNull() || receivedJsonBuffer[JSON_KEY_LASER_OFFSET_ZERO_Y_BACK_MM_STR].isNull()){
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-        break;
-
-      }
-
-      {
-        float requestedXBackMm = receivedJsonBuffer[JSON_KEY_LASER_OFFSET_ZERO_X_BACK_MM_STR].as<float>();
-        float requestedYBackMm = receivedJsonBuffer[JSON_KEY_LASER_OFFSET_ZERO_Y_BACK_MM_STR].as<float>();
-
-        if(requestedXBackMm < 0.0f || requestedYBackMm < 0.0f){
-
-          if(jsonSettings.enableJsonResponse){
-
-            clearResponseJsonBuffer();
-            responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-            responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_INVALID_JSON_VALUE_STR;
-            serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-            sendJsonResponse();
-
-          }
-
-          break;
-
-        }
-
-        laserOffsetZeroSettings.xBackMm = requestedXBackMm;
-        laserOffsetZeroSettings.yBackMm = requestedYBackMm;
-        laserOffsetZeroSettings.checkChar = EEPROM_CHECK_CHAR;
-        eepromManager.saveLaserOffsetZeroSettings(laserOffsetZeroSettings);
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-          responseJsonBuffer[JSON_KEY_LASER_OFFSET_ZERO_X_BACK_MM_STR] = laserOffsetZeroSettings.xBackMm;
-          responseJsonBuffer[JSON_KEY_LASER_OFFSET_ZERO_Y_BACK_MM_STR] = laserOffsetZeroSettings.yBackMm;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-      }
-
-    break;
-
-    case SET_BRUSHLESS_MOTOR_SETTINGS:
-
-      if(receivedJsonBuffer[JSON_KEY_BRUSHLESS_MOTOR_DIRECTION_REVERSED_STR].isNull()){
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-        break;
-
-      }
-
-      brushlessMotorSettings.directionReversed =
-        receivedJsonBuffer[JSON_KEY_BRUSHLESS_MOTOR_DIRECTION_REVERSED_STR].as<bool>();
-      brushlessMotorSettings.checkChar = EEPROM_CHECK_CHAR;
-      eepromManager.saveBrushlessMotorSettings(brushlessMotorSettings);
-      // Applied immediately: the accessory reads a static level, so the new direction takes effect
-      // on its next run without a reboot.
-      applyBrushlessMotorDirection();
-
-      if(jsonSettings.enableJsonResponse){
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-        responseJsonBuffer[JSON_KEY_BRUSHLESS_MOTOR_DIRECTION_REVERSED_STR] = brushlessMotorSettings.directionReversed;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-
-    break;
-
-    case SET_HOUSING_SETTINGS:
-    {
-      // Both fields are optional; update whichever is provided. Fail only if neither is present.
-      bool hasInstalled   = !receivedJsonBuffer[JSON_KEY_HOUSING_INSTALLED_STR].isNull();
-      bool hasAllowMotion = !receivedJsonBuffer[JSON_KEY_ALLOW_MOTION_WHEN_DOOR_OPEN_STR].isNull();
-
-      if(!hasInstalled && !hasAllowMotion){
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-
-        break;
-
-      }
-
-      // A value was provided via API: persist to EEPROM so we stop relying on the compile-time default.
-      if(hasInstalled)
-        housingSettings.housingInstalled = receivedJsonBuffer[JSON_KEY_HOUSING_INSTALLED_STR].as<bool>();
-      if(hasAllowMotion)
-        housingSettings.allowMotionWhenDoorOpen = receivedJsonBuffer[JSON_KEY_ALLOW_MOTION_WHEN_DOOR_OPEN_STR].as<bool>();
-      housingSettings.checkChar = EEPROM_CHECK_CHAR;
-      eepromManager.saveHousingSettings(housingSettings);
-
-      if(jsonSettings.enableJsonResponse){
-
-        clearResponseJsonBuffer();
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-        responseJsonBuffer[JSON_KEY_HOUSING_INSTALLED_STR] = housingSettings.housingInstalled;
-        responseJsonBuffer[JSON_KEY_ALLOW_MOTION_WHEN_DOOR_OPEN_STR] = housingSettings.allowMotionWhenDoorOpen;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-
-      }
-    }
-    break;
 
     default:
 
@@ -12777,13 +6126,10 @@ void handleJsonGet(){
     responseJsonBuffer[JSON_KEY_MACHINE_STATUS_STR] = grblUtil.getMachineStateString(getReportedMachineState());
     responseJsonBuffer[JSON_KEY_PROBE_TRIGGERED_STR] = currentProbeTriggered;
     responseJsonBuffer[JSON_KEY_LASER_SENSOR_ENABLED_STR] = digitalRead(LASER_SENSOR_ENABLE_PIN) == HIGH;
-    responseJsonBuffer[JSON_KEY_DISTANCE_LASER_SENSOR_CONNECTED_STR] = hasDistanceLaserSensorPresence;
     // SD card initialised at boot (it is not retried later, so false means "power cycle with a card in").
     responseJsonBuffer[JSON_KEY_SD_CARD_CONNECTED_STR] = sdCardManager.connected;
     responseJsonBuffer[JSON_KEY_ROTARY_AXIS_CONNECTED_STR] = isRotaryAxisConnected;
     responseJsonBuffer[JSON_KEY_HOMED_SINCE_POWER_ON_STR] = homedSincePowerOn;
-    // Live door/lid sensor state (raw pin, true = open). Meaningful when the housing is installed.
-    responseJsonBuffer[JSON_KEY_DOOR_OPEN_STR] = isDoorOpen();
 
     bool isFileOpened = openedReadFileName[0] != NULL_CHAR;
     responseJsonBuffer[JSON_KEY_FILE_OPENED_STR] = isFileOpened;
@@ -12797,17 +6143,6 @@ void handleJsonGet(){
     responseJsonBuffer[JSON_KEY_JOB_RESUMING_STR] = isResuming;
     responseJsonBuffer[JSON_KEY_FILE_TRANSFER_IN_PROGRESS_STR] = isFileTransferInProgress;
     responseJsonBuffer[JSON_KEY_FILE_DOWNLOAD_IN_PROGRESS_STR] = isFileDownloadInProgress;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_CONFIGURED_STR] = heightMapConfigured;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_SCAN_IN_PROGRESS_STR] = heightMapScanInProgress;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_READY_STR] = heightMapReady;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_COMPENSATION_ENABLED_STR] = heightMapCompensationEnabled;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_DENSITY_STR] =
-      heightMapFineDensity ? JSON_VALUE_HEIGHT_MAP_DENSITY_FINE_STR : JSON_VALUE_HEIGHT_MAP_DENSITY_COARSE_STR;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ACTIVE_FOR_OPENED_FILE_STR] =
-      (openedReadFileName[0] != NULL_CHAR)
-      && heightMapReady
-      && !heightMapUsedForCurrentFile
-      && (strcmp(openedReadFileName, heightMapBoundFile) == 0);
 
     if(isFileOpened)
       responseJsonBuffer[JSON_KEY_OPENED_FILE_NAME_STR] = openedReadFileName;
@@ -13571,36 +6906,6 @@ void handleJsonGet(){
 
     break;
 
-  case GET_DISTANCE_LASER_MM:
-
-    if(jsonSettings.enableJsonResponse) {
-
-      clearResponseJsonBuffer();
-
-      if(!isDistanceLaserSensorInitialized) {
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_DISTANCE_LASER_SENSOR_NOT_INITIALIZED_STR;
-      } else {
-        float distanceMm = 0.0f;
-        bool isOutOfRange = false;
-
-        if(readDistanceLaserMm(&distanceMm, &isOutOfRange)) {
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-          responseJsonBuffer[JSON_KEY_DISTANCE_LASER_MM_STR] = roundf(distanceMm * 1000.0f) / 1000.0f;
-        } else {
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = isOutOfRange
-            ? JSON_VALUE_ERROR_DISTANCE_LASER_OUT_OF_RANGE_STR
-            : JSON_VALUE_ERROR_DISTANCE_LASER_READ_FAILED_STR;
-        }
-      }
-
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
 
   case GET_MACHINE_NAME:
 
@@ -13630,62 +6935,9 @@ void handleJsonGet(){
 
     break;
 
-  case GET_TOOL_LENGTH:
 
-    if(jsonSettings.enableJsonResponse) {
 
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_TOOL_LENGTH_STR] = toolLength;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
 
-    }
-
-    break;
-
-  case GET_TOOL_LENGTH_REFERENCES:
-
-    if(jsonSettings.enableJsonResponse) {
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_TOOL_LENGTH_REFERENCE_Z_STR] = toolLengthReferenceSettings.refZ;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
-
-  case GET_PROBE_HEIGHT:
-
-    if(jsonSettings.enableJsonResponse) {
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_PROBE_HEIGHT_STR] = probeHeightSettings.heightMm;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
-
-  case GET_LASER_OFFSET_ZERO_SETTINGS:
-
-    if(jsonSettings.enableJsonResponse) {
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_LASER_OFFSET_ZERO_X_BACK_MM_STR] = laserOffsetZeroSettings.xBackMm;
-      responseJsonBuffer[JSON_KEY_LASER_OFFSET_ZERO_Y_BACK_MM_STR] = laserOffsetZeroSettings.yBackMm;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
 
   case GET_OPENED_FILE_BOUNDS:
 
@@ -13720,34 +6972,7 @@ void handleJsonGet(){
 
     break;
 
-  case GET_BRUSHLESS_MOTOR_SETTINGS:
 
-    if(jsonSettings.enableJsonResponse) {
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_BRUSHLESS_MOTOR_DIRECTION_REVERSED_STR] = brushlessMotorSettings.directionReversed;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
-
-  case GET_HOUSING_SETTINGS:
-
-    if(jsonSettings.enableJsonResponse) {
-
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_HOUSING_INSTALLED_STR] = housingSettings.housingInstalled;
-      responseJsonBuffer[JSON_KEY_ALLOW_MOTION_WHEN_DOOR_OPEN_STR] = housingSettings.allowMotionWhenDoorOpen;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
 
   case GET_SPINDLE_TYPE:
 
@@ -13756,7 +6981,6 @@ void handleJsonGet(){
       clearResponseJsonBuffer();
       responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
       responseJsonBuffer[JSON_KEY_SPINDLE_TYPE_STR] =
-          (INSTALLED_SPINDLE_TYPE == SPINDLE_48V) ? SPINDLE_TYPE_48V_STR : SPINDLE_TYPE_24V_STR;
       serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
       sendJsonResponse();
 
@@ -13886,11 +7110,6 @@ void handleJsonGet(){
 
       clearResponseJsonBuffer();
       responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_MATERIAL_CENTER_VALID_STR] = hasLastDetectedMaterialCenter;
-      if (hasLastDetectedMaterialCenter) {
-        responseJsonBuffer[JSON_KEY_MATERIAL_CENTER_X_STR] = lastDetectedMaterialCenterX;
-        responseJsonBuffer[JSON_KEY_MATERIAL_CENTER_Y_STR] = lastDetectedMaterialCenterY;
-      }
       serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
       sendJsonResponse();
 
@@ -13912,173 +7131,8 @@ void handleJsonGet(){
 
     break;
 
-  case GET_HEIGHT_MAP_STATUS:
 
-    if(jsonSettings.enableJsonResponse) {
 
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_CONFIGURED_STR] = heightMapConfigured;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_SIZE_X_MM_STR] = heightMapSizeXmm;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_SIZE_Y_MM_STR] = heightMapSizeYmm;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_SCAN_IN_PROGRESS_STR] = heightMapScanInProgress;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_READY_STR] = heightMapReady;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_COMPENSATION_ENABLED_STR] = heightMapCompensationEnabled;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_DENSITY_STR] =
-        heightMapFineDensity ? JSON_VALUE_HEIGHT_MAP_DENSITY_FINE_STR : JSON_VALUE_HEIGHT_MAP_DENSITY_COARSE_STR;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ACTIVE_FOR_OPENED_FILE_STR] =
-        (openedReadFileName[0] != NULL_CHAR)
-        && heightMapReady
-        && !heightMapUsedForCurrentFile
-        && (strcmp(openedReadFileName, heightMapBoundFile) == 0);
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_GRID_POINTS_X_STR] = heightMapGridPointsX;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_GRID_POINTS_Y_STR] = heightMapGridPointsY;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_POINTS_SCANNED_STR] = heightMapNextPointIndex;
-      // Actual grid pitch in mm. heightMapDensity only names the mode, and the pitch is recomputed as
-      // size / (points - 1), so it can come out finer than the coarse/fine nominal value.
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_SPACING_MM_STR] =
-        roundf(heightMapSpacingYmm * 1000.0f) / 1000.0f;
-      // Job coordinates of the map's (0,0) cell, so the frontend can check the map really is over the
-      // toolpath (compare against the file's own bounds) instead of assuming it.
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ORIGIN_X_MM_STR] =
-        roundf(heightMapOriginX * 1000.0f) / 1000.0f;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ORIGIN_Y_MM_STR] =
-        roundf(heightMapOriginY * 1000.0f) / 1000.0f;
-#if HEIGHT_MAP_USE_LEGACY_GRID_SCAN
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_LINE_SCAN_STR] = false;
-#else
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_LINE_SCAN_STR] = true;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ROWS_SCANNED_STR] = heightMapCurrentRow;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_ROWS_TOTAL_STR] = heightMapGridPointsY;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_SAMPLES_TAKEN_STR] = heightMapSamplesTaken;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_CELLS_INTERPOLATED_STR] = heightMapCellsInterpolated;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_MIN_CELL_SAMPLES_STR] = heightMapMinCellSamples;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_MAX_CELL_SPREAD_MM_STR] =
-        roundf(heightMapMaxCellSpreadMm * 1000.0f) / 1000.0f;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_NOISY_CELLS_STR] = heightMapNoisyCells;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_NOISIEST_CELL_X_MM_STR] =
-        roundf((float)heightMapNoisiestCellCol * heightMapSpacingXmm * 1000.0f) / 1000.0f;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_NOISIEST_CELL_Y_MM_STR] =
-        roundf(-(float)heightMapNoisiestCellRow * heightMapSpacingYmm * 1000.0f) / 1000.0f;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_BASELINE_SAMPLES_STR] = heightMapBaselineSampleCount;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_BASELINE_SPREAD_MM_STR] =
-        roundf(heightMapBaselineSpreadMm * 1000.0f) / 1000.0f;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_DATUM_FROM_CELLS_STR] = heightMapDatumFromCells;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_DATUM_BIAS_MM_STR] =
-        roundf(heightMapDatumBiasMm * 1000.0f) / 1000.0f;
-    responseJsonBuffer[JSON_KEY_HEIGHT_MAP_DATUM_BIAS_MM_STR] =
-      roundf(heightMapDatumBiasMm * 1000.0f) / 1000.0f;
-#endif
-      // The coverage verdict itself, so the frontend does not have to re-derive the geometry (and its
-      // tolerance) from raw bounds and risk drifting from what startJob actually enforces. Omitted
-      // when unknowable, so an absent key reads as "unknown", never as "does not cover".
-      {
-        bool coverageKnown = false;
-        bool covers = doesHeightMapCoverOpenedJob(&coverageKnown);
-        if (coverageKnown)
-          responseJsonBuffer[JSON_KEY_HEIGHT_MAP_COVERS_OPENED_JOB_STR] = covers;
-      }
-      if (heightMapBoundFile[0] != NULL_CHAR)
-        responseJsonBuffer[JSON_KEY_HEIGHT_MAP_BOUND_FILE_STR] = heightMapBoundFile;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
-
-  case GET_HEIGHT_MAP_POINTS:
-
-    if(jsonSettings.enableJsonResponse) {
-
-      clearResponseJsonBuffer();
-
-      if (!heightMapReady || heightMapTotalPoints == 0) {
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_HEIGHT_MAP_NOT_READY_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-        break;
-      }
-
-      int startIndex = receivedJsonBuffer[JSON_KEY_HEIGHT_MAP_POINTS_START_INDEX_STR] | 0;
-      int maxCount = receivedJsonBuffer[JSON_KEY_HEIGHT_MAP_POINTS_MAX_COUNT_STR] | 25;
-
-      if (maxCount < 1)
-        maxCount = 1;
-      if (maxCount > 40)
-        maxCount = 40;
-
-      if (startIndex < 0 || startIndex >= (int)heightMapTotalPoints) {
-        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_INVALID_JSON_VALUE_STR;
-        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-        sendJsonResponse();
-        break;
-      }
-
-      int endIndex = startIndex + maxCount;
-      if (endIndex > (int)heightMapTotalPoints)
-        endIndex = (int)heightMapTotalPoints;
-
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_POINTS_TOTAL_STR] = heightMapTotalPoints;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_POINTS_START_INDEX_STR] = startIndex;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_POINTS_RETURNED_STR] = endIndex - startIndex;
-      responseJsonBuffer[JSON_KEY_HEIGHT_MAP_COORDINATE_SPACE_STR] = JSON_VALUE_COORDINATE_SPACE_RELATIVE_STR;
-
-      JsonArray pointsArray = responseJsonBuffer[JSON_KEY_HEIGHT_MAP_POINTS_STR].to<JsonArray>();
-      JsonArray pointCoordinatesArray = responseJsonBuffer[JSON_KEY_HEIGHT_MAP_POINT_COORDINATES_STR].to<JsonArray>();
-      for (int idx = startIndex; idx < endIndex; ++idx) {
-        float pointWorkX = 0.0f;
-        float pointWorkY = 0.0f;
-        getHeightMapPointTarget((uint16_t)idx, &pointWorkX, &pointWorkY);
-
-        // Report coordinates RELATIVE to the scan-start corner (origin), not machine coords, for
-        // easier debugging: col*spacing in X (0,5,10,...) and -row*spacing in Y (0,-5,-10,...).
-        float roundedX = roundf((pointWorkX - heightMapOriginX) * 1000.0f) / 1000.0f;
-        float roundedY = roundf((pointWorkY - heightMapOriginY) * 1000.0f) / 1000.0f;
-        float value = roundf(heightMapRelativeMm[idx] * 1000.0f) / 1000.0f;
-
-        pointsArray.add(value);
-
-        JsonObject pointObject = pointCoordinatesArray.add<JsonObject>();
-        pointObject[JSON_KEY_MOVE_X_STR] = roundedX;
-        pointObject[JSON_KEY_MOVE_Y_STR] = roundedY;
-        pointObject[JSON_KEY_VALUE_STR] = value;
-      }
-
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-
-    }
-
-    break;
-
-  case GET_POINT_CLOUD_STATUS:
-
-    if (jsonSettings.enableJsonResponse) {
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-      responseJsonBuffer[JSON_KEY_POINT_CLOUD_SCAN_IN_PROGRESS_STR] = pointCloudScanInProgress;
-      responseJsonBuffer[JSON_KEY_POINT_CLOUD_READY_STR] = pointCloudReady;
-      responseJsonBuffer[JSON_KEY_POINT_CLOUD_GRID_POINTS_X_STR] = pointCloudGridPointsX;
-      responseJsonBuffer[JSON_KEY_POINT_CLOUD_GRID_POINTS_Y_STR] = pointCloudGridPointsY;
-      responseJsonBuffer[JSON_KEY_POINT_CLOUD_POINTS_SCANNED_STR] = pointCloudNextPointIndex;
-      responseJsonBuffer[JSON_KEY_POINT_CLOUD_POINTS_TOTAL_STR] = pointCloudTotalPoints;
-      responseJsonBuffer[JSON_KEY_POINT_CLOUD_SIZE_X_MM_STR] = pointCloudSizeXmm;
-      responseJsonBuffer[JSON_KEY_POINT_CLOUD_SIZE_Y_MM_STR] = pointCloudSizeYmm;
-      if (pointCloudScanInProgress)
-        responseJsonBuffer[JSON_KEY_POINT_CLOUD_CURRENT_ROW_STR] = pointCloudCurrentRow;
-      if (pointCloudDensityStr[0] != NULL_CHAR)
-        responseJsonBuffer[JSON_KEY_POINT_CLOUD_DENSITY_STR] = pointCloudDensityStr;
-      if (pointCloudFilename[0] != NULL_CHAR)
-        responseJsonBuffer[JSON_KEY_POINT_CLOUD_FILENAME_STR] = pointCloudFilename;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-    }
-
-    break;
 
   default:
 
@@ -14299,19 +7353,13 @@ void setLEDColor(int red, int green, int blue) {
 
 bool isProcedureBusy() {
 
-  return heightMapScanInProgress
-    || pointCloudScanInProgress
-    || isLaserMaterialBoundsProbingActive
-    || isLaserEdgeProbingActive;
+  // Every procedure this tracked (height map, point cloud, laser edge/bounds probing)
+  // was removed with the rangefinder stack, so no long-running procedure exists on CPU-B.
+  return false;
 
 }
 
 // Door sensor reads HIGH when the door is open, LOW when closed (see Config.h).
-bool isDoorOpen() {
-
-  return digitalRead(DOOR_SENSOR_PIN) == DOOR_SENSOR_OPEN_STATE;
-
-}
 
 // True when the spindle is (or is being ramped) at or above the minimum running
 // speed. Uses the same reference as the pause spindle-stop decision so the two stay
@@ -14322,204 +7370,29 @@ bool isSpindleSpinning() {
   if (commandedSpindleRPM > spindleReferenceRPM)
     spindleReferenceRPM = commandedSpindleRPM;
 
-  return spindleReferenceRPM >= MINIMUM_SPINDLE_RPM;
+  // No minimum-RPM floor any more: that was the 48 V BLDC spindle. On this board the
+  // grblHAL spindle output is Laser#1, where any non-zero S is genuinely "on".
+  return spindleReferenceRPM > 0;
 
 }
 
 // True when the spindle is turning (or ramping up) at ANY speed. The door interlock has no
 // "slow enough to be safe" threshold: a tool spinning at 500 rpm with the lid open is still
 // a spinning tool, so the interlock uses this instead of isSpindleSpinning(), which applies
-// MINIMUM_SPINDLE_RPM and drives the pause spindle-stop decision and the usage meter.
 bool isSpindleOnAtAnySpeed() {
 
-  if (isManualSpindleRampActive)
     return true;
 
   return currentSpindleRPM > 0 || commandedSpindleRPM > 0;
 
 }
 
-// Door interlock state used by the STREAMING gates (job lines, macros, passthrough): the
-// housing is installed and the lid has read open for the full debounce window. Debounced so
-// a brief electrical glitch can never drop a line or pause a running job.
-bool isDoorInterlockActive() {
-
-  return housingSettings.housingInstalled && doorOpenDebounced;
-
-}
-
-// Same interlock, but on the RAW pin, for one-shot API commands (startJob / resumeJob).
-// Those are refused the instant the lid reads open: being strict costs nothing on a command
-// the user just sent, whereas the streaming gates need the debounce.
-bool isDoorInterlockActiveNow() {
-
-  return housingSettings.housingInstalled && (doorOpenDebounced || isDoorOpen());
-
-}
-
-// True when the lid interlock forbids MOTION: the housing is installed, the lid is open, and
-// the preference does not allow motion with the lid open. Distinct from the spindle-start gate
-// — the spindle is blocked whenever the lid is open, regardless of this preference. Uses the
-// raw pin (isDoorInterlockActiveNow) because it gates one-shot API commands.
-bool isMotionBlockedByDoor() {
-
-  return isDoorInterlockActiveNow() && !housingSettings.allowMotionWhenDoorOpen;
-
-}
-
-// True when the machine is doing something the lid interlock must be able to stop: a motion
-// cycle, a jog, a homing cycle, a running job, or a turning spindle. Jog and Home are DISTINCT
-// GRBL states — grbl reports `Jog` and `Home`, never `Run`, for those — so they must be listed
-// explicitly. Without them, jogging and homing continued with the lid open even when
-// allowMotionWhenDoorOpen was false, which contradicted the documented behavior.
-bool isMachineActiveForDoorInterlock() {
-
-  return currentMachineState == RUN
-      || currentMachineState == JOG
-      || currentMachineState == HOME
-      || isJobRunning
-      || isSpindleOnAtAnySpeed();
-
-}
-
-// Central spindle-start gate. Nothing that would make the spindle turn may reach GRBL when:
-//  - the housing is installed and the lid is open (any RPM, no threshold), or
-//  - the job is paused (the machine is parked; the spindle must only come back on resume).
+// Central spindle-start gate: nothing that would make the spindle (Laser#1) turn on may reach
+// GRBL while the job is paused -- the machine is parked and it must only come back on resume.
+// The lid/housing half of this gate went away with the door interlock.
 bool isSpindleStartBlocked() {
 
-  return isDoorInterlockActive() || isJobPaused;
-
-}
-
-// Mirrors CPUB's interlock DECISION into grblHAL as a real safety-door signal (CMD_VIRTUAL_DOOR_*).
-// Deliberately NOT the raw lid state: grblHAL would then halt on every lid opening and
-// `allowMotionWhenDoorOpen` would become unreachable. CPUB keeps the policy; grblHAL becomes the
-// enforcement. While asserted, grblHAL refuses to start a parking restore at all, which removes
-// the whole class of races that 0x84 alone suffers from (an event can be swallowed by
-// state_await_resume(), or land mid-restore; a level cannot).
-//
-// The assertion LATCHES while the lid is open. The trigger is "spindle turning, or motion not
-// permitted", but it must not clear the instant grblHAL stops the spindle as part of parking —
-// that would release the interlock while the lid is still open and let a resume through.
-void handleVirtualDoorSignal() {
-
-  static bool virtualDoorSentOpen = false; // what CPUA currently believes
-  static bool virtualDoorSynced   = false; // force one send at boot so CPUA starts in a known state
-
-  if (!isDoorInterlockActive())
-    virtualDoorLatched = false;            // lid closed, or no housing: never hold the machine
-  else if (isSpindleOnAtAnySpeed() || !housingSettings.allowMotionWhenDoorOpen)
-    virtualDoorLatched = true;             // must hold
-  // else: lid open but motion permitted — leave the latch as it is (see the note above).
-
-  const bool desired = virtualDoorLatched;
-
-  if (virtualDoorSynced && desired == virtualDoorSentOpen)
-    return;
-
-  virtualDoorSentOpen = desired;
-  virtualDoorSynced = true;
-
-  serialManager.CPUASerialWrite(static_cast<byte>(desired ? GRBL_VIRTUAL_DOOR_OPEN : GRBL_VIRTUAL_DOOR_CLOSED));
-
-  serialManager.USBSerialPrint(FROM_CPUB);
-  serialManager.USBSerialPrintln(desired
-    ? "Virtual safety door ASSERTED to GRBL: resume refused until released"
-    : "Virtual safety door released to GRBL");
-
-}
-
-// Door/lid safety interlock. Only active when the housing is installed; otherwise the door
-// sensor is ignored entirely. When the housing is installed and the lid is opened (door pin
-// LOW, debounced) while the machine is doing something that must stop — a motion cycle is
-// running, a job is running, or the spindle is turning at any speed — it triggers exactly the
-// same action as an API pauseJob (grbl safety-door / parking: spindle off + Z lift), so the app
-// sees it as a normal pause. Level-based: if the lid is still open it will re-pause after a
-// resume, acting as an interlock; you must close the lid to run again. Closing the lid never
-// auto-resumes. This is the REACTIVE half of the interlock; the preventive half is the
-// spindle-start gate (isSpindleStartBlocked), which stops M3 from ever being forwarded while
-// the lid is open, so the spindle cannot start and then be caught here.
-void handleDoorSensor() {
-
-  // Log the raw door pin + gate flags whenever the pin state changes. Always on (not gated on
-  // debuggingBase) so wiring / polarity / housing-flag issues are visible on the console.
-  {
-    static int lastLoggedDoorRaw = -1;
-    int raw = digitalRead(DOOR_SENSOR_PIN);
-    if (raw != lastLoggedDoorRaw) {
-      lastLoggedDoorRaw = raw;
-      char dbg[96];
-      snprintf(dbg, sizeof(dbg), "Door GPIO23=%s housing=%d active=%d paused=%d",
-               raw == HIGH ? "HIGH(open)" : "LOW(closed)",
-               housingSettings.housingInstalled ? 1 : 0,
-               isMachineActiveForDoorInterlock() ? 1 : 0,
-               isJobPaused ? 1 : 0);
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln(dbg);
-    }
-  }
-
-  if (!housingSettings.housingInstalled) {
-    doorSensorOpenSinceMs = 0;
-    doorOpenDebounced = false;    // no housing: the sensor is ignored, the gates stay open
-    return;
-  }
-
-  if (!isDoorOpen()) {            // lid closed (pin LOW) — nothing to do, reset debounce
-    doorSensorOpenSinceMs = 0;
-    doorOpenDebounced = false;
-    return;
-  }
-
-  // Lid reads open (pin HIGH): require it to persist DOOR_SENSOR_DEBOUNCE_MS to reject glitches.
-  if (doorSensorOpenSinceMs == 0)
-    doorSensorOpenSinceMs = millis();
-  if ((unsigned long)(millis() - doorSensorOpenSinceMs) < DOOR_SENSOR_DEBOUNCE_MS)
-    return;
-
-  // Confirmed lid-open: from here on every spindle-start gate (isSpindleStartBlocked) refuses
-  // M3/S, so nothing can start the spindle again until the lid is closed.
-  doorOpenDebounced = true;
-
-  // Decide whether to pause:
-  //  - spindle turning at ANY speed with the door open is always unsafe → pause regardless of
-  //    the preference (no MINIMUM_SPINDLE_RPM threshold here — see isSpindleOnAtAnySpeed);
-  //  - spindle off → pause only if the preference does NOT allow motion with the door open.
-  bool machineActive = isMachineActiveForDoorInterlock();
-  bool shouldPause = isSpindleOnAtAnySpeed() || !housingSettings.allowMotionWhenDoorOpen;
-
-  // The pause is normally one-shot: isJobPaused latches so we do not spam 0x84 while grbl parks.
-  // That latch must never become a blind spot. grblHAL can SWALLOW a safety-door byte: in
-  // state_await_resume() the EXEC_SAFETY_DOOR branch only updates a status field when no physical
-  // door input is configured (SAFETY_DOOR_ENABLE is off here), so a 0x84 racing a pending cycle
-  // start is discarded and the machine resumes anyway. CPUB would then sit believing the job is
-  // paused and stop feeding lines, while grbl runs on the planner blocks already queued — motion
-  // for a few seconds with the lid open, then a starve-stop. If grbl is REPORTING Run while the
-  // lid is open, the pause demonstrably did not take, so assert it again.
-  bool pauseNotEffective = isJobPaused && currentMachineState == RUN;
-
-  if (machineActive && shouldPause && (!isJobPaused || pauseNotEffective)) {
-
-    if (pauseNotEffective) {
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln("Machine still running with the lid open while marked paused: re-asserting the pause");
-    }
-
-
-    // Sent immediately, including in the middle of a parking RESUME. grblHAL handles a
-    // safety-door request during the restore by design (state_restore / state_await_resumed
-    // call restart_retract(): spindle off + full retract to the park target), which is exactly
-    // the response we want when the lid opens while the spindle is ramping back up. Deferring
-    // it until the machine reaches Run was tried and is wrong — it lets the restore finish and
-    // the tool descend before the pause lands.
-    pauseJobInternal(true);
-
-    if (debuggingSettings.debuggingBase) {
-      serialManager.USBSerialPrint(FROM_CPUB);
-      serialManager.USBSerialPrintln("Lid opened while machine active (housing installed): pausing");
-    }
-
-  }
+  return isJobPaused;
 
 }
 
@@ -14703,7 +7576,7 @@ void handleRGBLed() {
     // before a fresh Run status arrives) and would otherwise flash the LED red even though the
     // job is correctly held/resuming.
     if (isJobPaused || isPauseFeedDropActive
-        || isResumeSpindleOverrideRampActive || isResumeFeedRampActive) {
+ || isResumeFeedRampActive) {
       setLEDColor(255, 255, 0);  // Yellow color (Hold / pausing / resuming).
       return;
     }

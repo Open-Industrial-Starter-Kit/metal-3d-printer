@@ -111,117 +111,12 @@ bool EEPROMManager::saveMachineNameSettings(MachineNameSettings machineNameSetti
 
 }
 
-ToolLengthReferenceSettings EEPROMManager::readToolLengthReferenceSettings() {
 
-    ToolLengthReferenceSettings settings;
 
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings), settings);
-    EEPROM.end();
 
-    return settings;
 
-}
 
-bool EEPROMManager::saveToolLengthReferenceSettings(ToolLengthReferenceSettings settings) {
 
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings), settings);
-    bool success = EEPROM.commit();
-    EEPROM.end();
 
-    return success;
 
-}
 
-LaserOffsetZeroSettings EEPROMManager::readLaserOffsetZeroSettings() {
-
-    LaserOffsetZeroSettings settings;
-
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings), settings);
-    EEPROM.end();
-
-    return settings;
-
-}
-
-bool EEPROMManager::saveLaserOffsetZeroSettings(LaserOffsetZeroSettings settings) {
-
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings), settings);
-    bool success = EEPROM.commit();
-    EEPROM.end();
-
-    return success;
-
-}
-
-HousingSettings EEPROMManager::readHousingSettings() {
-
-    HousingSettings settings;
-
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings), settings);
-    EEPROM.end();
-
-    return settings;
-
-}
-
-bool EEPROMManager::saveHousingSettings(HousingSettings settings) {
-
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings), settings);
-    bool success = EEPROM.commit();
-    EEPROM.end();
-
-    return success;
-
-}
-
-ProbeHeightSettings EEPROMManager::readProbeHeightSettings() {
-
-    ProbeHeightSettings settings;
-
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings) + sizeof(HousingSettings), settings);
-    EEPROM.end();
-
-    return settings;
-
-}
-
-bool EEPROMManager::saveProbeHeightSettings(ProbeHeightSettings settings) {
-
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings) + sizeof(HousingSettings), settings);
-    bool success = EEPROM.commit();
-    EEPROM.end();
-
-    return success;
-
-}
-
-BrushlessMotorSettings EEPROMManager::readBrushlessMotorSettings() {
-
-    BrushlessMotorSettings settings;
-
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings) + sizeof(HousingSettings) + sizeof(ProbeHeightSettings), settings);
-    EEPROM.end();
-
-    return settings;
-
-}
-
-bool EEPROMManager::saveBrushlessMotorSettings(BrushlessMotorSettings settings) {
-
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_START_ADDRESS + sizeof(NetworkSettings) + sizeof(DebuggingSettings) + sizeof(JsonSettings) + sizeof(MachineNameSettings) + sizeof(ToolLengthReferenceSettings) + sizeof(LaserOffsetZeroSettings) + sizeof(HousingSettings) + sizeof(ProbeHeightSettings), settings);
-    bool success = EEPROM.commit();
-    EEPROM.end();
-
-    return success;
-
-}
