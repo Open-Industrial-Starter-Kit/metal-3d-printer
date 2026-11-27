@@ -13,6 +13,11 @@ api_state_t api_state = {
     /* laser_interlock      */ false,   // only closes when something asks,
     /* laser_main_power     */ false,   // so nothing is energised by merely
     /* laser_remote_on      */ false,   // powering the board
+    /* galvo_position_pending */ false,
+    /* galvo_position_x_mm  */ 0.0,
+    /* galvo_position_y_mm  */ 0.0,
+    /* galvo_max_x_mm       */ 0.0,     // main() fills these in at startup
+    /* galvo_max_y_mm       */ 0.0,
     /* num_points           */ 0,
     /* shape                */ 1,
 };
@@ -84,6 +89,20 @@ static bool json_get_bool(const char *json, const char *key, bool *out)
     return false;
 }
 
+static bool json_get_double(const char *json, const char *key, double *out)
+{
+    const char *v = find_value(json, key);
+    if (v == NULL) return false;
+    if (*v != '-' && *v != '+' && *v != '.' && (*v < '0' || *v > '9')) return false;
+
+    char *end = NULL;
+    double d = strtod(v, &end);
+    if (end == v) return false;
+
+    *out = d;
+    return true;
+}
+
 // ---------------------------------------------------------------------------------------
 // Responses. Every reply carries "from":"cpuc" so a host reading CPU-B's mirrored stream
 // can tell CPU-C's answers from CPU-B's own.
@@ -135,6 +154,7 @@ static void handle_get(api_source_t src, const char *json)
                  "\"result\":\"success\",\"firmwareVersion\":\"%s\","
                  "\"galvoStreaming\":%s,\"galvoPower\":%s,"
                  "\"laserInterlock\":%s,\"laserMainPower\":%s,\"laserRemoteOn\":%s,"
+                 "\"galvoX\":%.3f,\"galvoY\":%.3f,"
                  "\"shape\":%d,\"numPoints\":%d,\"uptimeMs\":%lu",
                  JSON_API_FIRMWARE_VERSION,
                  api_state.galvo_streaming ? "true" : "false",
@@ -142,6 +162,7 @@ static void handle_get(api_source_t src, const char *json)
                  api_state.laser_interlock ? "true" : "false",
                  api_state.laser_main_power ? "true" : "false",
                  api_state.laser_remote_on ? "true" : "false",
+                 api_state.galvo_position_x_mm, api_state.galvo_position_y_mm,
                  api_state.shape, api_state.num_points,
                  (unsigned long)to_ms_since_boot(get_absolute_time()));
         api_send(src, body);
@@ -212,7 +233,31 @@ static void handle_command(api_source_t src, const char *json)
         }
     }
 
-    if (strcmp(what, "setGalvoStreaming") == 0) {
+    if (strcmp(what, "setGalvoPosition") == 0) {
+
+        double x, y;
+        if (!json_get_double(json, "x", &x) || !json_get_double(json, "y", &y)) {
+            api_fail(src, "missingJsonKey");
+            return;
+        }
+
+        // Refuse rather than clamp: an out of range value is a client bug, and silently
+        // moving somewhere else is worse than saying no.
+        if (x < 0.0 || x > api_state.galvo_max_x_mm ||
+            y < 0.0 || y > api_state.galvo_max_y_mm) {
+            api_fail(src, "valueOutOfRange");
+            return;
+        }
+
+        // A parked position would be overwritten by the very next sweep frame, so asking for
+        // one implies manual control. Streaming can be turned back on explicitly.
+        api_state.galvo_streaming      = false;
+        api_state.galvo_position_x_mm  = x;
+        api_state.galvo_position_y_mm  = y;
+        api_state.galvo_position_pending = true;
+        api_ok(src);
+
+    } else if (strcmp(what, "setGalvoStreaming") == 0) {
         if (!json_get_bool(json, "value", &value)) { api_fail(src, "missingJsonKey"); return; }
         api_state.galvo_streaming = value;   // main() stops pushing frames when false
         api_ok(src);

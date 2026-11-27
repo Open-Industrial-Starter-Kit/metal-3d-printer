@@ -39,6 +39,15 @@ typedef struct {
     bool laser_main_power;      // LaserPowerON  -> REMOTE_PWRON
     bool laser_remote_on;       // LaserRemoteON -> REMOTE_ON
 
+    // Manual galvo positioning. setGalvoPosition parks the mirrors at one point instead of
+    // running the sweep: main() packs the XY2-100 frames and pushes one of each, and the PIO
+    // repeats the last word whenever its FIFO is empty, so the head holds there.
+    bool   galvo_position_pending;  // set by the API, cleared by main() once applied
+    double galvo_position_x_mm;     // last commanded position
+    double galvo_position_y_mm;
+    double galvo_max_x_mm;          // travel limits, filled in by main() at startup so the
+    double galvo_max_y_mm;          // API can range check without duplicating the constants
+
     int  num_points;            // points in the current shape (read only)
     int  shape;                 // 0 = circle, 1 = rectangle (read only)
 } api_state_t;

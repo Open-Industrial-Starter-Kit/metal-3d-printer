@@ -233,6 +233,8 @@ int main() {
     //[2026-11-27] Bring up the CPU-B link and the JSON API before the galvo starts
     cpub_link_init();
     json_api_init(usb_write, cpub_link_write);
+    api_state.galvo_max_x_mm = X_MAX_POS_MM;
+    api_state.galvo_max_y_mm = Y_MAX_POS_MM;
     cpub_link_write("{\"from\":\"cpuc\",\"event\":\"linkUp\"}\r\n");
 
     //[2026-11-27] Every relay starts as a driven-low output, so nothing is energised by
@@ -509,6 +511,18 @@ int main() {
             sleep_us(delaygalvo);//
 
             api_poll();   //[2026-11-27] keep both command FIFOs drained
+
+            //[2026-11-27] Park the mirrors at a commanded point. One frame per axis is
+            // enough: the PIO's pull is non-blocking, so with an empty FIFO it keeps
+            // re-shifting the last word and the head simply holds position.
+            if (api_state.galvo_position_pending) {
+                api_state.galvo_position_pending = false;
+                pio_sm_put(pio, sm_x, pack_x_frame(api_state.galvo_position_x_mm));
+                pio_sm_put(pio, sm_y, pack_y_frame(api_state.galvo_position_y_mm));
+                if (api_state.debugging_base)
+                    printf("CPUC: galvo parked at X%.3f Y%.3f\n",
+                           api_state.galvo_position_x_mm, api_state.galvo_position_y_mm);
+            }
            
         }
 

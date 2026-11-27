@@ -117,18 +117,43 @@ CPU-C's command set, so the two can be extended independently.
 | --- | --- |
 | `{"type":"serialPing"}` | `"result":"success"` |
 | `{"type":"get","getType":"getFirmwareVersion"}` | `"firmwareVersion":"0.1.0-bringup"` |
-| `{"type":"get","getType":"getStatus"}` | `firmwareVersion`, `galvoStreaming`, `galvoPower`, `laserInterlock`, `laserMainPower`, `laserRemoteOn`, `shape`, `numPoints`, `uptimeMs` |
+| `{"type":"get","getType":"getStatus"}` | `firmwareVersion`, `galvoStreaming`, `galvoPower`, `laserInterlock`, `laserMainPower`, `laserRemoteOn`, `galvoX`, `galvoY`, `shape`, `numPoints`, `uptimeMs` |
 | `{"type":"get","getType":"getDebuggingSettings"}` | `debuggingBase`, `enableJsonResponse` |
 | `{"type":"set","setType":"setDebuggingBase","value":true}` | `"result":"success"` |
 | `{"type":"set","setType":"setEnableJsonResponse","value":true}` | `"result":"success"` |
 | `{"type":"command","commandType":"setGalvoPower","value":true}` | `"result":"success"` |
 | `{"type":"command","commandType":"setGalvoStreaming","value":false}` | `"result":"success"` |
+| `{"type":"command","commandType":"setGalvoPosition","x":125.0,"y":60.5}` | `"result":"success"` |
 | `{"type":"command","commandType":"setLaserInterlock","value":true}` | `"result":"success"` |
 | `{"type":"command","commandType":"setLaserMainPower","value":true}` | `"result":"success"` |
 | `{"type":"command","commandType":"setLaserRemoteOn","value":true}` | `"result":"success"` |
 
 `setGalvoStreaming` stops CPU-C pushing new XY2-100 frames without stopping the state
 machines, so the head holds its last position rather than the scan restarting.
+
+### Manual positioning
+
+`setGalvoPosition` parks the mirrors at one point in millimetres instead of running the
+sweep:
+
+```json
+{"target":"cpuc","type":"command","commandType":"setGalvoPosition","x":125.0,"y":60.5}
+```
+
+CPU-C packs one XY2-100 frame per axis and pushes a single copy of each. Nothing needs to
+repeat it: the PIO programs reload with a **non-blocking** `pull`, so once the FIFO is empty
+they keep re-shifting the last word and the head holds that position indefinitely.
+
+Setting a position turns **`galvoStreaming` off**, because a parked point would otherwise be
+overwritten by the next sweep frame microseconds later. Turn streaming back on explicitly
+when you want the shape again.
+
+Both axes are required, and the range is 0 to 250 mm — the `X_MAX_POS_MM` / `Y_MAX_POS_MM`
+mapping onto the full 16 bit XY2-100 value. Out of range is **refused**, not clamped: a bad
+value is a client bug, and quietly moving somewhere else is worse than saying no. A value
+that is not a number is refused as `missingJsonKey` rather than read as zero.
+
+`getStatus` reports the last commanded position as `galvoX` / `galvoY`.
 
 ### Relays
 
@@ -165,6 +190,7 @@ firmware before the laser is ever fired in anger.
 | `unknownJsonType` | `type` missing or not recognised |
 | `unknownJsonGetType` / `unknownJsonSetType` / `unknownJsonCommandType` | second key not recognised |
 | `missingJsonKey` | a required key, usually `value`, was absent |
+| `valueOutOfRange` | a numeric value fell outside what the hardware allows |
 | `lineTooLong` | the line exceeded 512 characters |
 | `unknownTarget` | from **CPU-B**, when `target` is neither `cpub` nor `cpuc` |
 
