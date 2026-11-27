@@ -50,14 +50,21 @@
 #define GALVO_NEG_RLY_PIN      19   // PIO_15V_RLY  -> K7, -15 V to the scan head
 #define GALVO_POS_RLY_PIN      20   // PIO_PWR_RLY  -> K6, +15 V to the scan head
 
-// K6/K7 are driven ACTIVE-LOW: the GPIO pulls the TPM40V gate down to close the
-// relay, so a LOW pin energises the coil and feeds the head. Established on the
-// bench -- the head was live whenever the firmware believed it was off, and the
-// board came up with the rails already on because every relay pin is driven low
-// at boot. Written as a level rather than inline so the reported galvoPower
-// keeps meaning "head powered" whichever way the hardware is wired.
-#define GALVO_RLY_ACTIVE       0
-#define GALVO_RLY_INACTIVE     1
+// K6/K7 are driven ACTIVE-HIGH: a HIGH GPIO turns the TPM40V on, energises the
+// coil and feeds the head.
+//
+// This was briefly inverted on 2026-11-27 after a report that the button showed
+// the opposite of reality. That report was a display race in the app -- the
+// button re-read a stale cached state right after a click -- and inverting the
+// firmware "fixed" the symptom while making the hardware genuinely wrong,
+// including powering the head at boot, since the boot loop then drove these
+// pins to their new INACTIVE level of HIGH. Confirmed on the bench afterwards:
+// with the inversion in place the app read OFF while the head was running.
+//
+// Kept as named levels rather than a bare 0/1 so the sense is stated once and
+// the reported galvoPower keeps meaning "head powered".
+#define GALVO_RLY_ACTIVE       1
+#define GALVO_RLY_INACTIVE     0
 
 // Raycus RFL-C200A control relays. These are individual relay controls, NOT a power-up
 // sequencer: the vendor's required order is interlock closed, then main power, then remote
@@ -339,9 +346,8 @@ int main() {
     cpub_link_write("{\"from\":\"cpuc\",\"event\":\"linkUp\"}\r\n");
 
     //[2026-11-27] Every relay starts driven to its INACTIVE level, so nothing is energised
-    // by merely powering the board and no coil is left floating. The galvo pair is
-    // active-low (see GALVO_RLY_ACTIVE), so for those that level is HIGH -- driving them
-    // low here is what used to bring the scan head up with the board.
+    // by merely powering the board and no coil is left floating. For the galvo pair that
+    // level is LOW (see GALVO_RLY_ACTIVE), the same as the laser relays below.
     static const uint laser_relay_pins[] = {
         LASER_INTERLOCK_RLY_PIN, LASER_MAIN_POWER_RLY_PIN, LASER_REMOTE_ON_RLY_PIN,
     };
