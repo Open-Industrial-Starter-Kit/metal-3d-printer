@@ -715,15 +715,16 @@ documented in **[../CPU-C/README.md](../CPU-C/README.md)**.
   is later sent is what keeps the two from disagreeing.
 - Fails with `fileNotFound` if the card has no such file, and `fileEmpty` if nothing survives
   the filter.
-- **CPU-B does not read CPU-C's acknowledgements.** It writes the chunks and reports its own
-  success, so `{"result":"success",...}` here means "CPU-B sent it", not "CPU-C stored it".
-  CPU-C's `bytesRemaining` acks and any refusal (`layerBusy` when a layer there is still
-  `scanning` or `paused`, `layerTooLarge`) arrive separately on the mirror with
-  `"from":"cpuc"`. A client that cares whether the layer landed should watch for
-  `"layerStored":"success"` on the mirror, or ask CPU-C with `getLayerInfo` afterwards.
-- Pacing is open-loop for the same reason: `CPUC_CHUNK_GAP_MS` between chunks, sized against
-  CPU-C's parse time rather than its acks. Closing that loop is worth doing before this
-  carries real build data.
+- **The stream is paced by CPU-C's acknowledgements**, the same shape as `waitForOk` on the
+  GRBL link. CPU-C answers `startLayerTransfer` and every `lcl` chunk with `bytesRemaining`;
+  CPU-B waits for each one before sending the next, so the transfer cannot outrun the
+  receiver and `{"result":"success",...}` here does mean CPU-C stored it.
+- A refusal stops it at the point of refusal rather than streaming the rest into a receiver
+  that has said no. `layerBusy` (a layer still `scanning` or `paused`), `layerTooLarge` and a
+  silent link all come back as `{"result":"failure","error":"cpucTransferFailed"}` with
+  CPU-C's own reply quoted in `cpucReply`. Measured: a transfer attempted against a scanning
+  layer gives up after 1.4 s instead of sending 353 chunks.
+- `CPUC_CHUNK_ACK_TIMEOUT_MS` bounds each wait.
 - Measured: 600 KB off the card and into PSRAM in about 7 s, the link being the slow part.
 
 ### 5.14 `startJob`

@@ -558,6 +558,7 @@ enum JsonValueSetType {
 #define JSON_VALUE_ERROR_UNKNOWN_JSON_TYPE_STR "unknownJsonType"
 #define JSON_VALUE_ERROR_UNKNOWN_TARGET_STR "unknownTarget"
 #define JSON_VALUE_ERROR_FILE_EMPTY_STR "fileEmpty"
+#define JSON_VALUE_ERROR_CPUC_TRANSFER_FAILED_STR "cpucTransferFailed"
 #define JSON_VALUE_ERROR_UNKNOWN_JSON_COMMAND_TYPE_STR "unknownJsonCommandType"
 #define JSON_VALUE_ERROR_MISSING_JSON_KEY_STR "missingJsonKey"
 #define JSON_VALUE_ERROR_FILE_CREATION_FAILED_STR "fileCreationFailed"

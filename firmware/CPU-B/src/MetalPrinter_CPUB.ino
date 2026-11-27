@@ -168,6 +168,9 @@ unsigned long openedReadFileTotalLines = 0;
 unsigned long jobStartMs = 0;
 
 bool isMacroRunning = false;
+// One reply line from CPU-C, filled by waitForCPUCLine during a layer transfer.
+#define CPUC_REPLY_LINE_CHARS 256
+char cpucReplyLine[CPUC_REPLY_LINE_CHARS];
 int macroLineIndex = 0;
 
 //other variables
@@ -935,6 +938,52 @@ void readFromCPUC(){
 
   }
 
+}
+
+// Wait for one reply line from CPU-C, mirroring it to USB as readFromCPUC() would.
+//
+// Used only inside sendFileToCPUC, which blocks the main loop while it streams --
+// so the usual reader is not running and this has to pull the bytes itself.
+// Returns true if a line arrived before the timeout; the line is left in
+// cpucReplyLine for the caller to inspect.
+bool waitForCPUCLine(unsigned long timeoutMs) {
+
+  unsigned long started = millis();
+  size_t pos = 0;
+
+  while(millis() - started < timeoutMs) {
+
+    while(serialManager.availableFromCPUC() > 0) {
+
+      int readCPUC = serialManager.readFromCPUC();
+
+      if(readCPUC == -1)
+        break;
+
+      char c = (char)readCPUC;
+      serialManager.USBSerialWrite((byte)readCPUC);   // keep the console mirror
+
+      if(c == NEWLINE || c == RETURN) {
+        if(pos == 0)
+          continue;                                    // blank line between replies
+        cpucReplyLine[pos] = NULL_CHAR;
+        return true;
+      }
+
+      if(pos < CPUC_REPLY_LINE_CHARS - 1)
+        cpucReplyLine[pos++] = c;
+    }
+  }
+
+  cpucReplyLine[pos] = NULL_CHAR;
+  return false;
+}
+
+// True when CPU-C's reply is an acknowledgement of a stored chunk. A failure
+// reply (layerOverflow, layerBusy, ...) is NOT an ack: the caller stops.
+bool isCPUCChunkAck(bool* failed) {
+  *failed = (strstr(cpucReplyLine, "\"failure\"") != NULL);
+  return strstr(cpucReplyLine, "bytesRemaining") != NULL && !*failed;
 }
 
 void readFromCPUA(){
@@ -2919,6 +2968,59 @@ void forwardJsonToCPUC(const char* line){
 // NOTE: this blocks CPU-B for the duration (a few hundred ms for a typical layer). That is
 // fine while the galvo is idle, which by the machine cycle it always is when a layer is being
 // loaded, but it should become a state machine before it runs alongside anything else.
+// Send one chunk to CPU-C and wait for it to say it stored it.
+//
+// CPU-C acknowledges every `lcl` chunk with bytesRemaining, so the stream is
+// paced by that ack rather than by a fixed gap: the transfer cannot outrun the
+// receiver, and a refusal (layerOverflow, layerBusy, a layer still scanning)
+// stops it at the chunk that was refused instead of pushing the rest into a
+// buffer that is not listening. Returns false on a refusal or a timeout, with
+// the offending reply left in cpucReplyLine.
+bool sendCPUCChunkAndWait(const char* chunk) {
+
+  serialManager.CPUCSerialPrint("{\"lcl\":\"");
+  serialManager.CPUCSerialPrint(chunk);
+  serialManager.CPUCSerialPrintln("\"}");
+
+  // CPU-C may answer an unrelated line first (an event, a mirrored reply), so
+  // read until the acknowledgement or the timeout, not just the first line.
+  unsigned long deadline = millis() + CPUC_CHUNK_ACK_TIMEOUT_MS;
+
+  while(millis() < deadline) {
+
+    if(!waitForCPUCLine(deadline - millis()))
+      break;                                   // nothing more arrived in time
+
+    bool failed = false;
+
+    if(isCPUCChunkAck(&failed))
+      return true;
+
+    if(failed)
+      return false;                            // CPU-C refused this chunk
+  }
+
+  return false;
+}
+
+void reportCPUCTransferFailure() {
+
+  if(debuggingSettings.debuggingBase) {
+    serialManager.USBSerialPrint(FROM_CPUB);
+    serialManager.USBSerialPrint("CPU-C transfer stopped: ");
+    serialManager.USBSerialPrintln(cpucReplyLine);
+  }
+
+  if(jsonSettings.enableJsonResponse){
+    clearResponseJsonBuffer();
+    responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
+    responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_CPUC_TRANSFER_FAILED_STR;
+    responseJsonBuffer["cpucReply"] = cpucReplyLine;
+    serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+    sendJsonResponse();
+  }
+}
+
 void sendFileToCPUC(const char* filename, bool autoStart){
 
   char line[LINE_BUFFER_CHARACTERS];
@@ -2964,7 +3066,34 @@ void sendFileToCPUC(const char* filename, bool autoStart){
            "{\"type\":\"command\",\"commandType\":\"startLayerTransfer\",\"bytes\":%lu,\"layer\":0}",
            bytes);
   serialManager.CPUCSerialPrintln(msg);
-  delay(CPUC_TRANSFER_SETTLE_MS);
+
+  // Wait for CPU-C to accept the transfer before streaming into it. It refuses
+  // while a layer is still scanning or paused (layerBusy), or if the declared
+  // size will not fit (layerTooLarge) -- and without this the whole file went
+  // out anyway, to a receiver that had already said no.
+  {
+    bool accepted = false;
+    unsigned long deadline = millis() + CPUC_CHUNK_ACK_TIMEOUT_MS;
+
+    while(millis() < deadline) {
+
+      if(!waitForCPUCLine(deadline - millis()))
+        break;
+
+      if(strstr(cpucReplyLine, "\"failure\"") != NULL)
+        break;                                  // refused: cpucReplyLine says why
+
+      if(strstr(cpucReplyLine, "bytesRemaining") != NULL) {
+        accepted = true;
+        break;
+      }
+    }
+
+    if(!accepted) {
+      reportCPUCTransferFailure();
+      return;
+    }
+  }
 
   // ---- pass 2: send it ----
   static char chunk[CPUC_CHUNK_PAYLOAD_CHARS + 8];
@@ -2982,11 +3111,12 @@ void sendFileToCPUC(const char* filename, bool autoStart){
 
     if(clen && clen + 1 + n > CPUC_CHUNK_PAYLOAD_CHARS){
       chunk[clen] = '\0';
-      serialManager.CPUCSerialPrint("{\"lcl\":\"");
-      serialManager.CPUCSerialPrint(chunk);
-      serialManager.CPUCSerialPrintln("\"}");
+      if(!sendCPUCChunkAndWait(chunk)){
+        sdCardManager.closeProcessingFile();
+        reportCPUCTransferFailure();
+        return;
+      }
       nchunks++; clen = 0;
-      delay(CPUC_CHUNK_GAP_MS);
     }
 
     if(clen) chunk[clen++] = '|';
@@ -2997,11 +3127,11 @@ void sendFileToCPUC(const char* filename, bool autoStart){
 
   if(clen){
     chunk[clen] = '\0';
-    serialManager.CPUCSerialPrint("{\"lcl\":\"");
-    serialManager.CPUCSerialPrint(chunk);
-    serialManager.CPUCSerialPrintln("\"}");
+    if(!sendCPUCChunkAndWait(chunk)){
+      reportCPUCTransferFailure();
+      return;
+    }
     nchunks++;
-    delay(CPUC_CHUNK_GAP_MS);
   }
 
   if(autoStart){

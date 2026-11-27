@@ -94,8 +94,12 @@ typedef struct {
 // CPU-C's 2048 byte line buffer with room for the JSON wrapper; the gaps give CPU-C time to
 // split and copy a chunk before the next arrives.
 #define CPUC_CHUNK_PAYLOAD_CHARS 1700
-#define CPUC_CHUNK_GAP_MS 4
-#define CPUC_TRANSFER_SETTLE_MS 20
+// How long to wait for CPU-C's acknowledgement of one chunk before giving up on
+// the transfer, in ms. CPU-C answers every `lcl` chunk with bytesRemaining, so
+// the stream is paced by that ack rather than by a fixed delay -- the same shape
+// as waitForOk on the GRBL link. Generous: a chunk is ~1.7 KB and CPU-C may be
+// mid-frame-push when it arrives.
+#define CPUC_CHUNK_ACK_TIMEOUT_MS 2000
 // Serial2 drove an external WiFi module. Not fitted on this board:
 // GP8/GP9 are the RS-422 transceiver GM490_DI/GM490_DO.
 // The distance laser sensor is not fitted either, and its old UART pins
