@@ -10,6 +10,7 @@
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
 #include "hardware/uart.h"
+#include "json_api.h"
 #include "xy2_100.pio.h"   // NEW: generated from modified PIO file with .side_set 2
 
 
@@ -175,18 +176,28 @@ static void cpub_link_init(void)
     uart_set_fifo_enabled(CPUB_UART, true);
 }
 
-// Drains whatever CPU-B has sent and mirrors it to the USB CDC console.
-// Call this often: the UART FIFO is only 32 bytes deep, and at 115200 baud it fills in
-// under 3 ms, so polling once per galvo sweep would drop bytes.
-static void cpub_link_poll(void)
-{
-    while (uart_is_readable(CPUB_UART))
-        putchar(uart_getc(CPUB_UART));
-}
-
 static void cpub_link_write(const char *text)
 {
     uart_puts(CPUB_UART, text);
+}
+
+static void usb_write(const char *text)
+{
+    fputs(text, stdout);
+    fflush(stdout);
+}
+
+// Drains both command transports into the JSON API.
+// Call this often: the UART FIFO is only 32 bytes deep, and at 115200 baud it fills in
+// under 3 ms, so polling once per galvo sweep would drop bytes.
+static void api_poll(void)
+{
+    while (uart_is_readable(CPUB_UART))
+        json_api_feed(API_SRC_CPUB, (char)uart_getc(CPUB_UART));
+
+    int c;
+    while ((c = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT)
+        json_api_feed(API_SRC_USB, (char)c);
 }
 
 int main() {
@@ -209,9 +220,10 @@ int main() {
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, true);
 
-    //[2026-11-27] Bring up the CPU-B link before the galvo starts streaming
+    //[2026-11-27] Bring up the CPU-B link and the JSON API before the galvo starts
     cpub_link_init();
-    cpub_link_write("CPUC: link up\r\n");
+    json_api_init(usb_write, cpub_link_write);
+    cpub_link_write("{\"from\":\"cpuc\",\"event\":\"linkUp\"}\r\n");
 
     //[2026-07-16] Init relay pins as outputs, start OFF
     gpio_init(RELAY1_PIN);
@@ -459,20 +471,28 @@ int main() {
     // printf("NUM_POINTS = %d\n", NUM_POINTS);
     // sleep_ms(2000);
     
+    //[2026-11-27] publish what was computed above so getStatus can report it
+    api_state.num_points = NUM_POINTS;
+    api_state.shape      = shape;
+
     while (1) {
         for (int i = 0; i < NUM_POINTS; i++) {
 
             // push precomputed frame
             //pio_sm_put_blocking(pio, sm_x, x_frames[i]);
             //pio_sm_put_blocking(pio, sm_y, y_frames[i]);
-            pio_sm_put(pio, sm_x, x_frames[i]); // seamlessly updates
-            pio_sm_put(pio, sm_y, y_frames[i]); // seamlessly updates
+            //[2026-11-27] the API can pause streaming without stopping the state machines,
+            // so the head holds its last position instead of the scan restarting
+            if (api_state.galvo_streaming) {
+                pio_sm_put(pio, sm_x, x_frames[i]); // seamlessly updates
+                pio_sm_put(pio, sm_y, y_frames[i]); // seamlessly updates
+            }
             //pio->txf[sm_x] = x_frames[i];
             //pio->txf[sm_y] = y_frames[i];
 
             sleep_us(delaygalvo);//
 
-            cpub_link_poll();   //[2026-11-27] keep the CPU-B FIFO drained
+            api_poll();   //[2026-11-27] keep both command FIFOs drained
            
         }
 
@@ -487,8 +507,10 @@ int main() {
             // Somewhere in your loop:
             static int counter = 0;   // persists across calls
             counter++;
-            printf("[%d] rect_x1=%.1f  rect_x2=%.1f  rect_y1=%.1f  rect_y2=%.1f  NUM_POINTS=%d\n",
-                counter, rect_x1, rect_x2, rect_y1, rect_y2, NUM_POINTS);
+            //[2026-11-27] gated: this used to run every sweep and would bury JSON replies
+            if (api_state.debugging_base)
+                printf("[%d] rect_x1=%.1f  rect_x2=%.1f  rect_y1=%.1f  rect_y2=%.1f  NUM_POINTS=%d\n",
+                    counter, rect_x1, rect_x2, rect_y1, rect_y2, NUM_POINTS);
 
             // read LED state (0 = off, >0 = on)
             // bool led_state = gpio_get(LED_PIN);
@@ -508,13 +530,15 @@ int main() {
             //     }
             }
 
-            //[2026-07-16] Toggle both relays every 5 seconds (non-blocking)
-            if (now - relay_timer >= RELAY_INTERVAL_MS) {
-                relay_state = !relay_state;
+            //[2026-11-27] K6/K7 now follow the API rather than a 5 s test toggle, so the
+            // scan head is only powered when something asks for it. Applied every pass; the
+            // write is idempotent and costs one register store.
+            if (relay_state != api_state.galvo_relays) {
+                relay_state = api_state.galvo_relays;
                 gpio_put(RELAY1_PIN, relay_state);
                 gpio_put(RELAY2_PIN, relay_state);
-                relay_timer = now;
-                printf("Relays %s\n", relay_state ? "ON" : "OFF");
+                if (api_state.debugging_base)
+                    printf("CPUC: galvo relays %s\n", relay_state ? "ON" : "OFF");
             }
 
     }

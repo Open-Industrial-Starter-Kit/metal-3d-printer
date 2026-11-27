@@ -27,6 +27,7 @@ pico_sdk_init()
 
 add_executable(galvo_test
         galvo_test_with_relays.cpp
+        json_api.cpp
         )
 
 # Enable USB CDC (so printf goes to COMx port)

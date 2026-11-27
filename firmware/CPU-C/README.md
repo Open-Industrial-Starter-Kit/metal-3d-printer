@@ -15,6 +15,7 @@ position.
 | --- | --- |
 | **[xy2_100.pio](xy2_100.pio)** | PIO programs that generate the XY2-100 frames |
 | **[galvo_test_with_relays.cpp](galvo_test_with_relays.cpp)** | Bring-up test: streams a rectangle or circle to the head and toggles the ±15 V relays |
+| **[json_api.h](json_api.h)** / **[json_api.cpp](json_api.cpp)** | JSON control API (see below) |
 | **[CMakeLists.txt](CMakeLists.txt)** | Pico SDK project (SDK 2.3.0) |
 | **[reference/](reference/)** | XY2-100 specification extract and a timing capture |
 
@@ -71,6 +72,101 @@ call is `pio_set_gpio_base(pio, 16)`.
 Both state machines are stopped, their FIFOs cleared, preloaded with one frame
 each and then restarted together, so the X and Y frames stay aligned.
 
+
+## JSON control API
+
+CPU-C speaks the same JSON envelope CPU-B already uses with the host, so one client talks to
+both processors the same way. Lines are newline terminated; every reply is a single line.
+
+### Transports
+
+| Transport | Use |
+| --- | --- |
+| CPU-C's own USB CDC port | direct, for bring-up and debugging |
+| UART link from CPU-B | normal path, with the host talking only to CPU-B |
+
+A reply always goes back on whichever transport the command arrived on, and carries
+`"from":"cpuc"` so a host reading CPU-B's mirrored stream can tell the two processors apart.
+On boot CPU-C emits `{"from":"cpuc","event":"linkUp"}` on the CPU-B link.
+
+### Reaching CPU-C through CPU-B
+
+Add `"target":"cpuc"` and CPU-B forwards the line verbatim over the UART without parsing it:
+
+```json
+{"target":"cpuc","type":"serialPing"}
+```
+
+`"target":"cpub"`, or no `target` at all, is handled by CPU-B itself. Any other value gets
+`{"result":"failure","error":"unknownTarget"}` from CPU-B.
+
+Forwarding is deliberately dumb: CPU-B passes the raw text through and needs no knowledge of
+CPU-C's command set, so the two can be extended independently.
+
+### Envelope
+
+```json
+{"type":"<serialPing|get|set|command>", ...}
+```
+
+`type` selects the family; `get`/`set`/`command` each need a second key naming the operation.
+
+### Commands
+
+| Request | Reply (after `"from":"cpuc"`) |
+| --- | --- |
+| `{"type":"serialPing"}` | `"result":"success"` |
+| `{"type":"get","getType":"getFirmwareVersion"}` | `"firmwareVersion":"0.1.0-bringup"` |
+| `{"type":"get","getType":"getStatus"}` | `firmwareVersion`, `galvoStreaming`, `galvoRelays`, `shape`, `numPoints`, `uptimeMs` |
+| `{"type":"get","getType":"getDebuggingSettings"}` | `debuggingBase`, `enableJsonResponse` |
+| `{"type":"set","setType":"setDebuggingBase","value":true}` | `"result":"success"` |
+| `{"type":"set","setType":"setEnableJsonResponse","value":true}` | `"result":"success"` |
+| `{"type":"command","commandType":"setGalvoRelays","value":true}` | `"result":"success"` |
+| `{"type":"command","commandType":"setGalvoStreaming","value":false}` | `"result":"success"` |
+
+`setGalvoRelays` closes K6 and K7, which is what puts ±15 V on the scan head. It defaults to
+**false** at boot, so the head stays unpowered until something asks for it.
+
+`setGalvoStreaming` stops CPU-C pushing new XY2-100 frames without stopping the state
+machines, so the head holds its last position rather than the scan restarting.
+
+### Errors
+
+`{"result":"failure","error":"<code>"}` with one of:
+
+| Code | Meaning |
+| --- | --- |
+| `unknownJsonType` | `type` missing or not recognised |
+| `unknownJsonGetType` / `unknownJsonSetType` / `unknownJsonCommandType` | second key not recognised |
+| `missingJsonKey` | a required key, usually `value`, was absent |
+| `lineTooLong` | the line exceeded 512 characters |
+| `unknownTarget` | from **CPU-B**, when `target` is neither `cpub` nor `cpuc` |
+
+`serialPing` answers even when `enableJsonResponse` is false, so it stays usable as a
+liveness check in any configuration. Everything else goes quiet.
+
+### Parser limits
+
+The parser is deliberately small and has no dependencies. It handles a **flat** object of
+string, boolean and number values: no nesting, no arrays, no escape sequences, and a 512
+character line limit. That is enough for control traffic. Bulk scan data is expected to get
+its own binary framing rather than being forced through this.
+
+Booleans accept `true`/`false` and also `1`/`0`, which several clients emit.
+
+### Trying it
+
+With CPU-C on USB, or through CPU-B by adding `"target":"cpuc"`:
+
+```json
+{"type":"serialPing"}
+{"type":"get","getType":"getStatus"}
+{"type":"set","setType":"setDebuggingBase","value":true}
+```
+
+Per-sweep console logging is off by default, so replies are readable; turn it back on with
+`setDebuggingBase` when you want it.
+
 ## Building
 
 ```
@@ -86,9 +182,9 @@ mode.
 *Bring-up.* `galvo_test_with_relays.cpp` is test code from the hardware bring-up
 and is not the final firmware:
 
-- the shape is hard coded (rectangle or circle, selected by a `#define`) and
+- the shape is still hard coded (rectangle or circle, selected by a `#define`) and
   precomputed into a fixed 20 000 point buffer
-- there is no command interface, so the host cannot send a scan path yet
+- there is a control API but no scan path interface, so the host still cannot send geometry
 - the 8 MB PSRAM is not used
 - there is no fiber laser control in this project
 - `PICO_BOARD` is `weact_studio_rp2350b_core`, a development board rather than

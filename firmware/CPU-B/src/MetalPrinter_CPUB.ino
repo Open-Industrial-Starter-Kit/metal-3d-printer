@@ -2879,7 +2879,58 @@ void logRecoveredJobOk(int okCount) {
   serialManager.USBSerialPrintln(logLine);
 }
 
+// Sends a host JSON line on to CPU-C untouched.
+//
+// The raw text is forwarded rather than a re-serialised copy, so CPU-C sees exactly what the
+// host wrote and CPU-B needs no knowledge of CPU-C's command set. CPU-C's reply travels back
+// through readFromCPUC(), which mirrors it to USB; every CPU-C response carries
+// "from":"cpuc" so the host can tell the two processors apart.
+void forwardJsonToCPUC(const char* line){
+
+  serialManager.CPUCSerialPrintln(line);
+
+  if (debuggingSettings.debuggingJson) {
+    serialManager.USBSerialPrint(FROM_CPUB);
+    serialManager.USBSerialPrint("forwarded to CPU-C: ");
+    serialManager.USBSerialPrintln(line);
+  }
+
+}
+
 void handleJson(){
+
+    //routing: decide whether this message is ours at all, before any other parsing
+    if(!receivedJsonBuffer[JSON_KEY_TARGET_STR].isNull()){
+
+      const char* target = receivedJsonBuffer[JSON_KEY_TARGET_STR];
+
+      if(strcmp(target, JSON_VALUE_TARGET_CPUC_STR) == 0){
+
+        forwardJsonToCPUC(USBLineArray);
+        return;
+
+      }
+
+      if(strcmp(target, JSON_VALUE_TARGET_CPUB_STR) != 0){
+
+        if(jsonSettings.enableJsonResponse){
+
+          clearResponseJsonBuffer();
+          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
+          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_UNKNOWN_TARGET_STR;
+          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+          sendJsonResponse();
+
+        }
+
+        return;
+
+      }
+
+      //"cpub" falls through to the local handling below
+
+    }
+
 
     //first of all we try to get the filechunk for performance reasons, since it is the only type of message that we expect to receive in chunks, we want to handle it as soon as possible without trying to parse the whole JSON if we can avoid it
     if(!receivedJsonBuffer[JSON_KEY_FILE_CHUNK_LINES_STR].isNull()){

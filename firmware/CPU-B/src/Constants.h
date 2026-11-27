@@ -155,6 +155,14 @@ enum JsonCallKey {
 };
 
 #define JSON_KEY_TYPE_STR "type"
+
+// Routing. An optional "target" selects which processor handles the message. Absent or
+// "cpub" means CPU-B itself; "cpuc" makes CPU-B forward the line verbatim over the CPU-C
+// UART and stay out of it. CPU-C's reply comes back through the normal CPU-C mirror and
+// carries "from":"cpuc".
+#define JSON_KEY_TARGET_STR "target"
+#define JSON_VALUE_TARGET_CPUB_STR "cpub"
+#define JSON_VALUE_TARGET_CPUC_STR "cpuc"
 #define JSON_KEY_COMMAND_TYPE_STR "commandType"
 #define JSON_KEY_GET_TYPE_STR "getType"
 #define JSON_KEY_SET_TYPE_STR "setType"
@@ -537,6 +545,7 @@ enum JsonValueSetType {
 #define JSON_VALUE_ERROR_FILE_NOT_FOUND_STR "fileNotFound"
 #define JSON_VALUE_ERROR_FILE_HASH_NOT_FOUND_STR "fileHashNotFound"
 #define JSON_VALUE_ERROR_UNKNOWN_JSON_TYPE_STR "unknownJsonType"
+#define JSON_VALUE_ERROR_UNKNOWN_TARGET_STR "unknownTarget"
 #define JSON_VALUE_ERROR_UNKNOWN_JSON_COMMAND_TYPE_STR "unknownJsonCommandType"
 #define JSON_VALUE_ERROR_MISSING_JSON_KEY_STR "missingJsonKey"
 #define JSON_VALUE_ERROR_FILE_CREATION_FAILED_STR "fileCreationFailed"
