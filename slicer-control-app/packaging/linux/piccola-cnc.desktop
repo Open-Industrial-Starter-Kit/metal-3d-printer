@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Piccola CNC
+GenericName=CNC Machine Control
+Comment=Control and CAM for the Piccola CNC milling machine
+Exec=piccola-cnc
+Icon=piccola-cnc
+Terminal=false
+Categories=Development;Engineering;
+Keywords=CNC;CAM;G-code;milling;Kiri:Moto;PCB;
+StartupWMClass=piccola-cnc

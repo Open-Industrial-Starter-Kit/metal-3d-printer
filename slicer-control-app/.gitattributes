@@ -1,0 +1,4 @@
+# Vendor patches are applied with `git apply` to upstream sources that use LF.
+# Converting them to CRLF on a Windows checkout (core.autocrlf=true, the Git for
+# Windows default) makes every patch fail to apply, so keep them byte-exact.
+*.patch -text

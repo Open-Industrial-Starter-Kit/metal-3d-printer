@@ -1,0 +1,41 @@
+# Python virtual environment
+venv/
+.venv/
+# Intel (x86_64) build environment on an Apple Silicon Mac, run under Rosetta
+venv-x86_64/
+env/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller build output
+build/
+dist/
+# Finished archives set aside between builds (dist/ is wiped on every build)
+releases/
+# The throwaway environment build_windows.bat / build_unix.sh make
+build-venv/
+# ...and the Ubuntu 22.04 one build_linux_container.sh makes
+build-venv-jammy/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Vendored CAM bundles.
+# EasyTrace5000 IS committed (vendor/easytrace/): it is a static site and AGPL-3.0,
+# so shipping it byte-identical is what keeps redistribution simple.
+# Kiri:Moto is generated MIT build output (~63 MB) — rebuild it instead:
+#     python3 tools/fetch_vendor.py kirimoto
+vendor/kirimoto/
+
+# Console logs saved from the app (Console page "save log")
+piccola-cnc-logs-*.txt
+
+# Local Claude Code settings
+.claude/

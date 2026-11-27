@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata: what App Center / GNOME Software show for the .deb
+     (name, publisher, website, description). <launchable> ties it to the
+     piccola-cnc.desktop launcher; the id is reverse-DNS as AppStream asks. -->
+<component type="desktop-application">
+  <id>com.piccolacnc.PiccolaCNC</id>
+  <launchable type="desktop-id">piccola-cnc.desktop</launchable>
+  <name>Piccola CNC</name>
+  <summary>Control and CAM for the Piccola CNC milling machine</summary>
+  <developer id="com.piccolacnc">
+    <name>InMachines Ingrassia GmbH</name>
+  </developer>
+  <url type="homepage">https://piccolacnc.com</url>
+  <metadata_license>CC0-1.0</metadata_license>
+  <content_rating type="oars-1.1"/>
+  <description>
+    <p>
+      Desktop controller for the Piccola CNC: jogging, job control, file
+      management, probing and height maps over USB serial or WiFi, with
+      Kiri:Moto (2D/3D) and EasyTrace5000 (PCB) CAM built in.
+    </p>
+  </description>
+  <categories>
+    <category>Development</category>
+    <category>Engineering</category>
+  </categories>
+</component>

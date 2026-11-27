@@ -1,0 +1,37 @@
+# NOTE: the CAM tab embeds two browser CAM tools in a QWebEngineView, so the
+# full PySide6 metapackage is REQUIRED — QtWebEngine ships in PySide6-Addons.
+# Swapping this for PySide6-Essentials to save space silently breaks that tab.
+PySide6>=6.5.0
+pyserial>=3.5
+websockets>=12.0
+zeroconf>=0.128.0          # optional: mDNS discovery for WS clients
+
+# ── BLE advertising (WiFi-discovery side-channel) ─────────────────────────────
+# The machine scans for a BLE advertisement named "minicnc_<ip>" to learn where
+# to open the WebSocket. Each OS needs its own peripheral/advertising backend;
+# all are optional — without them the app still works over USB serial.
+pyobjc-framework-CoreBluetooth>=9.0 ; sys_platform == "darwin"
+pyobjc-framework-libdispatch>=9.0   ; sys_platform == "darwin"
+dbus-fast>=2.0                      ; sys_platform == "linux"
+winrt-Windows.Devices.Bluetooth.Advertisement>=2.0 ; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=2.0                  ; sys_platform == "win32"
+
+# ── Surface reconstruction for 3-D scans (recon/) ─────────────────────────────
+# The .ply viewer can rebuild a surface from an open point cloud. Open3D carries
+# the reconstruction itself (Poisson, ball-pivoting, KD-trees, raycasting) and is
+# not optional to that feature — there is no lighter substitute for those.
+# Sizeable: open3d ~284 MB, scipy ~99 MB, numpy ~36 MB installed.
+#
+# Optional in practice, though listed here: Open3D publishes wheels for a
+# trailing set of Python versions, so a machine on a very new interpreter can
+# have everything else and not this. The app is built to survive that — the
+# .ply viewer disables its Surface toggle and says why (ui/pages/ply_viewer.py,
+# recon_available()), and piccola-cnc.spec collects the library only if it is
+# there. Nothing else in the app depends on it.
+numpy>=1.24
+scipy>=1.10
+# Capped below 0.20: 0.19.0 is what the reconstruction fixes in recon/ and
+# ui/pages/recon_panel.py were measured on (90+ sealed runs on a real scan).
+# 0.20.0 terminated the whole process ("libc++abi: terminating") on that same
+# scan where 0.19.0 produced a surface. Re-test before lifting the cap.
+open3d>=0.19,<0.20

@@ -181,6 +181,7 @@ Files
 - **[BOM](OISK_Metal_3D_Printer_BOM_Preliminary.xlsx)** - machine BOM, *preliminary*
 - **[PCB BOM](pcb/BOM/MetalPrinterV2_BOM_2026-06-15.xlsx)** - Control Board V2, 142 line items
 - **[Firmware](firmware)** - firmware architecture of the three RP2350B CPUs; source code *in preparation*
+- **[Slicer Control App](slicer-control-app)** - desktop slicer and machine control app (PySide6 / Qt); *starting point copied from the Piccola CNC CAM app, port to this machine in progress*
 - **[PCB Schematic](pcb/MetalPrinter_V2_Schematic.pdf)** - Control Board V2, 9 sheets
 - **Machine Wiring Schematic** - *in preparation*
 

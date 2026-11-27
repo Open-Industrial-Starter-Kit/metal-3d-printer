@@ -1,0 +1,16 @@
+# Piccola CNC — USB serial access without the dialout group.
+#
+# The machine's controller is a Raspberry Pi Pico 2 W (RP2350), which shows up
+# as a CDC-ACM port (/dev/ttyACM*) owned by root:dialout. Ubuntu does not put
+# desktop users in dialout, so out of the box the app can see the port but not
+# open it ("Permission denied"), which it can only report as "no machine found".
+#
+# TAG+="uaccess" grants the user logged in at the local seat access to the port
+# for as long as they are logged in — no group change, no re-login. It must run
+# before 73-seat-late.rules applies the tag, hence the 60- prefix.
+#
+# ID_MM_DEVICE_IGNORE keeps ModemManager from probing the port with AT commands
+# when it appears, which can otherwise collide with the app's first serialPing.
+#
+# Matches Raspberry Pi's USB vendor ID (0x2e8a), so any Pico-based serial device.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"

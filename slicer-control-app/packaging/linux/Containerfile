@@ -1,0 +1,27 @@
+# Build environment for the Linux packages: Ubuntu 22.04 (glibc 2.35).
+#
+# The bundle links against the build system's glibc and will not start on
+# anything older, so building here is what lets one .deb / AppImage run on
+# Ubuntu 22.04, 24.04, 26.04 and later. Used by build_linux_container.sh.
+FROM docker.io/library/ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+# The GL / X11 / Wayland libraries are here so PyInstaller can resolve what Qt
+# links against; the .deb declares them as Depends rather than relying on
+# whatever gets bundled. libusb-1.0-0 is linked by libOpen3D: without it
+# `import open3d` fails and the build quietly ships without the Surface view.
+# glib/gtk3/cups/xkbfile/pulse are for QtGui, QtWebEngine and QtPrintSupport.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-venv python3-dev \
+        binutils dpkg-dev file curl ca-certificates git \
+        libgl1 libegl1 libglx0 libdrm2 libfontconfig1 libdbus-1-3 \
+        libxkbcommon0 libxkbcommon-x11-0 \
+        libwayland-client0 libwayland-cursor0 libwayland-egl1 \
+        libxcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+        libxcb-render-util0 libxcb-randr0 libxcb-shape0 libxcb-xinerama0 \
+        libxcb-xkb1 libxcb-dri3-0 libnss3 libxcomposite1 libxdamage1 \
+        libxrandr2 libxtst6 libasound2 libgomp1 \
+        libusb-1.0-0 libglib2.0-0 libgtk-3-0 libcups2 libxkbfile1 libpulse0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
