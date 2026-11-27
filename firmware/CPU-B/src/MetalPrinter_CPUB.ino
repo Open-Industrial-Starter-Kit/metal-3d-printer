@@ -1194,6 +1194,18 @@ void handleMacros(){
 
   }else{
 
+    // The buffer is drained, so the macro is over. Clearing the flag here is what
+    // lets anything else run again: startJob refuses with "macroRunning" while it
+    // is set, and the app shows that as "Machine Busy". Leaving it set strands the
+    // machine -- IDLE, nothing queued, and every Start refused until a reboot.
+    //
+    // This branch lost its body in the Piccola subsystem strip (4fc25a8): its other
+    // statements completed a Z0 probe, a tool-length probe and a laser edge probe,
+    // all of which are gone, and the clear went with them.
+    isRotaryYLockBypassed = false;
+    isMacroRunning = false; //if there are no more lines to execute we can set the macro running flag to false, so we don't enter this function anymore until a new macro is loaded in the buffer
+
+    if(debuggingSettings.debuggingMacroBuffer) { serialManager.USBSerialPrintln("No more lines in macro buffer, stopping macro execution"); }
 
   }
     
