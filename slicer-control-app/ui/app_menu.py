@@ -3,9 +3,6 @@ ui/app_menu.py
 Hamburger (sandwich) app menu — a 1:1 port of the mobile app's menu sheet.
 
 Organisation mirrors the Android App.tsx menu exactly:
-  • Machine name (filled name box + edit button)
-  • Connectivity (link status)
-  • Machine connection (shows the machine ID; Switch re-runs discovery)
   • Hardware settings  -> sub-sheet (probe height,
     probe height, steps-per-mm calculator)
   • Machine info       -> sub-sheet (sensors, firmware, usage, job history)
@@ -1055,56 +1052,6 @@ class AppMenuDrawer(QDialog):
         connected = conn.is_serial_connected or conn.is_offline_link
         info = conn.machine_info()
 
-        # ── Machine name ────────────────────────────────────────────────────
-        v.addWidget(_section_title("Machine name"))
-        name_row = QHBoxLayout()
-        name_row.setSpacing(px(8))
-        self._name_lbl = lbl(info.get("machineName", "--") or "--", sz=14,
-                             bold=True, color=TXT,
-                             align=Qt.AlignVCenter | Qt.AlignLeft)
-        self._name_lbl.setObjectName("nameBox")
-        autoscale(self._name_lbl, self._style_name_box)
-        name_row.addWidget(self._name_lbl, 1)
-        self._edit_b = QPushButton()
-        self._edit_b.setObjectName("editBtn")
-        self._edit_b.setCursor(QCursor(Qt.PointingHandCursor))
-        self._edit_b.setEnabled(connected)
-        self._edit_b.clicked.connect(self._edit_machine_name)
-        name_row.addWidget(self._edit_b)
-        v.addLayout(name_row)
-        v.addWidget(hline())
-
-        # ── Connectivity ────────────────────────────────────────────────────
-        v.addWidget(_section_title("Connectivity"))
-        self._link_lbl, _link_sw = _switch_row(
-            v, "Connected" if connected else "Disconnected",
-            checked=connected, enabled=False)
-        v.addWidget(hline())
-
-        # ── Machine connection ──────────────────────────────────────────────
-        # USB serial is the only transport, so there is nothing to switch
-        # between. The row stays as the way back out of the developer offline
-        # mode, to searching for real hardware.
-        v.addWidget(_section_title("Machine connection"))
-        self._conn_row = _row_button(self._machine_conn_text(),
-                                     "Connect" if conn.is_offline else "--",
-                                     icon_name="sync")
-        self._conn_row.setEnabled(conn.is_offline)
-        self._conn_row.clicked.connect(self._switch_machine)
-        v.addWidget(self._conn_row)
-        v.addWidget(hline())
-
-        # ── CAM graphics ────────────────────────────────────────────────────
-        # The way back to the GPU after compatibility graphics was accepted
-        # (gpu_mode.py), once a driver update or another PC makes it usable.
-        import gpu_mode
-        v.addWidget(_section_title("Graphics"))
-        _, self._gpu_sw = _switch_row(
-            v, "Enable GPU",
-            checked=not gpu_mode.saved_safe_graphics())
-        self._gpu_sw.toggled.connect(self._toggle_gpu)
-        v.addWidget(hline())
-
         # ── Hardware settings / Machine info sub-sheets ─────────────────────
         hw = _row_button("Hardware settings", "View", icon_name="chevron-right")
         hw.clicked.connect(self._open_hardware)
@@ -1124,20 +1071,10 @@ class AppMenuDrawer(QDialog):
 
         bind(self, self._apply_scale)
 
-        # Live updates while the menu is open
-        conn.machine_info_changed.connect(self._on_info)
-
-        # Mirror the mobile app: refresh everything when the menu opens.
-        for g in ("machineName", "firmwareVersion",
-                  "deviceId",
+        # Refresh what the sub-sheets read when the menu opens.
+        for g in ("firmwareVersion", "deviceId",
                   "getMachineUsage", "getProbeHeight"):
             conn.get(g)
-
-    def _style_name_box(self, x):
-        x.setMinimumHeight(px(40))
-        x.setStyleSheet(
-            f"#nameBox {{ background: {LIGHT}; border-radius: {px(8)}px; "
-            f"padding: 0 {px(10)}px; color: {TXT}; }}")
 
     def _apply_scale(self, *_):
         self.setFixedWidth(px(360))
@@ -1147,13 +1084,6 @@ class AppMenuDrawer(QDialog):
         )
         self._v.setContentsMargins(px(20), px(16), px(20), px(16))
         self._v.setSpacing(px(8))
-        self._edit_b.setIcon(icons.icon("edit", px(16), "#FFFFFF"))
-        self._edit_b.setFixedSize(px(40), px(40))
-        self._edit_b.setStyleSheet(f"""
-            #editBtn {{ background: {NAVY}; border: none; border-radius: {px(10)}px; }}
-            #editBtn:hover {{ background: #2A3A5F; }}
-            #editBtn:disabled {{ background: #9AA3AD; }}
-        """)
         if self.isVisible():
             self._fit_height()
 
@@ -1174,87 +1104,15 @@ class AppMenuDrawer(QDialog):
         self.setFixedHeight(max(px(120), min(content_h, cap)))
 
     def done(self, r):
-        # done() is the single funnel for accept/reject/Esc — closeEvent is
-        # NOT guaranteed for dialogs, so disconnect here (once).
-        if not getattr(self, "_disconnected", False):
-            self._disconnected = True
-            for sig, slot in ((self._conn.machine_info_changed, self._on_info),):
-                try:
-                    sig.disconnect(slot)
-                except (RuntimeError, TypeError):
-                    pass
         super().done(r)
 
     # ── Live state ───────────────────────────────────────────────────────────
-
-    def _machine_conn_text(self) -> str:
-        if self._conn.is_offline:
-            return "Offline (dev)"
-        info = self._conn.machine_info()
-        did = str(info.get("deviceId", "") or "").strip()
-        if did and did != "--":
-            return f"ID: {did}"
-        return info.get("machineName", "--") or "--"
-
-    def _on_info(self, info: dict) -> None:
-        self._name_lbl.setText(info.get("machineName", "--") or "--")
-        self._conn_row._value_lbl.setText(self._machine_conn_text())
 
     # ── Actions (exact mobile API calls) ─────────────────────────────────────
 
     def _host(self):
         """Parent widget for sub-dialogs (the main window, once we close)."""
         return self.parent()
-
-    def _edit_machine_name(self) -> None:
-        from ui.pages.dialogs import TextInputDialog
-        current = self._name_lbl.text()
-        self.accept()                     # mobile parity: close menu first
-        dlg = TextInputDialog("Machine name", "New machine name",
-                              initial=current if current != "--" else "",
-                              parent=self._host())
-        if dlg.exec():
-            name = dlg.text()
-            if name:
-                self._conn.set("setMachineName", machineName=name)
-
-    def _switch_machine(self) -> None:
-        conn = self._conn
-        self.accept()                     # mobile parity: close the menu first
-        if conn.is_offline:
-            # Leave the simulation and go back to the search splash; a machine
-            # already on the cable is picked up by serial auto-connect.
-            conn.exit_offline_mode()
-
-    def _toggle_gpu(self, on: bool) -> None:
-        """Save the choice; it takes effect on restart (Chromium reads it once)."""
-        import gpu_mode
-        from ui.pages.dialogs import ConfirmDialog, InfoDialog
-
-        host = self._host()
-        if not gpu_mode.set_safe_graphics(not on):
-            self._gpu_sw.blockSignals(True)
-            self._gpu_sw.setChecked(not on)
-            self._gpu_sw.blockSignals(False)
-            self.accept()
-            InfoDialog("Graphics", "The setting could not be saved.",
-                       parent=host, success=False).exec()
-            return
-        if gpu_mode.safe_graphics() != on:
-            return                      # switched back to what is running now
-        self.accept()
-        message = ("Kiri:Moto will draw with the graphics card again. If it "
-                   "then gets stuck loading, the app offers software rendering "
-                   "again." if on else
-                   "Kiri:Moto will draw in software: slower, but it works "
-                   "without a usable graphics card.")
-        if ConfirmDialog("Restart now?",
-                         message + "\n\nThe change applies after a restart.",
-                         parent=host, yes_label="Restart",
-                         no_label="Later").exec():
-            gpu_mode.request_restart()
-            if host is not None:
-                host.window().close()
 
     def _open_hardware(self) -> None:
         conn, host = self._conn, self._host()
