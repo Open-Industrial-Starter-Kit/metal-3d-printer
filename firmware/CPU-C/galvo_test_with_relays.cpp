@@ -279,6 +279,14 @@ static void run_gcode_frames(PIO pio, uint sm_x, uint sm_y)
             pio_sm_put(pio, sm_x, pack_x_frame(gp.x_mm));
             pio_sm_put(pio, sm_y, pack_y_frame(gp.y_mm));
             laser_apply(gp.laser_on, gp.power);
+
+            // Keep the reported position live. Without this it only ever held
+            // the last setGalvoPosition park, so a status read during a scan
+            // showed the mirrors parked while they were drawing. Two stores at
+            // the frame rate is nothing next to the FIFO push above, and it
+            // means the figure the app shows is the point actually sent.
+            api_state.galvo_position_x_mm = gp.x_mm;
+            api_state.galvo_position_y_mm = gp.y_mm;
             continue;
         }
 

@@ -44,7 +44,11 @@ typedef struct {
     // running the sweep: main() packs the XY2-100 frames and pushes one of each, and the PIO
     // repeats the last word whenever its FIFO is empty, so the head holds there.
     bool   galvo_position_pending;  // set by the API, cleared by main() once applied
-    double galvo_position_x_mm;     // last commanded position
+    //: Where the mirrors were last told to be, in mm of field. Written by
+    //: setGalvoPosition for a manual park AND by the scan loop for every frame
+    //: it pushes, so getStatus reports the live position during a layer rather
+    //: than the last park.
+    double galvo_position_x_mm;
     double galvo_position_y_mm;
     double galvo_max_x_mm;          // travel limits, filled in by main() at startup so the
     double galvo_max_y_mm;          // API can range check without duplicating the constants
