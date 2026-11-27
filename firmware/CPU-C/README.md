@@ -147,8 +147,11 @@ CPU-C's command set, so the two can be extended independently.
 | `{"type":"command","commandType":"resumeLayer"}` | `"result":"success"` |
 | `{"type":"command","commandType":"abortLayer"}` | `"result":"success"` |
 
-`setGalvoStreaming` stops CPU-C pushing new XY2-100 frames without stopping the state
-machines, so the head holds its last position rather than the scan restarting.
+`setGalvoStreaming` controls the built-in test rectangle. It is **off at boot**, so nothing
+sweeps when the board powers up; turn it on only when you want the hardcoded shape as a
+diagnostic. Turning it off does not stop the state machines, so the head holds its last
+position rather than the scan restarting. It also stands aside automatically while a layer
+is being scanned.
 
 ### Manual positioning
 

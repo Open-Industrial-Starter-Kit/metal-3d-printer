@@ -11,7 +11,8 @@
 api_state_t api_state = {
     /* debugging_base       */ false,
     /* enable_json_response */ true,
-    /* galvo_streaming      */ true,
+    /* galvo_streaming      */ false,   // nothing sweeps at boot; the built-in test
+                                        // rectangle is opt-in via setGalvoStreaming
     /* galvo_power          */ false,   // every relay is open at boot and
     /* laser_interlock      */ false,   // only closes when something asks,
     /* laser_main_power     */ false,   // so nothing is energised by merely
