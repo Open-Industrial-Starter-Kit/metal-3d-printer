@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "pico/stdlib.h"
+#include "hardware/psram.h"
 
 api_state_t api_state = {
     /* debugging_base       */ false,
@@ -194,6 +195,36 @@ static void handle_get(api_source_t src, const char *json)
                  api_state.galvo_position_x_mm, api_state.galvo_position_y_mm,
                  api_state.shape, api_state.num_points,
                  (unsigned long)to_ms_since_boot(get_absolute_time()));
+        api_send(src, body);
+
+    } else if (strcmp(what, "getPsramInfo") == 0) {
+
+        // Proves the size rather than trusting the part number. Distinct patterns are
+        // written to the first, middle and last words BEFORE any are read back: if the
+        // device is smaller than claimed, the high addresses alias onto the low ones and
+        // the earlier patterns are destroyed, which the readback then catches.
+        const size_t size = psram_get_size();
+        bool readback_ok = false;
+
+        if (size >= 16) {
+            volatile uint32_t *psram = (volatile uint32_t *)0x11000000u;
+            const size_t words = size / 4;
+            const size_t idx[3] = { 0, words / 2, words - 1 };
+            const uint32_t pat[3] = { 0xA5A5F00Du, 0x5A5A0FF0u, 0xDEADBEEFu };
+
+            for (int i = 0; i < 3; i++) psram[idx[i]] = pat[i];
+
+            readback_ok = true;
+            for (int i = 0; i < 3; i++)
+                if (psram[idx[i]] != pat[i]) readback_ok = false;
+        }
+
+        snprintf(body, sizeof(body),
+                 "\"result\":\"success\",\"psramAvailable\":%s,\"psramSizeBytes\":%u,"
+                 "\"psramSizeMB\":%u,\"readbackOk\":%s,\"csPin\":%d",
+                 psram_is_available() ? "true" : "false",
+                 (unsigned)size, (unsigned)(size / (1024u * 1024u)),
+                 readback_ok ? "true" : "false", PICO_PSRAM_CS_PIN);
         api_send(src, body);
 
     } else if (strcmp(what, "getDebuggingSettings") == 0) {

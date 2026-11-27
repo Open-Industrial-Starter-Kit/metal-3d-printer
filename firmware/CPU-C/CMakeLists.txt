@@ -12,7 +12,10 @@ if (EXISTS ${picoVscode})
     include(${picoVscode})
 endif()
 # ====================================================================================
-set(PICO_BOARD weact_studio_rp2350b_core CACHE STRING "Board type")
+# Board definition for this PCB. The WeAct module header gets the PSRAM chip select, the
+# flash size and every default pin wrong for Control Board V2 -- see boards/ for details.
+list(APPEND PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_LIST_DIR}/boards)
+set(PICO_BOARD metal_printer_v2_cpuc CACHE STRING "Board type")
 
 cmake_minimum_required(VERSION 3.13)
 include(pico_sdk_import.cmake)
@@ -36,9 +39,9 @@ pico_enable_stdio_uart(galvo_test 0)
 
 
 
-        target_link_libraries(galvo_test pico_stdlib hardware_pio hardware_uart)
+        target_link_libraries(galvo_test pico_stdlib hardware_pio hardware_uart hardware_psram)
 
 pico_generate_pio_header(galvo_test ${CMAKE_CURRENT_LIST_DIR}/xy2_100.pio)
-target_link_libraries(galvo_test pico_stdlib hardware_pio hardware_uart)
+target_link_libraries(galvo_test pico_stdlib hardware_pio hardware_uart hardware_psram)
 
 pico_add_extra_outputs(galvo_test)
