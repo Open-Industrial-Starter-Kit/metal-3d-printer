@@ -1228,7 +1228,6 @@ class LivePreviewPage(QWidget):
         self.setStyleSheet(TRANSPARENT)
 
         self._chips: list[tuple[QPushButton, str | None]] = []
-        self._tool_dialogs: list = []
         self._parse_task = None          # _ParseTask reading a file, or None
         self._parse_notice = None        # delay before the progress readout
         self._parse_name = None
@@ -1297,23 +1296,6 @@ class LivePreviewPage(QWidget):
         self._clear_btn = self._chip("  Clear stored cache", icon_name="reset")
         self._clear_btn.clicked.connect(self._clear_cache)
         self._ov_tl.layout().addWidget(self._clear_btn)
-        # Next to it: what the machine measured of the bed. Disabled until
-        # there is a map to show — `heightMapReady` rides on every status poll,
-        # so the gate follows the machine rather than a guess.
-        self._hmap_btn = self._chip("  Height map", icon_name="height-map")
-        self._hmap_btn.setEnabled(False)
-        self._hmap_btn.setToolTip("No height map has been scanned")
-        self._hmap_btn.clicked.connect(self._show_height_map)
-        self._ov_tl.layout().addWidget(self._hmap_btn)
-        # And the sensor those maps are made with, on its own. Gated on
-        # `laserSensorEnabled` — which the firmware is careful to say is only
-        # the enable pin, so the dialog itself handles "on but still warming
-        # up" rather than the gate pretending to know.
-        self._laser_btn = self._chip("  Laser distance", icon_name="laser")
-        self._laser_btn.setEnabled(False)
-        self._laser_btn.setToolTip("The laser sensor is off")
-        self._laser_btn.clicked.connect(self._show_laser_distance)
-        self._ov_tl.layout().addWidget(self._laser_btn)
 
         # Under them: what the opened job needs at the machine -- how deep it
         # cuts and which tool(s), read from the header the CAM export writes
@@ -2065,7 +2047,7 @@ class LivePreviewPage(QWidget):
 
     def _recompute_busy(self) -> None:
         """Generating a preview is blocked while the machine is busy — a job
-        (running/held), manual motion (jog), homing/alarm, or a guided laser
+        (running/held), manual motion (jog), homing/alarm, or a guided
         procedure (procedureBusy). An already-rendered preview stays untouched."""
         flags = self._conn.flags() if self._conn else {}
         busy = (self._status_busy
@@ -2075,82 +2057,10 @@ class LivePreviewPage(QWidget):
         if busy != self._machine_busy:
             self._machine_busy = busy
             self._update_fetch_gate()
-        self._update_height_map_gate(flags)
-
-    def _update_height_map_gate(self, flags: dict | None = None) -> None:
-        """The height-map button follows `heightMapReady`.
-
-        Scanning is not the same as having: `heightMapScanInProgress` means the
-        points are still arriving and a half-map would read as a fault in the
-        bed rather than a scan in progress, so the button waits for the scan to
-        finish."""
-        if not hasattr(self, "_hmap_btn") or not hasattr(self, "_laser_btn"):
-            return
-        if flags is None:
-            flags = self._conn.flags() if self._conn else {}
-        ready = (bool(flags.get("heightMapReady", False))
-                 and not bool(flags.get("heightMapScanInProgress", False)))
-        self._hmap_btn.setEnabled(ready)
-        self._hmap_btn.setToolTip(
-            "Show the measured height map in 3D" if ready
-            else ("A height-map scan is running"
-                  if flags.get("heightMapScanInProgress")
-                  else "No height map has been scanned"))
-        laser_on = bool(flags.get("laserSensorEnabled", False))
-        self._laser_btn.setEnabled(laser_on)
-        self._laser_btn.setToolTip(
-            "Show the live distance reading" if laser_on
-            else "The laser sensor is off")
-
-    # Both of these poll the machine for as long as they are open — the laser
-    # readout every 300 ms, and the height map holds live signal connections.
-    # A dialog left behind a switched-away tab is invisible traffic against a
-    # machine that may be mid-job, so the page owns them and closes them with
-    # itself. Tracked in a list rather than two attributes because the only
-    # thing done with them is "close whatever is open".
-    def _own_dialog(self, dlg) -> None:
-        self._tool_dialogs.append(dlg)
-        # Drop the reference when it closes on its own, so a long session does
-        # not accumulate dead dialogs.
-        dlg.finished.connect(lambda _r, d=dlg: self._forget_dialog(d))
-        dlg.show()
-
-    def _forget_dialog(self, dlg) -> None:
-        try:
-            self._tool_dialogs.remove(dlg)
-        except ValueError:
-            pass
-
-    def close_tool_dialogs(self) -> None:
-        """Close the height-map / laser popups this page opened.
-
-        Called when the page is hidden (a tab change) and from the window's
-        own shutdown. Iterates a copy: close() fires `finished`, which removes
-        the entry from the list being walked.
-        """
-        for dlg in list(self._tool_dialogs):
-            try:
-                dlg.close()
-            except RuntimeError:
-                pass            # already destroyed by Qt
-        self._tool_dialogs.clear()
 
     def shutdown(self) -> None:
         """Called by MainWindow.closeEvent, like the CAM page's own."""
-        self.close_tool_dialogs()
         self._cancel_parse()
-
-    def _show_height_map(self) -> None:
-        if self._conn is None:
-            return
-        from ui.height_map_view import HeightMapDialog
-        self._own_dialog(HeightMapDialog(self._conn, parent=self.window()))
-
-    def _show_laser_distance(self) -> None:
-        if self._conn is None:
-            return
-        from ui.laser_distance_view import LaserDistanceDialog
-        self._own_dialog(LaserDistanceDialog(self._conn, parent=self.window()))
 
     def _update_fetch_gate(self) -> None:
         self._fetch_btn.setEnabled(not self._machine_busy)
@@ -2220,7 +2130,6 @@ class LivePreviewPage(QWidget):
 
     def hideEvent(self, e) -> None:
         super().hideEvent(e)
-        self.close_tool_dialogs()
         # Abandon a cache-freshness check cleanly when the page goes away —
         # the showEvent re-sync starts a fresh one if it is still needed.
         if self._hash_name is not None:

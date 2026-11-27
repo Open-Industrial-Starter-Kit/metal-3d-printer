@@ -1220,7 +1220,6 @@ class ControlsPage(QWidget):
         # Not checkable: the spindle-running state shows in the popup and the
         # status panel, so the top button must not turn blue when the spindle runs.
         self._action_btns["spindle"] = TopActionButton("spindle", "Spindle\ncontrol")
-        self._action_btns["laser"]   = TopActionButton("laser",   "Laser\nsensor",    checkable=True)
         self._action_btns["rotary"]  = TopActionButton("rotary",  "Rotary\nmode",     checkable=True)
 
         top_row.addWidget(self._action_btns["homing"],    2)
@@ -1228,7 +1227,6 @@ class ControlsPage(QWidget):
         top_row.addWidget(self._action_btns["softreset"], 2)
         top_row.addWidget(self._tool_length,              4)
         top_row.addWidget(self._action_btns["spindle"],   2)
-        top_row.addWidget(self._action_btns["laser"],     2)
         top_row.addWidget(self._action_btns["rotary"],    2)
         root.addLayout(top_row)
 
@@ -1295,16 +1293,8 @@ class ControlsPage(QWidget):
         move_grid.addWidget(_btn("goto_xy0",   "target", "Go to XY₀"),        1, 0)
         move_grid.addWidget(_btn("bed_front",  "bed",    "Bed to front"),     1, 1)
         move_grid.addWidget(_btn("type_coord", None,     "Type coordinates"), 1, 2)
-        move_grid.addWidget(_btn("detect_center", "detect-center", "Detect center"), 1, 4)
-        move_grid.addWidget(_btn("detect_xy0",    "edge-finding",  "Edge finding"),   1, 5)
-        move_grid.addWidget(_btn("detect_z0",     "detect-z0",     "Detect Z₀"),      1, 6)
+        move_grid.addWidget(_btn("detect_z0",     "detect-z0",     "Detect Z₀"),      1, 4)
         move_grid.setColumnStretch(7, 1)         # push the right pair to the edge
-
-        # Right group: the height-map wizard with 3D scanning beside it. The
-        # dry-run toggle no longer stacks here — it moved to the top-right of the
-        # jog area (see below), right of the Z move-up button.
-        move_grid.addWidget(_btn("height_map", "height-map", "Height map"), 1, 8)
-        move_grid.addWidget(_btn("point_cloud", "sensor",    "3D scanning"), 1, 9)
 
         jog_lay.addLayout(move_grid)
 
@@ -1312,8 +1302,8 @@ class ControlsPage(QWidget):
         # move-up button. Inserted before the trailing stretch of the jog row
         # (items: indent, jog pad, Z pad, ►dry-run◄, stretch), top-aligned so it
         # sits level with the Z ▲ button.
-        # Facing goes under it, which puts the four buttons in this corner into
-        # a 2x2 block and sets Facing directly left of Go to laser sensor zero.
+        # Facing goes under it, which puts the buttons in this corner into a
+        # block with Facing below the dry-run toggle.
         dry_col = QVBoxLayout()
         self._dry_col = dry_col
         dry_col.setContentsMargins(0, 0, 0, 0)
@@ -1324,14 +1314,10 @@ class ControlsPage(QWidget):
         # Frame: traces the opened file's bounding box so the operator can
         # preview the area the job occupies on the stock. Sits to the right of
         # the dry-run toggle.
-        # Under it, the same size: Z to the laser sensor's zero (see
-        # LaserZeroFlow), where the height map reads most accurately.
         frame_col = QVBoxLayout()
         self._frame_col = frame_col
         frame_col.setContentsMargins(0, 0, 0, 0)
         frame_col.addWidget(_btn("frame", "frame", "Frame"))
-        frame_col.addWidget(_btn("laser_zero", "laser",
-                                 "Go to laser sensor zero"))
         frame_col.addStretch(1)
         jog_inner.insertLayout(4, frame_col)
 
@@ -1528,7 +1514,6 @@ class ControlsPage(QWidget):
             lambda v: self._tool_length.set_value(f"{v:.1f} mm"))
         self._action_btns["spindle"].clicked.connect(self._on_spindle)
         conn.spindle_rpm_changed.connect(self._on_spindle_rpm)
-        self._action_btns["laser"].toggled.connect(self._on_laser_toggle)
         self._action_btns["rotary"].clicked.connect(self._on_rotary)
 
         # ── Move-to / sensor-detection buttons ─────────────────────────────
@@ -1538,15 +1523,10 @@ class ControlsPage(QWidget):
         b["type_coord"].clicked.connect(self._on_type_coordinates)
         b["dry_run"].toggled.connect(self._on_dry_run_toggle)
         b["frame"].clicked.connect(self._on_frame)
-        b["laser_zero"].clicked.connect(self._on_laser_zero)
         b["facing"].clicked.connect(self._on_facing)
-        b["detect_center"].clicked.connect(self._on_detect_center)
-        b["detect_xy0"].clicked.connect(self._on_detect_xy0)
         b["detect_z0"].clicked.connect(self._on_detect_z0)
-        b["height_map"].clicked.connect(self._on_height_map)
-        b["point_cloud"].clicked.connect(self._on_point_cloud)
 
-        # Reflect machine flags back into the toggles (laser / dry run)
+        # Reflect machine flags back into the toggles (dry run)
         conn.machine_flags_changed.connect(self._on_machine_flags)
 
         # Info boxes follow the selected step sizes / speed. Step rows notify
@@ -1582,24 +1562,6 @@ class ControlsPage(QWidget):
     def _on_detect_z0(self) -> None:
         from ui.pages.dialogs import ProbeZ0Flow
         ProbeZ0Flow(self._conn, parent=self).exec()
-
-    def _on_detect_xy0(self) -> None:
-        from ui.pages.dialogs import DetectXY0Flow
-        DetectXY0Flow(self._conn, parent=self).exec()
-
-    def _on_detect_center(self) -> None:
-        from ui.pages.dialogs import DetectCenterFlow
-        DetectCenterFlow(self._conn, parent=self).exec()
-
-    def _on_height_map(self) -> None:
-        from ui.pages.dialogs import HeightMapFlow
-        HeightMapFlow(self._conn, parent=self).exec()
-        self._bottom_btns["height_map"].setChecked(False)
-
-    def _on_point_cloud(self) -> None:
-        from ui.pages.dialogs import PointCloudFlow
-        PointCloudFlow(self._conn, parent=self).exec()
-        self._bottom_btns["point_cloud"].setChecked(False)
 
     def _on_spindle(self) -> None:
         """Open the spindle control popup; the button's checked state follows
@@ -1648,19 +1610,6 @@ class ControlsPage(QWidget):
 
     # ── State feedback ────────────────────────────────────────────────────────
 
-    # ── Frame with the laser sensor out of the way ───────────────────────────
-    #
-    # Framing traces the job's outline with the tool, and the laser sensor has
-    # no business being on while it does. So Frame switches it off first when it
-    # is on, and back on once the frame is over; when it was already off,
-    # nothing about it changes.
-    #
-    # "Over" is read off the machine status: the frame is seen to START (the
-    # machine leaves Idle, or a procedure goes busy) and then to END (back at
-    # Idle, not busy). If it never starts -- the machine refused it, or it was
-    # too short to catch -- the sensor is restored anyway after
-    # _FRAME_START_TIMEOUT_MS, so a frame that did not happen cannot leave the
-    # sensor off.
     _FRAME_START_TIMEOUT_MS = 5000
 
     #: How long a Frame may take to visibly start before it is assumed refused,
@@ -1743,24 +1692,7 @@ class ControlsPage(QWidget):
         self._framing = True
         self._frame_moved = False
         QTimer.singleShot(self._FRAME_START_TIMEOUT_MS, self._frame_watch_timeout)
-        if conn.flags().get("laserSensorEnabled", False):
-            conn.cmd("disableLaserSensor")
-            self._frame_restore_laser = True
-            self._frame_started = False
-            QTimer.singleShot(self._FRAME_START_TIMEOUT_MS,
-                              self._frame_start_timeout)
         conn.cmd("frameJob")
-
-    def _frame_check(self) -> None:
-        """Called on every status / flag update while a restore is pending."""
-        if not getattr(self, "_frame_restore_laser", False) or self._conn is None:
-            return
-        st = self._machine_status
-        busy = bool(self._conn.flags().get("procedureBusy", False))
-        if st in ("run", "jog", "home", "hold") or busy:
-            self._frame_started = True
-        elif self._frame_started and st == "idle":
-            self._frame_restore()
 
     # ── Frame stopped by an alarm ────────────────────────────────────────────
     #
@@ -1801,19 +1733,6 @@ class ControlsPage(QWidget):
         if getattr(self, "_framing", False) and not getattr(self, "_frame_moved", False):
             self._framing = False
 
-    def _frame_start_timeout(self) -> None:
-        if getattr(self, "_frame_restore_laser", False) and not self._frame_started:
-            self._frame_restore()
-
-    def _frame_restore(self) -> None:
-        self._frame_restore_laser = False
-        self._frame_started = False
-        conn = self._conn
-        if conn is None or not (conn.is_serial_connected or conn.is_ws_active):
-            return
-        if not conn.flags().get("laserSensorEnabled", False):
-            conn.cmd("enableLaserSensor")
-
     # ── Stock length (rotary mode) ───────────────────────────────────────────
     #
     # Frame traces the job's X/Y outline, and the firmware does it itself
@@ -1843,8 +1762,6 @@ class ControlsPage(QWidget):
     # can lose one. Each is sent once the machine is seen to have finished the
     # last -- Jog, then Idle again -- or, for one too short to catch, after
     # _FS_QUIET_S of Idle. An alarm, a lost connection or a step that never
-    # finishes ends the sequence. The laser sensor is switched off for it and
-    # back on after, as for Frame.
     _FS_BOUNDS_WAIT_S = 2.5
     _FS_POLL_MS = 100
     _FS_QUIET_S = 1.5
@@ -1939,14 +1856,10 @@ class ControlsPage(QWidget):
         steps += [f"$J=G90 X{xlo:.3f} F{feed}",
                   f"$J=G90 X{xhi:.3f} F{feed}",
                   f"$J=G90 X{x0:.3f} F{feed}"]
-        restore = bool(conn.flags().get("laserSensorEnabled", False))
-        if restore:
-            conn.cmd("disableLaserSensor")
         self._fs = {"phase": "moving", "steps": steps, "i": 0,
-                    "sent": 0.0, "started": False, "restore_laser": restore}
+                    "sent": 0.0, "started": False}
         self._sync_gates()
-        # after a beat, so the laser command is not cut off by the first jog
-        QTimer.singleShot(250 if restore else 0, self._frame_stock_next)
+        QTimer.singleShot(0, self._frame_stock_next)
 
     # ── Go to X0 (rotary mode) ───────────────────────────────────────────────
     #
@@ -2003,8 +1916,7 @@ class ControlsPage(QWidget):
             steps.append(f"$J=G53 G90 Z{ztop:.3f} F{zfeed}")
         steps.append(f"$J=G90 X0.000 F{feed}")
         self._fs = {"phase": "moving", "steps": steps, "i": 0, "sent": 0.0,
-                    "started": False, "restore_laser": False,
-                    "title": "Go to X₀"}
+                    "started": False, "title": "Go to X₀"}
         self._sync_gates()
         QTimer.singleShot(0, self._frame_stock_next)
 
@@ -2055,18 +1967,8 @@ class ControlsPage(QWidget):
         QTimer.singleShot(self._FS_POLL_MS, self._frame_stock_poll)
 
     def _frame_stock_end(self) -> None:
-        fs = getattr(self, "_fs", None)
         self._fs = None
-        conn = self._conn
-        if (fs and fs.get("restore_laser") and conn is not None
-                and (conn.is_serial_connected or conn.is_ws_active)
-                and not conn.flags().get("laserSensorEnabled", False)):
-            conn.cmd("enableLaserSensor")
         self._sync_gates()
-
-    def _on_laser_zero(self) -> None:
-        from ui.pages.dialogs import LaserZeroFlow
-        LaserZeroFlow(self._conn, parent=self).exec()
 
     def _on_facing(self) -> None:
         """Open the facing setup and pass the finished program upward.
@@ -2080,21 +1982,11 @@ class ControlsPage(QWidget):
         dlg.job_ready.connect(self.facing_job_ready)
         dlg.exec()
 
-    def _on_laser_toggle(self, on: bool) -> None:
-        # Only send when the user action differs from the machine state
-        if on != self._conn.flags().get("laserSensorEnabled", False):
-            self._conn.cmd("enableLaserSensor" if on else "disableLaserSensor")
-
     def _on_dry_run_toggle(self, on: bool) -> None:
         if on != self._conn.flags().get("dryRunEnabled", False):
             self._conn.set("setDryRun", dryRunEnabled=bool(on))
 
     def _on_machine_flags(self, flags: dict) -> None:
-        if "laserSensorEnabled" in flags:
-            b = self._action_btns["laser"]
-            b.blockSignals(True)
-            b.setChecked(flags["laserSensorEnabled"])
-            b.blockSignals(False)
         if "dryRunEnabled" in flags:
             b = self._bottom_btns["dry_run"]
             b.blockSignals(True)
@@ -2107,7 +1999,6 @@ class ControlsPage(QWidget):
             b.blockSignals(False)
             self._set_rotary_ui(bool(flags["rotaryAxisConnected"]))
         self._sync_gates()
-        self._frame_check()
 
     def _set_rotary_ui(self, rotary: bool) -> None:
         """Reshape the jog UI for rotary parity with the mobile app: the jog
@@ -2293,14 +2184,13 @@ class ControlsPage(QWidget):
     def _on_status_for_gates(self, status: str) -> None:
         self._machine_status = str(status).split(":")[0].strip().lower()
         self._sync_gates()
-        self._frame_check()
         self._frame_watch()
 
     def _sync_gates(self) -> None:
         """Enable/disable the page according to the machine state (Android
         button-mask parity): motion and procedures are blocked while a job
         runs (Run/Hold), during homing and while a guided procedure is busy;
-        unlock is only offered in Alarm; laser-based detection additionally
+        unlock is only offered in Alarm; detection additionally
         needs the distance sensor; the rotary axis locks Y motion, probing
         and homing (Z homing stays available on the Z pad)."""
         conn = self._conn
@@ -2311,7 +2201,6 @@ class ControlsPage(QWidget):
         st = self._machine_status
         busy = bool(flags.get("procedureBusy", False))
         rotary = bool(flags.get("rotaryAxisConnected", False))
-        laser_conn = bool(flags.get("distanceLaserSensorConnected", False))
         job_running = bool(flags.get("jobRunning", False))
         job_paused = bool(flags.get("jobPaused", False))
         door_blocked = conn.door_blocked()
@@ -2360,7 +2249,7 @@ class ControlsPage(QWidget):
         b["bed_front"].setEnabled(acting)
         b["type_coord"].setEnabled(acting)
         b["dry_run"].setEnabled(acting and not rotary)
-        # Facing generates a program and uploads it. No laser and no open file
+        # Facing generates a program and uploads it. No open file
         # needed; gated like dry-run because a flat raster means nothing on a
         # rotary bar, and nothing should go up the link mid-job.
         b["facing"].setEnabled(acting and not rotary)
@@ -2371,12 +2260,6 @@ class ControlsPage(QWidget):
         b["frame"].setEnabled(acting and has_file
                               and getattr(self, "_fs", None) is None)
         b["detect_z0"].setEnabled(acting and not rotary)
-        b["detect_xy0"].setEnabled(acting and not rotary and laser_conn)
-        b["detect_center"].setEnabled(acting and not rotary and laser_conn)
-        b["laser_zero"].setEnabled(acting and not rotary and laser_conn)
-        b["point_cloud"].setEnabled(acting and not rotary and laser_conn)
-        b["height_map"].setEnabled(acting and not rotary and laser_conn
-                                   and has_file)
 
         # Toolbar actions.
         a = self._action_btns
@@ -2384,7 +2267,7 @@ class ControlsPage(QWidget):
         a["unlock"].setEnabled(connected and st == "alarm")
         a["softreset"].setEnabled(motion)
         # Spindle control follows the mobile app: available whenever the machine
-        # is connected and not moving/running — it is NOT gated on the laser.
+        # is connected and not moving/running.
         # Plus the door: offering to spin the tool up with the lid open is the
         # one thing this panel should not do. The firmware would stop it anyway
         # — a spinning spindle and an open door always pause, whatever
@@ -2392,9 +2275,6 @@ class ControlsPage(QWidget):
         # the button should not invite it in the first place.
         a["spindle"].setEnabled(connected and not machine_running
                                 and not door_blocked)
-        # "acting" (not "motion") so it's also disabled during a manual jog,
-        # matching the laser-sensor detection buttons.
-        a["laser"].setEnabled(acting and not rotary and laser_conn)
         a["rotary"].setEnabled(acting and not rotary)
 
         # Tool length probing is deactivated in rotary mode

@@ -8,7 +8,7 @@ Organisation mirrors the Android App.tsx menu exactly:
   • Machine connection (shows the machine ID; Switch re-runs discovery)
   • WLAN settings / Hotspot settings (SSID + password editors)
   • Hardware settings  -> sub-sheet (housing, door interlock, probe ref Z,
-    probe height, laser offsets, steps-per-mm calculator)
+    probe height, steps-per-mm calculator)
   • Machine info       -> sub-sheet (sensors, firmware, usage, job history)
   • Firmware debugging -> sub-sheet (one switch per firmware debug option)
   • Version footer
@@ -299,12 +299,6 @@ class HardwareSettingsDialog(_Sheet):
         self._probe_h.clicked.connect(self._edit_probe_height)
         self._lay.addWidget(self._probe_h)
 
-        self._laser = _row_button("Laser offsets", "Edit",
-                                  icon_name="laser")
-        self._laser.setEnabled(connected)
-        self._laser.clicked.connect(self._open_laser_offsets)
-        self._lay.addWidget(self._laser)
-
         self._steps = _row_button("Steps per mm", "Calibrate",
                                   icon_name="settings")
         self._steps.setEnabled(connected)
@@ -434,11 +428,6 @@ class HardwareSettingsDialog(_Sheet):
             if 1 <= v <= 50:
                 self._conn.set("setProbeHeight", probeHeight=v)
 
-    def _open_laser_offsets(self) -> None:
-        host = self.parent()
-        self.accept()
-        LaserOffsetDialog(self._conn, parent=host).show()
-
     def _open_steps_per_mm(self) -> None:
         host = self.parent()
         self.accept()
@@ -539,256 +528,6 @@ class HardwareSettingsDialog(_Sheet):
         proc.finished.connect(_finished)
         proc.errorOccurred.connect(_failed)
         proc.start()
-
-
-# ── Laser offsets ─────────────────────────────────────────────────────────────
-
-class LaserOffsetDialog(_Sheet):
-    """Sub-sheet: the distance laser's mount offset behind the spindle.
-
-    Read with getLaserOffsetZeroSettings when the sheet opens and written with
-    setLaserOffsetZeroSettings, which takes both values at once and answers
-    with what it stored — that reply (through machine_info_changed) is what
-    confirms a save. The firmware keeps them in EEPROM; moveToLaserOffsetZero
-    and the laser-area diagrams use them.
-
-    It also carries a check: "Move laser to tool position" shifts the machine
-    by the saved offsets (X+x Y+y from the current job position) so the laser
-    dot lands where the tool was — on the mark, if the offsets are right.
-    "Return tool to start" goes back to where the tool was when the sheet
-    opened, so the two can be alternated. Only for the sheet's lifetime:
-    it is a popup, so anything that moves the machine from elsewhere (a jog)
-    closes it first."""
-
-    _KEYS = ("laserOffsetZeroXBackMm", "laserOffsetZeroYBackMm")
-
-    #: Accepted range for either offset, mm.
-    _MIN_MM, _MAX_MM = 5.0, 55.0
-
-    def __init__(self, conn, parent=None):
-        super().__init__(parent, width=420)
-        self._conn = conn
-        self._pending: tuple[float, float] | None = None
-        self.add_close_header("Laser offsets")
-
-        note = lbl("How far the distance laser sits behind the spindle. Used "
-                   "when moving from the laser's XY zero to the tool's.",
-                   sz=12, color=TXT2)
-        note.setWordWrap(True)
-        self._lay.addWidget(note)
-
-        self._inputs = []
-        for axis in ("X", "Y"):
-            self._lay.addWidget(lbl(
-                f"{axis} back offset (mm, {self._MIN_MM:g}–{self._MAX_MM:g})",
-                sz=12, color=TXT2))
-            le = QLineEdit()
-            le.setPlaceholderText("Reading from the machine…")
-            WifiSettingsDialog._style_input(le)
-            le.textChanged.connect(self._validate)
-            self._lay.addWidget(le)
-            self._inputs.append(le)
-
-        self._status_lbl = lbl("", sz=12, color=TXT2)
-        self._status_lbl.setWordWrap(True)
-        self._status_lbl.hide()
-        self._lay.addWidget(self._status_lbl)
-
-        btns = QHBoxLayout()
-        btns.addStretch()
-        self._save = QPushButton("save")
-        self._save.setCursor(QCursor(Qt.PointingHandCursor))
-        self._save.clicked.connect(self._write)
-        btns.addWidget(self._save)
-        btns.addStretch()
-        self._lay.addLayout(btns)
-
-        # ── Check: move the laser onto the tool's position ────────────────
-        self._lay.addWidget(hline())
-        self._lay.addWidget(lbl("Check the offsets", sz=13, bold=True,
-                                color=TXT2))
-        for text in ("⚠ Raise Z first so the tool clears the stock — the "
-                     "machine moves sideways at the current height.",
-                     "⚠ Turn on the laser sensor so you can see where the dot "
-                     "lands.",
-                     "⚠ If the machine does not move, the target is probably "
-                     "past the soft limits — move the tool further from the "
-                     "edge of the bed and try again."):
-            w = lbl(text, sz=12, color=WARN_C)
-            w.setWordWrap(True)
-            self._lay.addWidget(w)
-        self._move = QPushButton("Move laser to tool position")
-        self._move.setCursor(QCursor(Qt.PointingHandCursor))
-        self._move.clicked.connect(self._move_laser_to_tool)
-        self._lay.addWidget(self._move)
-
-        pos = conn.current_job_position()
-        self._start = (float(pos["jx"]), float(pos["jy"]))
-        self._back = QPushButton(
-            f"Return tool to start (X {self._start[0]:.2f}, "
-            f"Y {self._start[1]:.2f})")
-        self._back.setCursor(QCursor(Qt.PointingHandCursor))
-        self._back.clicked.connect(self._return_to_start)
-        self._lay.addWidget(self._back)
-
-        bind(self, self._apply_scale)
-
-        conn.machine_info_changed.connect(self._on_info)
-        conn.machine_status_changed.connect(self._validate)
-        conn.machine_flags_changed.connect(self._validate)
-        self._fill(conn.machine_info())
-        conn.get("getLaserOffsetZeroSettings")
-        self._validate()
-
-    def done(self, r):
-        if not getattr(self, "_disconnected", False):
-            self._disconnected = True
-            for sig, slot in ((self._conn.machine_info_changed, self._on_info),
-                              (self._conn.machine_status_changed, self._validate),
-                              (self._conn.machine_flags_changed, self._validate)):
-                try:
-                    sig.disconnect(slot)
-                except (RuntimeError, TypeError):
-                    pass
-        super().done(r)
-
-    def _apply_scale(self, *_):
-        super()._apply_scale()
-        style = f"""
-            QPushButton {{ background: {NAVY}; border: none; border-radius: {px(10)}px;
-                           color: white; font-size: {fs(14)}px; }}
-            QPushButton:hover {{ background: #2A3A5F; }}
-            QPushButton:disabled {{ background: #EDEDED; color: {TXT3}; }}
-        """
-        self._save.setFixedSize(px(110), px(42))
-        self._save.setStyleSheet(style)
-        for b in (self._move, self._back):
-            b.setFixedHeight(px(42))
-            b.setStyleSheet(style)
-
-    @staticmethod
-    def _machine_values(info: dict) -> tuple[float, float] | None:
-        try:
-            return tuple(float(info[k]) for k in LaserOffsetDialog._KEYS)
-        except (KeyError, TypeError, ValueError):
-            return None
-
-    def _fill(self, info: dict) -> None:
-        vals = self._machine_values(info)
-        if vals is None:
-            return
-        for le, v in zip(self._inputs, vals):
-            le.setText(f"{v:.2f}")
-
-    def _on_info(self, info: dict) -> None:
-        vals = self._machine_values(info)
-        if vals is None:
-            return
-        # machine_info_changed also fires for unrelated keys, so only a match
-        # settles a save; a refused one is left to _write_timed_out.
-        if self._pending is not None and all(
-                abs(a - b) < 1e-4 for a, b in zip(vals, self._pending)):
-            self._pending = None
-            self._show_status(f"Saved. The machine now reports X "
-                              f"{vals[0]:.2f} mm, Y {vals[1]:.2f} mm.")
-        # Don't overwrite what the user is typing with a late reply.
-        if not any(le.hasFocus() for le in self._inputs):
-            self._fill(info)
-        self._validate()
-
-    def _values(self) -> tuple[float, float] | None:
-        out = []
-        for le in self._inputs:
-            try:
-                v = float(le.text().strip().replace(",", "."))
-            except ValueError:
-                return None
-            v = round(v, 2)            # this setting is kept to 2 decimals
-            if not self._MIN_MM <= v <= self._MAX_MM:
-                return None
-            out.append(v)
-        return out[0], out[1]
-
-    def _validate(self, *_) -> None:
-        conn = self._conn
-        connected = conn.is_serial_connected or conn.is_ws_active
-        vals = self._values()
-        # Nothing to save when the fields already hold what the machine has —
-        # and the machine's echo of unchanged values would not confirm it.
-        current = self._machine_values(conn.machine_info())
-        unchanged = (vals is not None and current is not None
-                     and all(abs(a - round(b, 2)) < 1e-9
-                             for a, b in zip(vals, current)))
-        self._save.setEnabled(connected and self._pending is None
-                              and vals is not None and not unchanged)
-        reason = self._move_blocked_reason()
-        self._move.setEnabled(not reason)
-        self._move.setToolTip(reason)
-        # Returning needs no offsets, only a machine free to move.
-        back = reason if reason.startswith(("The machine", "A job")) else ""
-        self._back.setEnabled(not back)
-        self._back.setToolTip(back)
-
-    def _move_blocked_reason(self) -> str:
-        """Why the laser can't be moved now, or "" when it can."""
-        conn = self._conn
-        if not (conn.is_serial_connected or conn.is_ws_active):
-            return "The machine is not connected."
-        if self._machine_values(conn.machine_info()) is None:
-            return "The offsets have not been read from the machine yet."
-        flags = conn.flags()
-        if flags.get("jobRunning") or flags.get("jobPaused"):
-            return "A job is running or paused."
-        # The door does not matter here: the spindle stays off, and the
-        # firmware decides for itself whether motion is allowed with it open.
-        if conn.machine_status() != "Idle":
-            return "The machine must be idle."
-        return ""
-
-    def _show_status(self, text: str, warn: bool = False) -> None:
-        self._status_lbl.setText(text)
-        self._status_lbl.setStyleSheet(
-            f"color: {WARN_C if warn else TXT2}; background: transparent;")
-        self._status_lbl.setVisible(bool(text))
-
-    def _write(self) -> None:
-        vals = self._values()
-        if vals is None:
-            return
-        self._pending = vals
-        self._show_status("Saving…")
-        self._validate()
-        self._conn.set("setLaserOffsetZeroSettings",
-                       **dict(zip(self._KEYS, vals)))
-        QTimer.singleShot(5000, self, lambda w=vals: self._write_timed_out(w))
-
-    def _move_laser_to_tool(self) -> None:
-        """Shift by the offsets saved on the machine — not the typed fields,
-        so this checks the calibration actually in force. One absolute G1 to
-        the current job position plus the offsets: no G91/G90 switch that
-        could leave the controller in relative mode."""
-        if self._move_blocked_reason():
-            return
-        x, y = self._machine_values(self._conn.machine_info())
-        pos = self._conn.current_job_position()
-        tx, ty = float(pos["jx"]) + x, float(pos["jy"]) + y
-        self._conn.send_raw(f"G1 X{tx:.3f} Y{ty:.3f} F500")
-
-    def _return_to_start(self) -> None:
-        """Back to the job XY recorded when the sheet opened (Z untouched)."""
-        if not self._back.isEnabled():
-            return
-        x, y = self._start
-        self._conn.send_raw(f"G1 X{x:.3f} Y{y:.3f} F500")
-
-    def _write_timed_out(self, write: tuple[float, float]) -> None:
-        if self._pending is not write:
-            return
-        self._pending = None
-        self._show_status("The machine did not confirm the change. Check the "
-                          "console, then reopen this sheet to re-read it.",
-                          warn=True)
-        self._validate()
 
 
 # ── Steps-per-mm calculator ───────────────────────────────────────────────────
@@ -1179,10 +918,6 @@ class MachineInfoDialog(_Sheet):
             self._lay.addLayout(r)
             return v
 
-        laser_ok = flags.get("distanceLaserSensorConnected", False)
-        _info_row("Laser Distance Sensor",
-                  "Connected" if laser_ok else "Not connected",
-                  "#2E7D32" if laser_ok else TXT3)
         _info_row("Firmware version", str(info.get("firmwareVersion", "—")))
         _info_row("Machine ID", str(info.get("deviceId", "—")))
         # Installed spindle variant (compile-time constant, read via getSpindleType).

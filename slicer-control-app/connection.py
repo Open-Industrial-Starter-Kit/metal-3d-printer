@@ -110,14 +110,6 @@ _MOTION_ERROR_NOTICES = {
     "rotaryYLock": (
         "Y Axis Locked",
         "The Y axis is locked while the rotary axis is connected."),
-    # startJob refusals about the height map. Both mean the job would run
-    # uncompensated or compensated from the wrong place, and both are fixed by
-    # scanning again rather than by retrying — so they say so.
-    "heightMapDoesNotCoverJob": (
-        "Height Map Does Not Cover the Job",
-        "The stored height map does not reach the whole toolpath, so part of "
-        "the cut would be uncompensated. Scan the map again with the file "
-        "open."),
     # setSpindleOverride refused: the step would have taken the spindle below
     # SPINDLE_OVERRIDE_MIN_EFFECTIVE_RPM. The app disables the button before
     # this can happen, so seeing it means our view of the override or the
@@ -127,10 +119,6 @@ _MOTION_ERROR_NOTICES = {
         "The spindle override will not take the spindle below its minimum "
         "working speed. Below it the spindle loses torque instead of cutting "
         "slower — lower the speed in the job itself if you need less."),
-    "heightMapRescanRequired": (
-        "Height Map Needs Rescanning",
-        "The stored height map belongs to a different file, or has already "
-        "been used for this one. Scan it again before running the job."),
 }
 
 # Firmware upload rejection → (title, message) popup. The firmware names the
@@ -431,13 +419,7 @@ _SILENT_KEYS = frozenset({
     "currentFileLine", "totalFileLines", "jobProgress",
     "estimatedRemainingSeconds",
     "toolLength", "toolLengthReferenceZ",
-    "laserOffsetZeroXBackMm", "laserOffsetZeroYBackMm",
-    "laserSensorEnabled", "distanceLaserSensorConnected",
     "rotaryAxisConnected", "dryRunEnabled", "procedureBusy",
-    "heightMapReady", "heightMapScanInProgress",
-    "heightMapConfigured", "heightMapCompensationEnabled",
-    "heightMapActiveForOpenedFile",
-    "pointCloudScanInProgress", "pointCloudReady",
     "machineName", "firmwareVersion", "deviceId",
     "powerOnHours", "runHours", "jobCount",
     "openedGcodeFileTotalLines", "fcl", "eof", "probeHeight",
@@ -451,7 +433,7 @@ _SILENT_KEYS = frozenset({
 #
 # _SILENT_KEYS keeps the 500 ms poll out of the raw log. It did so by KEY, which
 # also hid the answer to the same getter typed by hand in the console: ask for
-# `getLaserOffsetZeroSettings` and the reply arrives, updates the machine info,
+# a settings getter and the reply arrives, updates the machine info,
 # and is dropped without a line — indistinguishable from the machine never
 # answering at all.
 #
@@ -480,12 +462,6 @@ _REPLY_KEYS = {
     "fileList": {"fileList", "gcodeFileList"},
     "gcodeFileList": {"fileList", "gcodeFileList"},
     "openedGcodeFileName": {"openedFileName", "openedGcodeFileName"},
-    "getHeightMapStatus": {"heightMapConfigured", "heightMapReady",
-                           "heightMapScanInProgress",
-                           "heightMapCompensationEnabled"},
-    # read on connect, or on demand from a dialog
-    "getLaserOffsetZeroSettings": {"laserOffsetZeroXBackMm",
-                                   "laserOffsetZeroYBackMm"},
     "getHousingSettings": {"housingInstalled", "allowMotionWhenDoorOpen"},
     "machineName": {"machineName"},
     "deviceId": {"deviceId"},
@@ -495,8 +471,6 @@ _REPLY_KEYS = {
     "getJobHistory": {"jobHistory"},
     "getOpenedFileBounds": {"fileMinXmm", "fileMaxXmm", "fileMinYmm",
                             "fileMaxYmm"},
-    "getHeightMapPoints": {"heightMapPointsReturned"},
-    "getPointCloudStatus": {"pointCloudScanInProgress", "pointCloudReady"},
     "getDebuggingSettings": {"debuggingBase"},
 }
 
@@ -507,8 +481,7 @@ _REPLY_KEYS = {
 #: unless what arrived is visibly one of these.
 _POLLED_GETS = ("status", "positions", "currentFeedRate", "currentSpindleRPM",
                 "getFeedRateOverride", "getSpindleOverride", "getToolLength",
-                "jobProgress", "fileList", "openedGcodeFileName",
-                "getHeightMapStatus")
+                "jobProgress", "fileList", "openedGcodeFileName")
 _POLLED_REPLY_KEYS = tuple(_REPLY_KEYS[g] for g in _POLLED_GETS)
 
 
@@ -536,10 +509,7 @@ def _reply_answers(req_text: str, payload: dict) -> bool:
 
 # Boolean machine-state flags surfaced via machine_flags_changed
 _FLAG_KEYS = (
-    "laserSensorEnabled", "distanceLaserSensorConnected",
     "rotaryAxisConnected", "dryRunEnabled", "dryRunActive", "procedureBusy",
-    "heightMapReady", "heightMapScanInProgress",
-    "heightMapCompensationEnabled", "heightMapActiveForOpenedFile",
     "jobRunning", "jobPaused", "jobResuming", "housingInstalled",
     # Door interlock: with the housing installed and the spindle off, whether an
     # open door lets motion carry on. Arrives with housingInstalled from
@@ -567,24 +537,10 @@ _WIFI_KEYS = ("clientWifiSSID", "clientWifiPassword",
 #: Usable bed, mm (firmware Config.h MAX_WORK_DIMENSION_XY_MM, grbl $130/$131).
 WORK_AREA_MM = (150.0, 150.0)
 
-#: How far *behind* the spindle the distance-laser sensor is mounted, in mm
-#: (x, y). To put the laser over a point the spindle has to travel that much
-#: further — `laser = spindle - offset` — so the sensor cannot be driven over
-#: the far X/Y strips of the bed at all: they are spindle-only.
-#:
-#: These are the firmware's build defaults (Config.h LASER_OFFSET_ZERO_X_BACK_MM
-#: / _Y_BACK_MM). The value actually in force is per-machine and lives in its
-#: EEPROM, so it is read back with getLaserOffsetZeroSettings on connect and
-#: these stand in only until that reply lands.
-LASER_OFFSET_BACK_MM_DEFAULT = (39.27, 9.21)
-
 # Procedure-completion message types (msg["type"]) forwarded as signals
 _COMPLETION_TYPES = frozenset({
     "homingCompleted", "resumeCompleted",
     "probeZ0Completed", "probeToolLengthCompleted",
-    "laserEdgeProbingCompleted", "laserMaterialBoundsCompleted",
-    "heightMapScanCompleted", "heightMapScanProgress",
-    "pointCloudScanCompleted", "pointCloudScanProgress",
 })
 
 # Commands that end a job early. A job that stops after one of these was
@@ -692,18 +648,9 @@ class Connection(QObject):
     debugging_settings_received = Signal(dict)   # debugging* → bool, every getDebuggingSettings reply
     wifi_settings_changed    = Signal(dict)        # clientWifiSSID / apWifiSSID / hotspotEnabled / …
     job_history_received     = Signal(dict)        # raw getJobHistory payload
-    laser_distance_changed   = Signal(float)       # distanceLaserMm live reading
-    laser_distance_error     = Signal(str)         # distanceLaser* failure error string
-    height_map_status_changed  = Signal(dict)      # raw getHeightMapStatus payload
-    # One page of getHeightMapPoints. The reply is paginated (default 25, and
-    # the firmware clamps whatever is asked for to keep the JSON under its
-    # buffer limit), so a full map arrives as several of these and the consumer
-    # advances by `heightMapPointsReturned` rather than by what it requested.
-    height_map_points_received = Signal(dict)      # raw getHeightMapPoints page
     #: raw getOpenedFileBounds payload — where the toolpath sits in job
     #: coordinates, which `fileList` cannot say (it carries sizes only).
     opened_file_bounds_received = Signal(dict)
-    point_cloud_status_changed = Signal(dict)      # raw getPointCloudStatus payload
     file_hash_received       = Signal(str, str)    # (fileName, sha256 lowercase hex)
     motion_error             = Signal(str, str)    # (title, message) — user-facing notice
     transfer_error           = Signal(str, str)    # (title, message) — upload was rejected
@@ -1006,7 +953,7 @@ class Connection(QObject):
         return {k: self._last_pos.get(k, 0.0) for k in keys}
 
     def flags(self) -> dict:
-        """Latest boolean machine flags (laserSensorEnabled, dryRunEnabled, …)."""
+        """Latest boolean machine flags (dryRunEnabled, procedureBusy, …)."""
         return dict(self._flags)
 
     def machine_status(self) -> str:
@@ -1078,30 +1025,6 @@ class Connection(QObject):
     def work_area_mm(self) -> tuple[float, float]:
         """Usable bed (width, depth) in mm."""
         return WORK_AREA_MM
-
-    def laser_offset_mm(self) -> tuple[float, float]:
-        """Distance-laser mount offset (x, y) in mm — how far behind the
-        spindle the sensor sits. The machine's own EEPROM values once it has
-        answered getLaserOffsetZeroSettings, the firmware defaults until then
-        (they only differ on a recalibrated machine)."""
-        out = []
-        for key, default in zip(("laserOffsetZeroXBackMm",
-                                 "laserOffsetZeroYBackMm"),
-                                LASER_OFFSET_BACK_MM_DEFAULT):
-            try:
-                v = float(self._machine_info[key])
-            except (KeyError, TypeError, ValueError):
-                v = default
-            # A negative or bed-sized offset would invert / empty the reachable
-            # area; fall back rather than draw nonsense.
-            out.append(v if 0.0 <= v < min(WORK_AREA_MM) else default)
-        return out[0], out[1]
-
-    def laser_area_mm(self) -> tuple[float, float]:
-        """The part of the bed the laser sensor can actually be driven over
-        (width, depth) in mm — the work area less the mount offset."""
-        dx, dy = self.laser_offset_mm()
-        return WORK_AREA_MM[0] - dx, WORK_AREA_MM[1] - dy
 
     def file_meta(self, name: str) -> dict:
         """Full metadata dict for *name* from the last file list (or {})."""
@@ -1219,7 +1142,7 @@ class Connection(QObject):
     # One canned "connected, idle" machine used by the developer offline mode.
     # Includes every boolean flag (so the gates open), a homed state (so the
     # homing overlay is already satisfied) and an attached distance sensor (so
-    # the laser / detect buttons are exercisable). Positions/RPM are zeroed.
+    # the detect buttons are exercisable). Positions/RPM are zeroed.
     _OFFLINE_STATUS = {
         "result": "success",
         "machineStatus": "idle",
@@ -1234,12 +1157,8 @@ class Connection(QObject):
         # No toolLength: the card shows its placeholder until something is
         # actually measured, offline included — a canned number there reads as
         # a real measurement.
-        "laserSensorEnabled": False, "distanceLaserSensorConnected": True,
         "rotaryAxisConnected": False, "dryRunEnabled": False,
         "dryRunActive": False, "procedureBusy": False,
-        "heightMapReady": False, "heightMapScanInProgress": False,
-        "heightMapCompensationEnabled": False,
-        "heightMapActiveForOpenedFile": False,
         "jobRunning": False, "jobPaused": False, "jobResuming": False,
         "housingInstalled": True, "doorOpen": False,
         "homedSincePowerOn": True,
@@ -1477,8 +1396,7 @@ class Connection(QObject):
 
     def get(self, get_type: str, **extra) -> None:
         """A `get` request. *extra* carries the request's own parameters —
-        `getHeightMapPoints` is paginated with `heightMapPointsStartIndex` and
-        `heightMapPointsMaxCount`, and every other getter ignores it."""
+        no getter currently uses it."""
         self.send({"type": "get", "getType": get_type, **extra})
 
     def jog(self, feed_rate: int, **axes) -> None:
@@ -1788,14 +1706,6 @@ class Connection(QObject):
         the Hardware-settings sheet, which is what asks for it otherwise."""
         self._send_silent_any({"type": "get", "getType": "getHousingSettings"})
 
-    def _request_laser_offset(self) -> None:
-        """Read the distance-laser mount offset on every (re)connect, so the
-        laser-area diagrams in the probing flows show this machine's own
-        calibration instead of the firmware default. Nothing else ever sends
-        it — it is not part of the status poll."""
-        self._send_silent_any({"type": "get",
-                               "getType": "getLaserOffsetZeroSettings"})
-
     def _set_opened_file(self, name: str | None) -> None:
         """Track the opened file and run the Android-parity side effects on a
         change: the height map is bound to the opened file, so it is cleared
@@ -1806,17 +1716,12 @@ class Connection(QObject):
             return
         previous = self._opened_file
         self._opened_file = name
-        if previous is not None:
-            self.cmd("clearHeightMap")
         if name is not None:
             self._send_silent_any(
                 {"type": "get", "getType": "openedGcodeFileTotalLines"})
             if name != self._last_override_reset_file:
                 self._reset_overrides()
                 self._last_override_reset_file = name
-        # Re-read whether a height map is bound to the (now-current) file, so the
-        # per-file indicator updates on every file change (mobile parity).
-        self._send_silent_any({"type": "get", "getType": "getHeightMapStatus"})
         self.opened_file_changed.emit(name)
 
     def _send_ws_silent(self, obj: dict) -> None:
@@ -1861,10 +1766,6 @@ class Connection(QObject):
                 self._send_silent({"type": "get", "getType": "getSpindleOverride"})
             if t % 25 == 7:
                 self._send_silent({"type": "get", "getType": "getToolLength"})
-            # Backstop refresh of the per-file height-map binding (also polled on
-            # file change) so the footer indicator stays current after a scan.
-            if t % 20 == 3:
-                self._send_silent({"type": "get", "getType": "getHeightMapStatus"})
 
         elif self._selected_client is not None:
             wt = self._ws_poll_tick
@@ -2054,18 +1955,7 @@ class Connection(QObject):
             except (TypeError, ValueError):
                 pass
 
-        # Live laser distance reading (reply to an explicit distanceLaserMm
-        # get — used as a readiness check before laser procedures). Falls
-        # through so a user-initiated read still shows in the log.
-        if ok and "distanceLaserMm" in p:
-            try:
-                self.laser_distance_changed.emit(float(p["distanceLaserMm"]))
-            except (TypeError, ValueError):
-                pass
-        if not ok and str(p.get("error", "")).startswith("distanceLaser"):
-            self.laser_distance_error.emit(str(p["error"]))
-
-        # Procedure completion messages (probe/laser/height-map macros, homing)
+        # Procedure completion messages (probe macros, homing)
         mtype = p.get("type")
         if isinstance(mtype, str) and mtype in _COMPLETION_TYPES:
             result = str(p.get("result", ""))
@@ -2079,10 +1969,6 @@ class Connection(QObject):
                     self.tool_length_changed.emit(self._tool_length)
                 except (KeyError, TypeError, ValueError):
                     pass
-            if mtype == "heightMapScanCompleted" and result == "success":
-                # The map only takes effect once compensation is enabled —
-                # arm it right away (Android parity, App.tsx ~9687).
-                self.cmd("enableHeightMapCompensation")
             self.procedure_completed.emit(mtype, result, p)
             self.log_received.emit(f"{rx_label} {line}", rx_color)
             return
@@ -2137,8 +2023,7 @@ class Connection(QObject):
         info_changed = {}
         for k in ("machineName", "firmwareVersion", "deviceId",
                   "powerOnHours", "runHours", "jobCount",
-                  "probeHeight", "toolLengthReferenceZ", "spindleType",
-                  "laserOffsetZeroXBackMm", "laserOffsetZeroYBackMm"):
+                  "probeHeight", "toolLengthReferenceZ", "spindleType"):
             if k in p and self._machine_info.get(k) != p[k]:
                 self._machine_info[k] = p[k]
                 info_changed[k] = p[k]
@@ -2161,30 +2046,12 @@ class Connection(QObject):
             self.debugging_settings_received.emit(
                 {k: bool(p[k]) for k in DEBUGGING_KEYS if k in p})
 
-        # Height map / point cloud status snapshots (from getHeightMapStatus /
-        # getPointCloudStatus; guarded against the status poll, which carries
-        # the same height-map fields alongside machineStatus).
         if ok and "machineStatus" not in p:
-            # Keyed on heightMapPointsReturned: the count of what this page
-            # actually carried, which no other reply reports. The async
-            # heightMapScanProgress event also carries heightMapPointsTotal,
-            # but it never reaches here -- it has no `result`, so the `ok`
-            # guard above has already excluded it. Returned is still the better
-            # key, because it is the field this consumer must have to page.
             # The opened file's MIN/MAX. Keyed on fileMinXmm, which no other
             # reply carries; `openedFileName` alone would also match a plain
             # file-name poll.
             if "fileMinXmm" in p:
                 self.opened_file_bounds_received.emit(dict(p))
-                return self._echo_if_asked(p, rx_label, rx_color)
-            if "heightMapPointsReturned" in p:
-                self.height_map_points_received.emit(dict(p))
-                return self._echo_if_asked(p, rx_label, rx_color)
-            if "heightMapConfigured" in p:
-                self.height_map_status_changed.emit(dict(p))
-                return self._echo_if_asked(p, rx_label, rx_color)
-            if "pointCloudScanInProgress" in p:
-                self.point_cloud_status_changed.emit(dict(p))
                 return self._echo_if_asked(p, rx_label, rx_color)
 
         # Stored file hash (gcodeFileHash) — background integrity checks.
@@ -2302,7 +2169,7 @@ class Connection(QObject):
         if poll_miss:
             err = p.get("error")
             # Claim the answering user request BEFORE the side effects below:
-            # closing the file sends clearHeightMap, whose pending entry must
+            # closing the file has its own pending entry, which must
             # not be attributed to this (earlier) reply.
             req = self._pop_pending_user_req()
             # Only an UNCLAIMED fileNotFound is the openedGcodeFileName poll
@@ -2436,7 +2303,6 @@ class Connection(QObject):
             # Enforce default overrides on every (re)connect (Android parity).
             self._reset_overrides()
             self._request_housing_settings()
-            self._request_laser_offset()
             # Serial is the preferred transport — cancel the head-start, turn the
             # WiFi fallback back off, stop the BLE discovery beacon, and tear down
             # any in-flight WiFi discovery / selection.
@@ -2687,7 +2553,6 @@ class Connection(QObject):
         self._last_override_reset_file = None
         self._reset_overrides()
         self._request_housing_settings()
-        self._request_laser_offset()
         self.machine_selected.emit(dict(m))
         self.ws_connected_changed.emit(True)
         label = m.get("name") or m.get("deviceId") or f"machine {client_id}"
