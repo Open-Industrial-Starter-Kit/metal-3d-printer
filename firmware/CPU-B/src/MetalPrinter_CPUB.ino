@@ -2897,6 +2897,121 @@ void forwardJsonToCPUC(const char* line){
 
 }
 
+// Streams a G-code file off the SD card into CPU-C's PSRAM layer buffer.
+//
+// Two passes over the file. The first counts exactly what CPU-C will store, because the
+// transfer protocol declares its size up front; the second sends it as '|' separated chunks.
+// Blank and comment-only lines are dropped: the interpreter ignores them anyway, so sending
+// them would only spend link time.
+//
+// The "processing" file handle is used rather than the job reader's, so this never disturbs
+// a file opened for a job.
+//
+// NOTE: this blocks CPU-B for the duration (a few hundred ms for a typical layer). That is
+// fine while the galvo is idle, which by the machine cycle it always is when a layer is being
+// loaded, but it should become a state machine before it runs alongside anything else.
+void sendFileToCPUC(const char* filename, bool autoStart){
+
+  char line[LINE_BUFFER_CHARACTERS];
+  unsigned long bytes = 0, nlines = 0, nchunks = 0;
+
+  // ---- pass 1: how many bytes will CPU-C hold? ----
+  if(!sdCardManager.openProcessingFileToRead(filename)){
+    if(jsonSettings.enableJsonResponse){
+      clearResponseJsonBuffer();
+      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
+      responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_FILE_NOT_FOUND_STR;
+      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+      sendJsonResponse();
+    }
+    return;
+  }
+
+  while(sdCardManager.readProcessingLine(line, sizeof(line))){
+    char* p = line;
+    while(*p == ' ' || *p == '\t') p++;
+    size_t n = strlen(p);
+    while(n && (p[n-1] == '\r' || p[n-1] == '\n' || p[n-1] == ' ')) n--;
+    if(n == 0 || p[0] == ';' || p[0] == '(') continue;
+    bytes += n + 1;
+    nlines++;
+  }
+  sdCardManager.closeProcessingFile();
+
+  if(bytes == 0){
+    if(jsonSettings.enableJsonResponse){
+      clearResponseJsonBuffer();
+      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
+      responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_FILE_EMPTY_STR;
+      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+      sendJsonResponse();
+    }
+    return;
+  }
+
+  // ---- open the transfer ----
+  char msg[160];
+  snprintf(msg, sizeof(msg),
+           "{\"type\":\"command\",\"commandType\":\"startLayerTransfer\",\"bytes\":%lu,\"layer\":0}",
+           bytes);
+  serialManager.CPUCSerialPrintln(msg);
+  delay(CPUC_TRANSFER_SETTLE_MS);
+
+  // ---- pass 2: send it ----
+  static char chunk[CPUC_CHUNK_PAYLOAD_CHARS + 8];
+  size_t clen = 0;
+
+  sdCardManager.openProcessingFileToRead(filename);
+  while(sdCardManager.readProcessingLine(line, sizeof(line))){
+
+    char* p = line;
+    while(*p == ' ' || *p == '\t') p++;
+    size_t n = strlen(p);
+    while(n && (p[n-1] == '\r' || p[n-1] == '\n' || p[n-1] == ' ')) n--;
+    if(n == 0 || p[0] == ';' || p[0] == '(') continue;
+    if(n > CPUC_CHUNK_PAYLOAD_CHARS) continue;        // absurdly long line: skip it
+
+    if(clen && clen + 1 + n > CPUC_CHUNK_PAYLOAD_CHARS){
+      chunk[clen] = '\0';
+      serialManager.CPUCSerialPrint("{\"lcl\":\"");
+      serialManager.CPUCSerialPrint(chunk);
+      serialManager.CPUCSerialPrintln("\"}");
+      nchunks++; clen = 0;
+      delay(CPUC_CHUNK_GAP_MS);
+    }
+
+    if(clen) chunk[clen++] = '|';
+    memcpy(chunk + clen, p, n);
+    clen += n;
+  }
+  sdCardManager.closeProcessingFile();
+
+  if(clen){
+    chunk[clen] = '\0';
+    serialManager.CPUCSerialPrint("{\"lcl\":\"");
+    serialManager.CPUCSerialPrint(chunk);
+    serialManager.CPUCSerialPrintln("\"}");
+    nchunks++;
+    delay(CPUC_CHUNK_GAP_MS);
+  }
+
+  if(autoStart){
+    serialManager.CPUCSerialPrintln("{\"type\":\"command\",\"commandType\":\"startLayer\"}");
+  }
+
+  if(jsonSettings.enableJsonResponse){
+    clearResponseJsonBuffer();
+    responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
+    responseJsonBuffer["bytes"] = bytes;
+    responseJsonBuffer["lines"] = nlines;
+    responseJsonBuffer["chunks"] = nchunks;
+    responseJsonBuffer["started"] = autoStart;
+    serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+    sendJsonResponse();
+  }
+
+}
+
 void handleJson(){
 
     //routing: decide whether this message is ours at all, before any other parsing
@@ -3622,6 +3737,25 @@ void handleJsonCommand(){
 
     }
 
+    break;
+
+  case SEND_FILE_TO_CPUC:
+    {
+      if(receivedJsonBuffer[JSON_KEY_FILE_NAME_STR].isNull()){
+        if(jsonSettings.enableJsonResponse){
+          clearResponseJsonBuffer();
+          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
+          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
+          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+          sendJsonResponse();
+        }
+        break;
+      }
+      const char* fn = receivedJsonBuffer[JSON_KEY_FILE_NAME_STR];
+      bool autoStart = receivedJsonBuffer["start"].is<bool>()
+                     ? receivedJsonBuffer["start"].as<bool>() : false;
+      sendFileToCPUC(fn, autoStart);
+    }
     break;
 
   case CLEAR_EEPROM:

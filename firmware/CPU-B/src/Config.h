@@ -80,6 +80,13 @@ typedef struct {
 // a PIO software serial port.
 #define CPUC_UART_TX_PIN 4
 #define CPUC_UART_RX_PIN 5
+
+// Streaming a layer from the SD card to CPU-C. The payload limit keeps each chunk inside
+// CPU-C's 2048 byte line buffer with room for the JSON wrapper; the gaps give CPU-C time to
+// split and copy a chunk before the next arrives.
+#define CPUC_CHUNK_PAYLOAD_CHARS 1700
+#define CPUC_CHUNK_GAP_MS 4
+#define CPUC_TRANSFER_SETTLE_MS 20
 // Serial2 drove an external WiFi module. Not fitted on this board:
 // GP8/GP9 are the RS-422 transceiver GM490_DI/GM490_DO.
 // The distance laser sensor is not fitted either, and its old UART pins

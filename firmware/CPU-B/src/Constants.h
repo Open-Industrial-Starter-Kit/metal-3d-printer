@@ -213,6 +213,7 @@ enum JsonValueCommandType {
   DELETE_GCODE_FILE,
   RENAME_GCODE_FILE,
   CLEAR_EEPROM,
+  SEND_FILE_TO_CPUC,
   START_JOB,
   STOP_JOB_RESET,
   GRBL_SOFT_RESET_COMMAND,
@@ -256,6 +257,7 @@ enum JsonValueCommandType {
 #define JSON_VALUE_CLOSE_GCODE_FILE_STR "closeGcodeFile"
 #define JSON_VALUE_RENAME_GCODE_FILE_STR "renameGcodeFile"
 #define JSON_VALUE_CLEAR_EEPROM_STR "clearEEPROM"
+#define JSON_VALUE_SEND_FILE_TO_CPUC_STR "sendFileToCPUC"
 #define JSON_VALUE_START_JOB_STR "startJob"
 #define JSON_VALUE_STOP_JOB_RESET_STR "stopJobReset"
 #define JSON_VALUE_GRBL_SOFT_RESET_COMMAND_STR "grblSoftReset"
@@ -546,6 +548,7 @@ enum JsonValueSetType {
 #define JSON_VALUE_ERROR_FILE_HASH_NOT_FOUND_STR "fileHashNotFound"
 #define JSON_VALUE_ERROR_UNKNOWN_JSON_TYPE_STR "unknownJsonType"
 #define JSON_VALUE_ERROR_UNKNOWN_TARGET_STR "unknownTarget"
+#define JSON_VALUE_ERROR_FILE_EMPTY_STR "fileEmpty"
 #define JSON_VALUE_ERROR_UNKNOWN_JSON_COMMAND_TYPE_STR "unknownJsonCommandType"
 #define JSON_VALUE_ERROR_MISSING_JSON_KEY_STR "missingJsonKey"
 #define JSON_VALUE_ERROR_FILE_CREATION_FAILED_STR "fileCreationFailed"

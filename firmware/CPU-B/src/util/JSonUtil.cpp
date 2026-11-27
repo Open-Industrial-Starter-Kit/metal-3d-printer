@@ -63,6 +63,8 @@ JsonValueCommandType JsonUtil::getJsonCommandType(JsonDocument json) {
             return CLOSE_GCODE_FILE;
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_CLEAR_EEPROM_STR) == 0)
             return CLEAR_EEPROM;
+        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_SEND_FILE_TO_CPUC_STR) == 0)
+            return SEND_FILE_TO_CPUC;
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_START_FILE_TRANSFER_STR) == 0)
             return START_FILE_TRANSFER; 
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_ABORT_FILE_TRANSFER_STR) == 0)
