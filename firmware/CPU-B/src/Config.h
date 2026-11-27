@@ -52,6 +52,15 @@ typedef struct {
 #define MAX_WORK_DIMENSION_XY_MM 150.0f
 #define MAX_WORK_DIMENSION_Z_MM 70.0f
 #define SOFT_LIMIT_MIN_X_MM 0.0f
+// How far a press-and-hold jog may run when the machine has NOT been homed, in mm.
+//
+// A homed machine jogs all the way to the soft limit, because the distance left is known
+// from the live machine position. Unhomed that distance is meaningless, and this firmware
+// used to refuse the jog outright -- which on a machine whose homing is not configured
+// meant press-and-hold never worked at all. Instead the jog is bounded: one hold travels
+// at most this far, the operator can hold again, and the hard limits remain the backstop.
+#define JOG_UNHOMED_MAX_MM 100.0f
+
 #define SOFT_LIMIT_MAX_X_MM 143.0f
 #define SOFT_LIMIT_MIN_Y_MM -145.0f
 #define SOFT_LIMIT_MAX_Y_MM 0.0f

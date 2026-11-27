@@ -1960,17 +1960,12 @@ void writeLineCPUA(const char* lineBuffer) {
 
 void askGRBLStatus() {
 
-  // A job-triggered spindle ramp waits for GRBL to report Idle before it starts stepping, and during
-  // a job status is not otherwise requested at all -- so without this exception that wait could only
-  // ever end on its timeout. Nothing is being streamed while it waits, so the poll costs nothing.
-    return; //if a job is running (not paused) we do not ask for the status
+  // During a job the status is not polled: the job's own line stream carries the
+  // progress, and '?' would compete with it. A PAUSED job still polls, which is
+  // how the app sees the machine settle into Hold.
+  if(isJobRunning && !isJobPaused)
+    return;
 
-  // A ramp is no reason to stop polling either. '?' cannot disturb the ramp's own line sends (it is
-  // realtime and takes no line slot), and the ramp is one of the things that NEEDS the reports: it
-  // holds until GRBL reports Idle before it starts stepping. Gating it here froze the app's status
-  // for the whole spin-up -- seconds, with the kick and its settling time.
-
-  //in pause we still ask for the status
   
   if(!timerUtil.statusTimer())
     return;
@@ -5010,19 +5005,6 @@ void handleJsonCommand(){
       sendJsonResponse();
     }
 
-  }else if(!homedSincePowerOn){
-
-    // Continuous jog drives toward the soft-limit using the live machine position, which is
-    // only meaningful once the machine has been homed. Reject otherwise so we never jog from
-    // an unreferenced position (which could send the move the wrong way or into a limit).
-    if(jsonSettings.enableJsonResponse){
-      clearResponseJsonBuffer();
-      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-      responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_NOT_HOMED_STR;
-      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-      sendJsonResponse();
-    }
-
   }else if(isJogging){
 
     // A jog is already in motion for this press-and-hold. The app keeps streaming the same
@@ -5055,22 +5037,35 @@ void handleJsonCommand(){
       // compiled into this controller.
       const float jogEpsilonMm = 0.01f; // ignore an axis that has no meaningful room left
 
+      // Homed, the distance left to the soft limit is known from the live machine position.
+      // Unhomed it is not, so each axis gets JOG_UNHOMED_MAX_MM in the requested direction
+      // instead: one hold travels that far, the operator holds again for more, and the hard
+      // limits are the backstop. Refusing the jog outright (which this did) means a machine
+      // whose homing is not set up can never press-and-hold at all.
+      const bool jogToLimit = homedSincePowerOn;
+
       float jogX = 0.0f, jogY = 0.0f, jogZ = 0.0f;
 
       if(!receivedJsonBuffer[JSON_KEY_MOVE_X_STR].isNull()){
         float dir = receivedJsonBuffer[JSON_KEY_MOVE_X_STR].as<float>();
-        if(dir > 0.0f)      jogX = SOFT_LIMIT_MAX_X_MM - currentMachinePositionX;
-        else if(dir < 0.0f) jogX = SOFT_LIMIT_MIN_X_MM - currentMachinePositionX;
+        if(dir > 0.0f)      jogX = jogToLimit ? SOFT_LIMIT_MAX_X_MM - currentMachinePositionX
+                                              :  JOG_UNHOMED_MAX_MM;
+        else if(dir < 0.0f) jogX = jogToLimit ? SOFT_LIMIT_MIN_X_MM - currentMachinePositionX
+                                              : -JOG_UNHOMED_MAX_MM;
       }
       if(!receivedJsonBuffer[JSON_KEY_MOVE_Y_STR].isNull()){
         float dir = receivedJsonBuffer[JSON_KEY_MOVE_Y_STR].as<float>();
-        if(dir > 0.0f)      jogY = SOFT_LIMIT_MAX_Y_MM - currentMachinePositionY;
-        else if(dir < 0.0f) jogY = SOFT_LIMIT_MIN_Y_MM - currentMachinePositionY;
+        if(dir > 0.0f)      jogY = jogToLimit ? SOFT_LIMIT_MAX_Y_MM - currentMachinePositionY
+                                              :  JOG_UNHOMED_MAX_MM;
+        else if(dir < 0.0f) jogY = jogToLimit ? SOFT_LIMIT_MIN_Y_MM - currentMachinePositionY
+                                              : -JOG_UNHOMED_MAX_MM;
       }
       if(!receivedJsonBuffer[JSON_KEY_MOVE_Z_STR].isNull()){
         float dir = receivedJsonBuffer[JSON_KEY_MOVE_Z_STR].as<float>();
-        if(dir > 0.0f)      jogZ = SOFT_LIMIT_MAX_Z_MM - currentMachinePositionZ;
-        else if(dir < 0.0f) jogZ = SOFT_LIMIT_MIN_Z_MM - currentMachinePositionZ;
+        if(dir > 0.0f)      jogZ = jogToLimit ? SOFT_LIMIT_MAX_Z_MM - currentMachinePositionZ
+                                              :  JOG_UNHOMED_MAX_MM;
+        else if(dir < 0.0f) jogZ = jogToLimit ? SOFT_LIMIT_MIN_Z_MM - currentMachinePositionZ
+                                              : -JOG_UNHOMED_MAX_MM;
       }
 
       char jogCmd[MACRO_LINE_BUFFER_CHARS];
