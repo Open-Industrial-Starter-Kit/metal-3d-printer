@@ -22,3 +22,11 @@ scipy>=1.10
 # 0.20.0 terminated the whole process ("libc++abi: terminating") on that same
 # scan where 0.19.0 produced a surface. Re-test before lifting the cap.
 open3d>=0.19,<0.20
+
+# The LPBF slicer (slicer/). numpy, Pillow and shapely do the geometry; OpenCV
+# is used for exactly two findContours calls. The headless OpenCV build is
+# deliberate: opencv-python ships its own Qt plugins, which clash with PySide6.
+numpy>=1.26
+Pillow>=10.3
+shapely>=2.1
+opencv-python-headless>=4.9
