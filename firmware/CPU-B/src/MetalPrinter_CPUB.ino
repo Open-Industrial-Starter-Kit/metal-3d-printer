@@ -2117,8 +2117,6 @@ void handleJob(){
 
   }
 
-    return;
-  
   if(waitForOk > 0)
     return;
 
@@ -2149,6 +2147,31 @@ void handleJob(){
   //here we read the file line by line and send it to GRBL
   arrayUtil.clearCharArray(gcodeLineBuffer, LINE_BUFFER_CHARACTERS);
 
+  // Read the next line, or finish the job at end of file.
+  //
+  // This read used to be the `else if` of a spindle-ramp branch ("release the
+  // line held while the spindle ramped"). Stripping the spindle took the whole
+  // if/else with it, so the buffer was cleared and then tested for content that
+  // nothing had put there -- the job ran to completion with zero lines sent.
+  if(!sdCardManager.readGCodeLine(gcodeLineBuffer, LINE_BUFFER_CHARACTERS)) {
+
+    isJobRunning = false;
+    isDryRunActive = false;
+    pendingDryRunFeedRate = false;
+    isJobPaused = false;
+    jobStartMs = 0;
+
+    // rewind the file so the same one can be started again without re-opening
+    sdCardManager.closeFile();
+    sdCardManager.openGCodeFiletoRead(openedReadFileName);
+    jobLineIndex = 0;
+    jobLineSeg.active = false;
+    jobArcSeg.active  = false;
+
+    if(debuggingSettings.debuggingJob) { serialManager.USBSerialPrintln("Reached end of opened SD card file, stopping job."); }
+    return;
+
+  }
 
   if(gcodeLineBuffer[0] != NULL_CHAR){
 
