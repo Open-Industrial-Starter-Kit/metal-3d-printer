@@ -622,8 +622,8 @@ class Connection(QObject):
         # Snapshot for duplicate suppression
         self._last_status: str | None = None
         self._last_pos: dict = {
-            "mx": 0.0, "my": 0.0, "mz": 0.0, "ma": 0.0,
-            "jx": 0.0, "jy": 0.0, "jz": 0.0, "ja": 0.0,
+            "mx": 0.0, "my": 0.0, "mz": 0.0, "ma": 0.0, "mb": 0.0,
+            "jx": 0.0, "jy": 0.0, "jz": 0.0, "ja": 0.0, "jb": 0.0,
         }
         # A is set to 0 once per app launch, at the first Idle report
         # (_zero_a_on_launch)
@@ -759,7 +759,7 @@ class Connection(QObject):
     def current_position(self) -> dict:
         """Full latest position snapshot: job work coordinates (jx/jy/jz/ja) and
         machine absolute coordinates (mx/my/mz/ma)."""
-        keys = ("jx", "jy", "jz", "ja", "mx", "my", "mz", "ma")
+        keys = ("jx", "jy", "jz", "ja", "jb", "mx", "my", "mz", "ma", "mb")
         return {k: self._last_pos.get(k, 0.0) for k in keys}
 
     def flags(self) -> dict:
@@ -934,9 +934,9 @@ class Connection(QObject):
         "machineName": "Offline",
         "firmwareVersion": "offline",
         "machinePositionX": 0.0, "machinePositionY": 0.0,
-        "machinePositionZ": 0.0, "machinePositionA": 0.0,
+        "machinePositionZ": 0.0, "machinePositionA": 0.0, "machinePositionB": 0.0,
         "jobPositionX": 0.0, "jobPositionY": 0.0,
-        "jobPositionZ": 0.0, "jobPositionA": 0.0,
+        "jobPositionZ": 0.0, "jobPositionA": 0.0, "jobPositionB": 0.0,
         "currentFeedRate": 0, "feedRateOverride": 100,
         "dryRunEnabled": False,
         "dryRunActive": False, "procedureBusy": False,
@@ -1537,19 +1537,21 @@ class Connection(QObject):
 
         # Positions
         pos_keys = {"machinePositionX", "machinePositionY", "machinePositionZ",
-                    "machinePositionA",
+                    "machinePositionA",  "machinePositionB",
                     "jobPositionX",     "jobPositionY",     "jobPositionZ",
-                    "jobPositionA"}
+                    "jobPositionA",      "jobPositionB"}
         if ok and pos_keys.intersection(p):
             pos = {
                 "mx": p.get("machinePositionX", self._last_pos.get("mx", 0.0)),
                 "my": p.get("machinePositionY", self._last_pos.get("my", 0.0)),
                 "mz": p.get("machinePositionZ", self._last_pos.get("mz", 0.0)),
                 "ma": p.get("machinePositionA", self._last_pos.get("ma", 0.0)),
+                "mb": p.get("machinePositionB", self._last_pos.get("mb", 0.0)),
                 "jx": p.get("jobPositionX",     self._last_pos.get("jx", 0.0)),
                 "jy": p.get("jobPositionY",     self._last_pos.get("jy", 0.0)),
                 "jz": p.get("jobPositionZ",     self._last_pos.get("jz", 0.0)),
                 "ja": p.get("jobPositionA",     self._last_pos.get("ja", 0.0)),
+                "jb": p.get("jobPositionB",     self._last_pos.get("jb", 0.0)),
             }
             if pos != self._last_pos:
                 self._last_pos = pos

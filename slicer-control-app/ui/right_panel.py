@@ -1,7 +1,8 @@
 """
 ui/right_panel.py
 Right-hand status and coordinate panel showing machine state (IDLE / RUNNING /
-PAUSED / ERROR) and XYZA axis positions with zero buttons.
+PAUSED / ERROR) and XYZAB axis positions with zero buttons (A is the powder
+reservoir, B the blade recoater).
 """
 
 from PySide6.QtWidgets import (
@@ -64,7 +65,7 @@ class RightPanel(QFrame):
         self._axis_letters: list[QLabel] = []
         self._axis_rows: list[QHBoxLayout] = []
         self._axis_row_frames: dict[str, QFrame] = {}
-        for axis in ["X", "Y", "Z", "A"]:
+        for axis in ["X", "Y", "Z", "A", "B"]:
             frame = QFrame()
             frame.setStyleSheet(TRANSPARENT_NO_BORDER)
             self._axis_row_frames[axis] = frame
@@ -241,6 +242,7 @@ class RightPanel(QFrame):
         self._zero_btns["Y"].clicked.connect(lambda: conn.set("setJobY", jobY=0.0))
         self._zero_btns["Z"].clicked.connect(lambda: conn.set("setJobZ", jobZ=0.0))
         self._zero_btns["A"].clicked.connect(lambda: conn.set("setJobA", jobA=0.0))
+        self._zero_btns["B"].clicked.connect(lambda: conn.set("setJobB", jobB=0.0))
         # A-axis row and mode chips follow the live machine flags. The signal
         # only carries the flags that changed, so re-read the full accumulated
         # state instead of acting on the delta.
@@ -351,10 +353,12 @@ class RightPanel(QFrame):
         self._axis_vals["Y"].setText(f"{pos.get('jy', 0.0):.3f}")
         self._axis_vals["Z"].setText(f"{pos.get('jz', 0.0):.3f}")
         self._axis_vals["A"].setText(f"{pos.get('ja', 0.0):.3f}")
+        self._axis_vals["B"].setText(f"{pos.get('jb', 0.0):.3f}")
         self._axis_mvals["X"].setText(f"{pos.get('mx', 0.0):.3f}")
         self._axis_mvals["Y"].setText(f"{pos.get('my', 0.0):.3f}")
         self._axis_mvals["Z"].setText(f"{pos.get('mz', 0.0):.3f}")
         self._axis_mvals["A"].setText(f"{pos.get('ma', 0.0):.3f}")
+        self._axis_mvals["B"].setText(f"{pos.get('mb', 0.0):.3f}")
 
     def set_status(self, status: str):
         """Show the raw machine status, coloured like the mobile app: green for

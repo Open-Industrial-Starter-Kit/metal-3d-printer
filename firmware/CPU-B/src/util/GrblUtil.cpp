@@ -1,4 +1,5 @@
 #include    "GrblUtil.h"
+#include <string.h>
 #include "../Constants.h"
 
 //example to parse the status string
@@ -109,6 +110,51 @@ bool GrblUtil::parsePRBZ(char* line, float* z) {
 
   *z = val;
   return true;
+
+}
+
+// Nth axis field of the MPos list (0 = X). The per-axis getters above/below walk the
+// commas by hand, one extra copy of the same loop per axis; this is that walk written
+// once, and is what getMachineB uses rather than a fifth copy.
+float GrblUtil::getAxisField(char* _statusReport, const char* field, int axisIndex) {
+
+  char* subString = strstr(_statusReport, field);
+
+  if (subString == NULL)
+    return GRBL_NULL_POSITION;
+
+  subString += strlen(field) + 1;   // past the label and its ':'
+
+  for (int skipped = 0; skipped < axisIndex; ++skipped) {
+
+    while (subString[0] != ',' && subString[0] != NULL_CHAR)
+      ++subString;
+
+    if (subString[0] != ',')
+      return GRBL_NULL_POSITION;   // fewer axes reported than asked for
+
+    ++subString;
+  }
+
+  char* endptr;
+  float value = strtof(subString, &endptr);
+
+  if (endptr == subString)
+    return GRBL_NULL_POSITION;
+
+  return value;
+
+}
+
+float GrblUtil::getMachineB(char* _statusReport) {
+
+  return getAxisField(_statusReport, GRBL_MPOS, 4);
+
+}
+
+float GrblUtil::getJobB(char* _statusReport) {
+
+  return getAxisField(_statusReport, GRBL_WPOS, 4);
 
 }
 

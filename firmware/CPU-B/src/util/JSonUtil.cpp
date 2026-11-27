@@ -259,6 +259,8 @@ JsonValueSetType JsonUtil::getJsonSetType(JsonDocument json) {
             return SET_JOB_XYZ;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_JOB_A_STR) == 0)
             return SET_JOB_A;
+        else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_JOB_B_STR) == 0)
+            return SET_JOB_B;
         else
             return UNKNOWN_JSON_SET_TYPE;
 

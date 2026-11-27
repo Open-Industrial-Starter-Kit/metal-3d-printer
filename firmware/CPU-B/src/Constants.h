@@ -104,6 +104,7 @@ const unsigned char GRBL_JOG_CANCEL = 0x85;
 #define GRBL_SET_JOB_Y "G10 L20 P1 Y"
 #define GRBL_SET_JOB_Z "G10 L20 P1 Z"
 #define GRBL_SET_JOB_A "G10 L20 P1 A"
+#define GRBL_SET_JOB_B "G10 L20 P1 B"
 
 //Misc
 #define FROM_CPUA "CPUA: " //this is the string that will be prefixed to all the messages coming from CPUA, so we can easily identify them in the USB serial monitor
@@ -302,6 +303,7 @@ enum JsonValueCommandType {
 #define JSON_VALUE_SET_JOB_Z_STR "setJobZ"
 #define JSON_VALUE_SET_JOB_XYZ_STR "setJobXYZ"
 #define JSON_VALUE_SET_JOB_A_STR "setJobA"
+#define JSON_VALUE_SET_JOB_B_STR "setJobB"
 
 //values for JSON_KEY_GET_TYPE
 enum JsonValueGetType {
@@ -353,6 +355,7 @@ enum JsonValueGetType {
 #define JSON_VALUE_JOB_POSITION_Y_STR "jobY"
 #define JSON_VALUE_JOB_POSITION_Z_STR "jobZ"
 #define JSON_VALUE_JOB_POSITION_A_STR "jobA"
+#define JSON_VALUE_JOB_POSITION_B_STR "jobB"
 #define JSON_VALUE_JOB_POSITION_XYZ_STR "jobXYZ"
 #define JSON_VALUE_MACHINE_POSITION_XYZ_STR "machinePositionXYZ"
 #define JSON_VALUE_GET_DEVICE_ID_STR "deviceId"
@@ -398,6 +401,7 @@ enum JsonValueSetType {
   SET_JOB_Z,
   SET_JOB_XYZ,
   SET_JOB_A,
+  SET_JOB_B,
   UNKNOWN_JSON_SET_TYPE
 };
 
@@ -423,10 +427,12 @@ enum JsonValueSetType {
 #define JSON_KEY_MACHINE_POSITIONY_STR "machinePositionY"
 #define JSON_KEY_MACHINE_POSITIONZ_STR "machinePositionZ"
 #define JSON_KEY_MACHINE_POSITIONA_STR "machinePositionA"
+#define JSON_KEY_MACHINE_POSITIONB_STR "machinePositionB"
 #define JSON_KEY_JOB_POSITIONX_STR "jobPositionX"
 #define JSON_KEY_JOB_POSITIONY_STR "jobPositionY"
 #define JSON_KEY_JOB_POSITIONZ_STR "jobPositionZ"
 #define JSON_KEY_JOB_POSITIONA_STR "jobPositionA"
+#define JSON_KEY_JOB_POSITIONB_STR "jobPositionB"
 #define JSON_KEY_DEVICE_ID_STR "deviceId"
 #define JSON_KEY_OPENED_FILE_NAME_STR "openedFileName"
 #define JSON_KEY_FILE_OPENED_STR "fileOpened"

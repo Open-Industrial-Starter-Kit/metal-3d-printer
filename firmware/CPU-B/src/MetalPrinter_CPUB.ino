@@ -221,17 +221,20 @@ float currentMachinePositionX = 0.0;
 float currentMachinePositionY = 0.0;
 float currentMachinePositionZ = 0.0;
 float currentMachinePositionA = 0.0;
+float currentMachinePositionB = 0.0;   // blade recoater
 
 float currentJobPositionX = 0.0;
 float currentJobPositionY = 0.0;
 float currentJobPositionZ = 0.0;
 float currentJobPositionA = 0.0;
+float currentJobPositionB = 0.0;
 
 //cached work coordinate offset (WCO from GRBL status); used to derive job position = MPos - WCO
 float wcoX = 0.0;
 float wcoY = 0.0;
 float wcoZ = 0.0;
 float wcoA = 0.0;
+float wcoB = 0.0;
 
 DebuggingSettings debuggingSettings;
 JsonSettings jsonSettings;
@@ -2701,6 +2704,11 @@ void handleCPUALine() {
     if(bufferPositionA != GRBL_NULL_POSITION)
       currentMachinePositionA = bufferPositionA;
 
+    float bufferPositionB = grblUtil.getMachineB(CPUALineArray);
+
+    if(bufferPositionB != GRBL_NULL_POSITION)
+      currentMachinePositionB = bufferPositionB;
+
     long bufferFeedRate = grblUtil.getFeedRate(CPUALineArray);
 
     if(bufferFeedRate >= 0)
@@ -2790,6 +2798,11 @@ void handleCPUALine() {
       if(bufferPositionA != GRBL_NULL_POSITION)
         wcoA = bufferPositionA;
 
+      float bufferJobB = grblUtil.getJobB(CPUALineArray);
+
+      if(bufferJobB != GRBL_NULL_POSITION)
+        wcoB = bufferJobB;
+
 
     }
 
@@ -2798,6 +2811,7 @@ void handleCPUALine() {
     currentJobPositionY = currentMachinePositionY - wcoY;
     currentJobPositionZ = currentMachinePositionZ - wcoZ;
     currentJobPositionA = currentMachinePositionA - wcoA;
+    currentJobPositionB = currentMachinePositionB - wcoB;
 
     if (debuggingSettings.debuggingStatus) { serialManager.USBSerialPrint("Job position X,Y,Z: "); }
     if (debuggingSettings.debuggingStatus) { serialManager.USBSerialPrint(currentJobPositionX); }
@@ -5628,6 +5642,93 @@ void handleJsonSet(){
   break;
   }
 
+  case SET_JOB_B:{
+
+    if(receivedJsonBuffer[JSON_VALUE_JOB_POSITION_B_STR].isNull()){
+
+      if(jsonSettings.enableJsonResponse){
+  
+        clearResponseJsonBuffer();
+        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
+        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
+        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+        sendJsonResponse();
+      }
+
+      break;
+
+    }
+
+    float tempJobB = receivedJsonBuffer[JSON_VALUE_JOB_POSITION_B_STR]|GRBL_NULL_POSITION ;
+
+    if(tempJobB == GRBL_NULL_POSITION){
+
+      if(jsonSettings.enableJsonResponse){
+  
+        clearResponseJsonBuffer();
+        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
+        responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_INVALID_JSON_VALUE_STR;
+        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+        sendJsonResponse();
+      }
+
+      break;
+
+    }
+
+    if(isJobRunning){
+
+        if(jsonSettings.enableJsonResponse){
+    
+          clearResponseJsonBuffer();
+          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
+          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_JOB_RUNNING_STR;
+          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+          sendJsonResponse();
+    
+        }
+
+        break;
+
+      }
+
+    // Unlike SET_JOB_X/Y/Z, the command is issued before the response so a rejected line is
+    // reported as a failure instead of a success the machine never acted on. A itself is not
+    // soft-limit checked (the outgoing-line checker only parses X/Y/Z), so in practice this
+    // only guards against the rotary Y-lock and any future outgoing-line rule.
+    {
+      char setJobCmd[MACRO_LINE_BUFFER_CHARS];
+      snprintf(setJobCmd, sizeof(setJobCmd), "%s%.4f", GRBL_SET_JOB_B, tempJobB);
+
+      if(!scheduleOrSendCPUA(setJobCmd)){
+
+        if(jsonSettings.enableJsonResponse){
+
+          clearResponseJsonBuffer();
+          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
+          responseJsonBuffer[JSON_KEY_ERROR_STR] = getOutgoingLineRejectErrorJsonValue();
+          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+          sendJsonResponse();
+
+        }
+
+        break;
+
+      }
+    }
+
+    if(jsonSettings.enableJsonResponse){
+    
+          clearResponseJsonBuffer();
+          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
+          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+          sendJsonResponse();
+    
+    }
+      
+  break;
+  }
+
     
     case SET_DRY_RUN:
 
@@ -6077,10 +6178,12 @@ void handleJsonGet(){
     responseJsonBuffer[JSON_KEY_MACHINE_POSITIONY_STR] = currentMachinePositionY;
     responseJsonBuffer[JSON_KEY_MACHINE_POSITIONZ_STR] = currentMachinePositionZ;
     responseJsonBuffer[JSON_KEY_MACHINE_POSITIONA_STR] = currentMachinePositionA;
+      responseJsonBuffer[JSON_KEY_MACHINE_POSITIONB_STR] = currentMachinePositionB;
     responseJsonBuffer[JSON_KEY_JOB_POSITIONX_STR] = currentJobPositionX;
     responseJsonBuffer[JSON_KEY_JOB_POSITIONY_STR] = currentJobPositionY;
     responseJsonBuffer[JSON_KEY_JOB_POSITIONZ_STR] = currentJobPositionZ;
     responseJsonBuffer[JSON_KEY_JOB_POSITIONA_STR] = currentJobPositionA;
+      responseJsonBuffer[JSON_KEY_JOB_POSITIONB_STR] = currentJobPositionB;
     serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
     sendJsonResponse();
 
@@ -6184,6 +6287,7 @@ void handleJsonGet(){
       clearResponseJsonBuffer();
       responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
       responseJsonBuffer[JSON_KEY_MACHINE_POSITIONA_STR] = currentMachinePositionA;
+      responseJsonBuffer[JSON_KEY_MACHINE_POSITIONB_STR] = currentMachinePositionB;
       serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
       sendJsonResponse();
 
@@ -6257,6 +6361,7 @@ void handleJsonGet(){
       clearResponseJsonBuffer();
       responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
       responseJsonBuffer[JSON_KEY_JOB_POSITIONA_STR] = currentJobPositionA;
+      responseJsonBuffer[JSON_KEY_JOB_POSITIONB_STR] = currentJobPositionB;
       serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
       sendJsonResponse();
 

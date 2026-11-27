@@ -22,6 +22,7 @@ float getMachineX(char* _statusReport);
 float getMachineY(char* _statusReport);
 float getMachineZ(char* _statusReport);
 float getMachineA(char* _statusReport);
+float getMachineB(char* _statusReport);
 long getFeedRate(char* _statusReport);
 long getSpindleRPM(char* _statusReport);
 int getSpindleOverride(char* _statusReport);
@@ -30,6 +31,9 @@ float getJobX(char* _statusReport);
 float getJobY(char* _statusReport);
 float getJobZ(char* _statusReport);
 float getJobA(char* _statusReport);
+float getJobB(char* _statusReport);
+//: Nth axis of an MPos/WCO field list (0 = X), written once instead of per axis.
+float getAxisField(char* _statusReport, const char* field, int axisIndex);
 
 bool shouldSkipLineForDryRun(const char* line);
 void sanitizeLineForDryRun(const char* input, char* output, int outputSize);
