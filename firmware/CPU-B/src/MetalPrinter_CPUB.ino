@@ -43,6 +43,11 @@ int spindleOverride = GRBL_OVERRIDE_DEFAULT;
 bool isFileTransferInProgress = false;
 InputSource fileTransferInputSource = INPUT_SOURCE_USB; // channel that started the upload, so a watchdog abort can notify the right client
 bool fileTransferHasExistingMetadata = false;
+// Which processor the block being uploaded is addressed to. The bounds the
+// upload measures are the GANTRY's, so galvo blocks must not count toward them:
+// their X/Y are scan-field millimetres, and a field that reaches 170 mm would
+// fail a 143 mm machine envelope for a move the gantry never makes.
+bool fileTransferBlockIsGalvo = false;
 bool fileTransferMetadataChecked = false;
 bool isFileDownloadInProgress = false;
 bool startRamping = false;
@@ -171,6 +176,26 @@ bool isMacroRunning = false;
 // One reply line from CPU-C, filled by waitForCPUCLine during a layer transfer.
 #define CPUC_REPLY_LINE_CHARS 256
 char cpucReplyLine[CPUC_REPLY_LINE_CHARS];
+
+// ── Routed job: which processor the current block is addressed to ────────────
+//
+// A job file is a sequence of blocks (see JOB_BLOCK_*_MCODE in Constants.h).
+// Stage blocks stream to CPU-A line by line as they always have; a galvo block
+// is collected and handed to CPU-C as a layer, and the job then waits for the
+// scan to finish before carrying on. Default is STAGE, so a file with no marker
+// behaves exactly as before.
+bool jobBlockIsGalvo = false;
+
+// True from the moment a galvo block is handed to CPU-C until it reports the
+// scan done. While set, handleJob streams nothing: the mirrors are working and
+// the next stage move must not start underneath them.
+bool galvoScanActive = false;
+
+// Line assembly for CPU-C's asynchronous pushes (events), filled by
+// readFromCPUC. The transfer path uses waitForCPUCLine instead, because it runs
+// with the main loop blocked.
+char cpucEventLine[CPUC_REPLY_LINE_CHARS];
+size_t cpucEventPos = 0;
 int macroLineIndex = 0;
 
 //other variables
@@ -935,6 +960,35 @@ void readFromCPUC(){
     }
 
     serialManager.USBSerialWrite(bufferByteCPUC);
+
+    // Assemble the line as it goes past, so a scan finishing is noticed here
+    // rather than having to be polled for. layerComplete ends a galvo block at
+    // an M600 (the recoat waits); programComplete ends the layer buffer.
+    if (bufferCharCPUC == NEWLINE || bufferCharCPUC == RETURN) {
+
+      if (cpucEventPos > 0) {
+
+        cpucEventLine[cpucEventPos] = NULL_CHAR;
+
+        if (galvoScanActive
+            && (strstr(cpucEventLine, "layerComplete") != NULL
+                || strstr(cpucEventLine, "programComplete") != NULL)) {
+
+          galvoScanActive = false;
+
+          if (debuggingSettings.debuggingJob) {
+            serialManager.USBSerialPrint(FROM_CPUB);
+            serialManager.USBSerialPrint("Galvo block finished: ");
+            serialManager.USBSerialPrintln(cpucEventLine);
+          }
+        }
+
+        cpucEventPos = 0;
+      }
+
+    } else if (cpucEventPos < CPUC_REPLY_LINE_CHARS - 1) {
+      cpucEventLine[cpucEventPos++] = bufferCharCPUC;
+    }
 
   }
 
@@ -2082,6 +2136,150 @@ static void rewriteZWordInLine(char* buf, size_t bufSize, float zValue) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Read one M-code number from a line, or -1. Only looks at a leading M word, so
+// an M inside a comment or a filename cannot be mistaken for one.
+int jobLineMCode(const char* line) {
+
+  const char* p = line;
+  while(*p == ' ' || *p == '\t') p++;
+
+  if(*p != 'M' && *p != 'm')
+    return -1;
+
+  ++p;
+  if(*p < '0' || *p > '9')
+    return -1;
+
+  return atoi(p);
+}
+
+// Hand the galvo block that starts at the current file position to CPU-C.
+//
+// The block runs to the next M610 / M611 / M600 or to end of file. CPU-C's
+// startLayerTransfer has to declare a byte count up front, which is not known
+// until the block has been read -- so this measures it first, seeks back, and
+// then streams. Both passes skip blanks and comments, the same filter, so the
+// count and the stream cannot disagree.
+//
+// Returns false if CPU-C refused the transfer; the job is stopped by the caller.
+bool streamGalvoBlockToCPUC() {
+
+  const long blockStart = sdCardManager.getFilePosition();
+
+  if(blockStart < 0)
+    return false;
+
+  char line[LINE_BUFFER_CHARACTERS];
+  unsigned long bytes = 0;
+
+  // ---- pass 1: measure ----
+  while(sdCardManager.readGCodeLine(line, sizeof(line))) {
+
+    int m = jobLineMCode(line);
+
+    if(m == JOB_BLOCK_STAGE_MCODE || m == JOB_BLOCK_GALVO_MCODE || m == GCODE_LAYER_END_MCODE)
+      break;
+
+    char* t = line;
+    while(*t == ' ' || *t == '\t') t++;
+    size_t n = strlen(t);
+    while(n && (t[n-1] == '\r' || t[n-1] == '\n' || t[n-1] == ' ')) n--;
+
+    if(n == 0 || t[0] == ';' || t[0] == '(')
+      continue;
+
+    bytes += n + 1;
+  }
+
+  if(bytes == 0) {
+    sdCardManager.seekReadFile((uint32_t)blockStart);
+    return true;                      // an empty galvo block is not an error
+  }
+
+  if(!sdCardManager.seekReadFile((uint32_t)blockStart))
+    return false;
+
+  // ---- open the transfer ----
+  char msg[160];
+  snprintf(msg, sizeof(msg),
+           "{\"type\":\"command\",\"commandType\":\"startLayerTransfer\",\"bytes\":%lu,\"layer\":0}",
+           bytes);
+  serialManager.CPUCSerialPrintln(msg);
+
+  {
+    bool accepted = false;
+    unsigned long deadline = millis() + CPUC_CHUNK_ACK_TIMEOUT_MS;
+
+    while(millis() < deadline) {
+      if(!waitForCPUCLine(deadline - millis()))
+        break;
+      if(strstr(cpucReplyLine, "\"failure\"") != NULL)
+        break;
+      if(strstr(cpucReplyLine, "bytesRemaining") != NULL) { accepted = true; break; }
+    }
+
+    if(!accepted)
+      return false;
+  }
+
+  // ---- pass 2: stream it ----
+  static char chunk[CPUC_CHUNK_PAYLOAD_CHARS + 8];
+  size_t clen = 0;
+
+  while(sdCardManager.readGCodeLine(line, sizeof(line))) {
+
+    int m = jobLineMCode(line);
+
+    if(m == JOB_BLOCK_STAGE_MCODE || m == JOB_BLOCK_GALVO_MCODE || m == GCODE_LAYER_END_MCODE) {
+      // Put the terminator back: handleJob reads it next and acts on it.
+      long here = sdCardManager.getFilePosition();
+      if(here >= 0)
+        sdCardManager.seekReadFile((uint32_t)(here - strlen(line) - 1));
+      break;
+    }
+
+    char* t = line;
+    while(*t == ' ' || *t == '\t') t++;
+    size_t n = strlen(t);
+    while(n && (t[n-1] == '\r' || t[n-1] == '\n' || t[n-1] == ' ')) n--;
+
+    if(n == 0 || t[0] == ';' || t[0] == '(')
+      continue;
+
+    if(n > CPUC_CHUNK_PAYLOAD_CHARS)
+      continue;
+
+    if(clen && clen + 1 + n > CPUC_CHUNK_PAYLOAD_CHARS) {
+      chunk[clen] = '\0';
+      if(!sendCPUCChunkAndWait(chunk))
+        return false;
+      clen = 0;
+    }
+
+    if(clen) chunk[clen++] = '|';
+    memcpy(chunk + clen, t, n);
+    clen += n;
+  }
+
+  if(clen) {
+    chunk[clen] = '\0';
+    if(!sendCPUCChunkAndWait(chunk))
+      return false;
+  }
+
+  // ---- run it ----
+  serialManager.CPUCSerialPrintln("{\"type\":\"command\",\"commandType\":\"startLayer\"}");
+  galvoScanActive = true;
+
+  if(debuggingSettings.debuggingJob) {
+    serialManager.USBSerialPrint(FROM_CPUB);
+    serialManager.USBSerialPrint("Galvo block sent to CPU-C, bytes: ");
+    serialManager.USBSerialPrintln((long)bytes);
+  }
+
+  return true;
+}
+
 void handleJob(){
 
   if(openedReadFileName[0] == NULL_CHAR)
@@ -2144,6 +2342,11 @@ void handleJob(){
   if (isResuming)
     return;
 
+  // A galvo block is being scanned: the mirrors are working and nothing else
+  // may move. readFromCPUC clears this when CPU-C reports the scan done.
+  if (galvoScanActive)
+    return;
+
   //here we read the file line by line and send it to GRBL
   arrayUtil.clearCharArray(gcodeLineBuffer, LINE_BUFFER_CHARACTERS);
 
@@ -2176,6 +2379,46 @@ void handleJob(){
   if(gcodeLineBuffer[0] != NULL_CHAR){
 
     if(debuggingSettings.debuggingJob) { serialManager.USBSerialPrintln("Reading line from SD card.."); }
+
+    // ── Block routing ────────────────────────────────────────────────────
+    // A marker is addressed to CPU-B itself: it never goes to GRBL.
+    {
+      const int blockMCode = jobLineMCode(gcodeLineBuffer);
+
+      if(blockMCode == JOB_BLOCK_STAGE_MCODE) {
+        jobBlockIsGalvo = false;
+        ++jobLineIndex;
+        if(debuggingSettings.debuggingJob) { serialManager.USBSerialPrintln("Block: stage (CPU-A)"); }
+        return;
+      }
+
+      if(blockMCode == JOB_BLOCK_GALVO_MCODE) {
+        jobBlockIsGalvo = true;
+        ++jobLineIndex;
+        if(debuggingSettings.debuggingJob) { serialManager.USBSerialPrintln("Block: galvo (CPU-C)"); }
+
+        if(!streamGalvoBlockToCPUC()) {
+          if(debuggingSettings.debuggingJob) {
+            serialManager.USBSerialPrint(FROM_CPUB);
+            serialManager.USBSerialPrint("Galvo block refused, job stopped: ");
+            serialManager.USBSerialPrintln(cpucReplyLine);
+          }
+          stopJobWithReset();
+        }
+
+        return;
+      }
+
+      // A layer break ends the galvo block and belongs to CPU-C, which has
+      // already been given it as part of the block; here it only returns the
+      // file to stage mode so the recoat moves go to GRBL.
+      if(blockMCode == GCODE_LAYER_END_MCODE) {
+        jobBlockIsGalvo = false;
+        ++jobLineIndex;
+        if(debuggingSettings.debuggingJob) { serialManager.USBSerialPrintln("Layer break"); }
+        return;
+      }
+    }
 
     if (isDryRunActive) {
 
@@ -2470,7 +2713,16 @@ bool processTransferChunkPayload(const char* chunkPayload) {
         fileTransferHasExistingMetadata = true;
     }
 
-    if (!fileTransferHasExistingMetadata)
+    // Block markers steer the measurement; they are not themselves motion.
+    {
+      const int blockMCode = jobLineMCode(tempLine);
+      if (blockMCode == JOB_BLOCK_STAGE_MCODE || blockMCode == GCODE_LAYER_END_MCODE)
+        fileTransferBlockIsGalvo = false;
+      else if (blockMCode == JOB_BLOCK_GALVO_MCODE)
+        fileTransferBlockIsGalvo = true;
+    }
+
+    if (!fileTransferHasExistingMetadata && !fileTransferBlockIsGalvo)
       gcodeBoundsUtil.processLine(tempLine);
 
     // An SD write failure mid-upload (card full, IO error) is its own cause — previously it
@@ -3988,6 +4240,7 @@ void handleJsonCommand(){
         isFileTransferInProgress = true;
         fileTransferInputSource = currentInputSource; // remember where to send a timeout/abort notification
         fileTransferHasExistingMetadata = false;
+        fileTransferBlockIsGalvo = false;
         fileTransferMetadataChecked = false;
         fileTransferFailureReason = FILE_TRANSFER_FAILURE_NONE;
         fileTransferFailureSizeX = 0.0f;
@@ -4304,6 +4557,8 @@ void handleJsonCommand(){
       isJobRunning = true;
       jobLineIndex = 0;
       jobStartMs = millis();
+      jobBlockIsGalvo = false;     // a file with no marker is a stage file
+      galvoScanActive = false;
 
       // Job launched: log "<startTime>,<jobFileName>" to the hidden SD job log and
       // bump the lifetime job counter. startTime is client-provided (no onboard RTC).

@@ -685,6 +685,40 @@ documented in **[../CPU-C/README.md](../CPU-C/README.md)**.
 - Closes the active download session without affecting the execution file opened via openGcodeFile.
 - The same cleanup also happens automatically if download chunk activity times out.
 
+### 5.13.2.1 Routed jobs: the block dialect
+
+The machine has two XY systems — the gantry (grblHAL on CPU-A) and the galvo mirrors (CPU-C) —
+and `X`/`Y` mean different things in each. A job file says which one it is addressing, with
+M-codes that CPU-B consumes and never forwards:
+
+| Marker | Block goes to | What `X`/`Y` mean |
+| --- | --- | --- |
+| `M610` | CPU-A (grblHAL) | gantry, work coordinates, mm |
+| `M611` | CPU-C | galvo scan field, mm |
+| `M600` | ends a galvo block | layer break; the recoat follows |
+
+A file with no marker at all is a stage file, which is what any ordinary 3-axis G-code already
+is — so nothing that worked before changes.
+
+Extra axis letters (`U`/`V` for the galvo) were considered and rejected. They would be legal
+G-code, but they imply the gantry and the mirrors can move together in one coordinated line,
+and they cannot: there are two controllers with no shared motion planner. Blocks describe what
+the machine actually does — park the optics, scan the field, move on. (`XG`/`YG` is not an
+option at all: a G-code word is one letter plus a number, so `XG175` parses as `X` followed by
+a number that is not there, and the coordinate is silently dropped.)
+
+**How a galvo block runs.** `startLayerTransfer` has to declare a byte count up front, which is
+not known until the block has been read, so CPU-B measures the block, seeks back, streams it
+ack-paced, sends `startLayer`, and then holds the job until CPU-C reports `layerComplete` or
+`programComplete`. Nothing goes to CPU-A while the mirrors are working. The hold is not a busy
+wait: the completion event is noticed by the CPU-C reader in the main loop.
+
+**Uploads measure stage blocks only.** The bounds check that refuses a file bigger than the
+work area skips galvo blocks: their coordinates are scan-field millimetres, and a 170 mm field
+position would otherwise fail a 143 mm machine envelope for a move the gantry never makes.
+
+`firmware/CPU-C/examples/blocks.nc` is a two-layer example in this dialect.
+
 ### 5.13.3 `sendFileToCPUC`
 
 **Request:**

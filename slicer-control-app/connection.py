@@ -603,6 +603,8 @@ class Connection(QObject):
     #: CPU-C's galvo power relays (K6/K7, the +/-15 V to the scan head) came up
     #: or went down. True/False, or None while CPU-C has not answered yet.
     galvo_power_changed       = Signal(object)
+    #: CPU-C's commanded mirror position, in mm of scan field: (x, y).
+    galvo_position_changed    = Signal(float, float)
     # A job ran to its end: (fileName, run seconds). Not emitted for a job the
     # app stopped, an alarm, or a dropped connection — see _watch_job.
     job_finished              = Signal(str, float)
@@ -634,6 +636,8 @@ class Connection(QObject):
         self._homing: bool = False
         #: Last galvoPower CPU-C reported; None until it answers.
         self._galvo_power: bool | None = None
+        #: CPU-C's last reported mirror position (mm of field).
+        self._galvo_pos: tuple[float, float] = (0.0, 0.0)
 
         # Snapshot for duplicate suppression
         self._last_status: str | None = None
@@ -744,6 +748,11 @@ class Connection(QObject):
             self._send_silent(msg)
         else:
             self.send(msg)
+
+    @property
+    def galvo_position(self) -> tuple[float, float]:
+        """CPU-C's last reported mirror position, in mm of scan field."""
+        return self._galvo_pos
 
     @property
     def galvo_power(self) -> bool | None:
@@ -1471,6 +1480,14 @@ class Connection(QObject):
             if state != self._galvo_power:
                 self._galvo_power = state
                 self.galvo_power_changed.emit(state)
+        if "galvoX" in p and "galvoY" in p:
+            try:
+                gx, gy = float(p["galvoX"]), float(p["galvoY"])
+            except (TypeError, ValueError):
+                return
+            if (gx, gy) != self._galvo_pos:
+                self._galvo_pos = (gx, gy)
+                self.galvo_position_changed.emit(gx, gy)
 
     def _route(self, line: str) -> None:
         rx_label = "[RX]"

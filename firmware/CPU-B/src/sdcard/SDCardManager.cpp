@@ -573,6 +573,15 @@ long SDCardManager::getOpenedFileSize() {
   return readFile.size()/1000000;  // Return size in MB
 }
 
+bool SDCardManager::seekReadFile(uint32_t pos) {
+
+  if (!readFile.isOpen())
+    return false;
+
+  return readFile.seekSet(pos);
+
+}
+
 long SDCardManager::getFilePosition() {
   
     if (!readFile.isOpen())

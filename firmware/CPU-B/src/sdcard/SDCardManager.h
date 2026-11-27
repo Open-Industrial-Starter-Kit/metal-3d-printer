@@ -43,6 +43,7 @@ public:
   bool isFileAvailable();
   long getOpenedFileSize();
   long getFilePosition();
+  bool seekReadFile(uint32_t pos);   // rewind/seek the execution file (galvo block re-read)
 
   bool fileExists(const char* filename);
   // Fixed-offset binary access (used by the hidden usage meter; create-if-missing).

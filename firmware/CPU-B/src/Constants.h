@@ -559,6 +559,27 @@ enum JsonValueSetType {
 #define JSON_VALUE_ERROR_UNKNOWN_TARGET_STR "unknownTarget"
 #define JSON_VALUE_ERROR_FILE_EMPTY_STR "fileEmpty"
 #define JSON_VALUE_ERROR_CPUC_TRANSFER_FAILED_STR "cpucTransferFailed"
+
+// ── Routed-job block dialect ──────────────────────────────────────────────────
+//
+// A job file is a sequence of blocks, each addressed to one processor. The
+// machine has two XY systems -- the gantry (grblHAL, CPU-A) and the galvo
+// mirrors (CPU-C) -- and X/Y mean different things in each, so a file says
+// which it is talking to rather than relying on extra axis letters. (U/V were
+// considered; blocks won because the two never move together: the optics are
+// parked, then the field is scanned.)
+//
+//   M610   stage block  -> CPU-A. X Y Z A B are the gantry, work coordinates.
+//   M611   galvo block  -> CPU-C. X Y are the scan field in mm.
+//   M600   layer break  -> ends a galvo block and waits for the recoat.
+//
+// A file with no marker at all is a stage file, which is what every G-code
+// written for a normal 3-axis machine already is.
+#define JOB_BLOCK_STAGE_MCODE 610
+#define JOB_BLOCK_GALVO_MCODE 611
+// The layer break CPU-C already knows (firmware/CPU-C/gcode.h). Named here too
+// so CPU-B can end a galvo block on it without hard-coding the number.
+#define GCODE_LAYER_END_MCODE 600
 #define JSON_VALUE_ERROR_UNKNOWN_JSON_COMMAND_TYPE_STR "unknownJsonCommandType"
 #define JSON_VALUE_ERROR_MISSING_JSON_KEY_STR "missingJsonKey"
 #define JSON_VALUE_ERROR_FILE_CREATION_FAILED_STR "fileCreationFailed"

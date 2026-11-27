@@ -48,15 +48,14 @@ class RightPanel(QFrame):
         self._chips_lay.setAlignment(Qt.AlignCenter)
         self._status_lay.addLayout(self._chips_lay)
 
-        # Galvo power (CPU-C's K6/K7 relays). Directly under the machine state,
-        # because it is the other thing that decides whether a command does
-        # anything: with it off the scan head is unpowered and a layer would
-        # run with the mirrors dead.
+        self._lay.addWidget(self.status_frame)
+
+        # Galvo power (CPU-C's K6/K7 relays), directly BELOW the state badge
+        # rather than inside it. It is not a machine state: the badge is what
+        # GRBL reports, and this is a relay on another processor.
         self._galvo_lbl = QLabel("Galvo —")
         self._galvo_lbl.setAlignment(Qt.AlignCenter)
-        self._status_lay.addWidget(self._galvo_lbl)
-
-        self._lay.addWidget(self.status_frame)
+        self._lay.addWidget(self._galvo_lbl)
 
         # ── Coordinates ─────────────────────────────────────────────────────
         coords = QFrame()
@@ -99,6 +98,33 @@ class RightPanel(QFrame):
             self._coords_lay.addWidget(frame)
 
         # The A axis (powder reservoir) stays visible: this machine has one.
+
+        # ── Galvo field position ────────────────────────────────────────────
+        # Deliberately a separate block with its own heading, not two more axis
+        # rows. The machine has two XY systems -- the gantry above and the
+        # mirrors here -- and a bare "X" under the stage rows would read as a
+        # sixth stage axis. These are mm of scan field, have no work zero and
+        # no zero button, and come from CPU-C rather than GRBL.
+        self._galvo_hdr = lbl("GALVO FIELD", sz=10, bold=True, color=TXT3)
+        self._coords_lay.addWidget(self._galvo_hdr)
+
+        self._galvo_vals: dict[str, QLabel] = {}
+        for axis in ["X", "Y"]:
+            frame = QFrame()
+            frame.setStyleSheet(TRANSPARENT_NO_BORDER)
+            row = QHBoxLayout(frame)
+            row.setContentsMargins(0, 0, 0, 0)
+            self._axis_rows.append(row)
+
+            al = lbl(f"G{axis}", sz=16, bold=True, color=TXT2)
+            self._axis_letters.append(al)
+            row.addWidget(al)
+
+            v = lbl("00.000", sz=15, bold=True)
+            self._galvo_vals[axis] = v
+            row.addWidget(v)
+            row.addStretch()
+            self._coords_lay.addWidget(frame)
 
         self._lay.addWidget(coords)
 
@@ -174,23 +200,24 @@ class RightPanel(QFrame):
         # rescale.
         self.set_status(self._status_key)
 
+    def set_galvo_position(self, x: float, y: float) -> None:
+        """CPU-C's commanded mirror position, in mm of scan field."""
+        self._galvo_vals["X"].setText(f"{x:.3f}")
+        self._galvo_vals["Y"].setText(f"{y:.3f}")
+
     def set_galvo_power(self, state) -> None:
         """Show CPU-C's galvo power: True, False, or None for not yet known."""
         self._galvo_power = state
         self._refresh_galvo()
 
     def _refresh_galvo(self) -> None:
-        # The badge behind this changes colour with the machine state, so the
-        # text has to stay legible on cyan, lime, amber and red alike: ON and
-        # OFF both use the strong text colour and are told apart by the word,
-        # not the hue. Only "not known yet" is deliberately faint.
         state = getattr(self, "_galvo_power", None)
         if state is None:
             self._galvo_lbl.setText("Galvo  —")
             colour = TXT3
         elif state:
             self._galvo_lbl.setText("Galvo  ON")
-            colour = TXT
+            colour = "#2E7D32"
         else:
             self._galvo_lbl.setText("Galvo  OFF")
             colour = TXT
@@ -246,6 +273,8 @@ class RightPanel(QFrame):
         conn.feed_rate_changed.connect(lambda v: self._feed_lbl.setText(str(v)))
         conn.galvo_power_changed.connect(self.set_galvo_power)
         self.set_galvo_power(conn.galvo_power)
+        conn.galvo_position_changed.connect(self.set_galvo_position)
+        self.set_galvo_position(*conn.galvo_position)
         # Work-zero an axis (set the job/work coordinate origin) — these are
         # 'set' messages, not commands.
         self._zero_btns["X"].clicked.connect(lambda: conn.set("setJobX", jobX=0.0))
