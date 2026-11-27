@@ -1,8 +1,9 @@
 ; demo.nc - full SD -> CPU-B -> CPU-C -> PSRAM -> PIO run
 ; square, hatch, crosshair, circle, star, infinity  x100
 ; single continuous program - no layer breaks, runs straight to programComplete
-; F1200000 = 20000 mm/s: measured safe on this head. At 60000+ the mirrors cannot
-; follow and the shapes round off and shrink.
+; F1200000 = 20000 mm/s - the fastest speed confirmed correct one speed at a time.
+; Higher speeds scan faster but degrade somewhere above this; the boundary is not yet
+; pinned. See sweep100.nc and the speed section of ../README.md.
 G21
 G90
 F1200000

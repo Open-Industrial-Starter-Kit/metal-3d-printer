@@ -420,25 +420,36 @@ The frame rate is fixed: 319 PIO cycles per 20-bit frame from a 32 MHz state mac
 positions. Measured on `examples/sweep.nc` (30 passes, 79.1 m of marking, no `F` word so
 `setGalvoSpeeds` governs):
 
-| markSpeed mm/s | mm per frame | scan | shapes |
+| markSpeed mm/s | mm per frame | scan | shape quality |
 | --- | --- | --- | --- |
 | 5 000 | 0.05 | 16.60 s | correct |
 | 10 000 | 0.10 | 8.72 s | correct |
 | 20 000 | 0.20 | 4.78 s | correct |
-| 40 000 | 0.40 | 2.84 s | correct |
-| 60 000 | 0.60 | 2.16 s | **rounded and shrunk** |
-| 100 000 | 1.00 | 1.63 s | rounded and shrunk |
-| 200 000 | 2.00 | 1.22 s | rounded and shrunk |
+| 40 000 | 0.40 | 2.84 s | contested, see below |
+| 60 000 | 0.60 | 2.16 s | not established per-speed |
+| 100 000 | 1.00 | 1.63 s | not established per-speed |
+| 150 000 | 1.50 | 1.36 s | not established per-speed |
+| 200 000 | 2.00 | 1.22 s | not established per-speed |
 
-Linear to within a few percent until the shapes fail, and the failure is not the electronics.
-Rounding **and** shrinking together is amplitude attenuation: the mirrors are a low-pass
-system being driven past their bandwidth, so they stop reaching the commanded extremes.
-No amount of interpolation fixes that -- the limit is the scan head. The circle's trajectory
-frequency is `speed / 314 mm`, which puts this head's limit between 127 Hz (40 000 mm/s, fine)
-and 191 Hz (60 000 mm/s, failing).
+**The timings are measured; the quality column is mostly not.** These ran as two unannounced
+batches -- 5k/10k/20k/40k, then 40k/60k/100k/150k/200k -- and the observer reported one verdict
+per batch, "all correct" and then "everything rounded off and shrank". So only the first three
+rows are per-speed observations. 40 000 appears in both batches with opposite verdicts, and
+nothing distinguishes the four speeds above it. Pinning the boundary needs one speed at a time,
+announced before it runs: `examples/sweep100.nc` and the ladder in the bring-up notes exist for
+that, and until it is done the usable ceiling is known only to be somewhere at or above
+20 000 mm/s.
+
+What *is* established is the failure mode, because rounding and shrinking were reported
+together. That pairing is amplitude attenuation: the mirrors are a low-pass system being driven
+past their bandwidth, so they stop reaching the commanded extremes. Sampling or interpolation
+error would round corners without shrinking the figure. So the limit, wherever it falls, is the
+scan head's mechanical response and no firmware change addresses it. By circle trajectory
+frequency, `speed / 314 mm`, the candidate range 40 000-200 000 mm/s is 127-637 Hz.
 
 Past 40 000 the returns collapse anyway: jumps and settle delays become the floor, so 5x the
-speed buys 2.3x the time.
+speed buys 2.3x the time. Whatever the quality boundary turns out to be, there is little to win
+above 40 000.
 
 **None of this constrains printing.** LPBF mark speed is set by energy density,
 `E = P / (v * h)`: the RFL-C200A at 200 W with a 100 um hatch gives 2.0 J/mm2 at 1000 mm/s and
