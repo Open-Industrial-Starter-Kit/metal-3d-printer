@@ -122,6 +122,17 @@ static void api_ok(api_source_t src)
     api_send(src, "\"result\":\"success\"");
 }
 
+// Succeeds, but tells the caller something about the result they probably want to know.
+// Used when a command is accepted and recorded yet cannot physically take effect.
+static void api_ok_warn(api_source_t src, const char *warning)
+{
+    if (warning == NULL) { api_ok(src); return; }
+
+    char body[160];
+    snprintf(body, sizeof(body), "\"result\":\"success\",\"warning\":\"%s\"", warning);
+    api_send(src, body);
+}
+
 static void api_fail(api_source_t src, const char *error)
 {
     char body[128];
@@ -255,12 +266,17 @@ static void handle_command(api_source_t src, const char *json)
         api_state.galvo_position_x_mm  = x;
         api_state.galvo_position_y_mm  = y;
         api_state.galvo_position_pending = true;
-        api_ok(src);
+
+        // The frames go out either way and the PIO will hold them, but with K6/K7 open the
+        // head has no +/-15 V and will not move. Say so rather than report a bare success
+        // that looks like the mirrors went somewhere.
+        api_ok_warn(src, api_state.galvo_power ? NULL : "galvoPowerOff");
 
     } else if (strcmp(what, "setGalvoStreaming") == 0) {
         if (!json_get_bool(json, "value", &value)) { api_fail(src, "missingJsonKey"); return; }
         api_state.galvo_streaming = value;   // main() stops pushing frames when false
-        api_ok(src);
+        // Same caveat as setGalvoPosition: streaming into an unpowered head does nothing.
+        api_ok_warn(src, (value && !api_state.galvo_power) ? "galvoPowerOff" : NULL);
 
     } else {
         api_fail(src, "unknownJsonCommandType");

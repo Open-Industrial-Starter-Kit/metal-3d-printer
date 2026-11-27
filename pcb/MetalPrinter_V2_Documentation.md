@@ -26,7 +26,7 @@ The work is split across **three RP2350B microcontrollers** (CPU-A: motion, CPU-
 |---|---|
 | Main supply | 24 V DC, 10 A (CH5.08 2-pin screw terminal, dual fused, 0.02 Ω low-side shunt for current monitoring) |
 | Derived rails | 24 V→5 V (LM2596S-5.0 buck, with footprint for an AC-DC 5 V/2 A PCB-mount module); 5 V→3.3 V LDO per CPU; 24 V→+15 V and −15 V (XL4015-class symmetric supplies) for the galvo; 24 V→~18 V (LM317) for end-stop sensors; 5V-USB / 5V-PWR source-select jumper |
-| Controllers | 3× RP2350B (discrete, 4 MB QSPI flash each, vertical USB-C each, ESD/CMC protected); CPU-C additionally has 8 MB PSRAM populated |
+| Controllers | 3× RP2350B (discrete, QSPI flash + 8 MB APS6404L-3SQR-SN PSRAM each, vertical USB-C each, ESD/CMC protected) |
 | Motion | 5 axes (X, Y, Z, A, B) as buffered 5 V STEP/DIR/EN outputs on 4-pin headers for **external stepper drivers** (TB6600/closed-loop class); 2× 74HCT541 buffers; per-signal indicator LEDs |
 | End stops | 6 isolated channels: LIMX, LIMY, LIMZ, LIMA, LIMB, DOOR (18 V sensor supply, NC/NO DIP select, EL3H7 optocouplers) |
 | Laser #1 | 24 V diode-laser channel: SLA-24VDC-SLA power relay (`Laser1_Rely`) + 5 V logic PWM output (`Laser1 PWM`) — Laser Tree K60 class module |
@@ -54,7 +54,11 @@ Derived rails:
 
 ## 4. Control Architecture
 
-Three discrete RP2350B implementations (sheets 7–9), each with the same pattern: 12 MHz crystal, 4 MB QSPI flash (W25Q class), 5 V→3.3 V LDO, BOOT + RST buttons, vertical USB-C with ESD diodes → common-mode choke → series resistors, TVS array. CPU-C additionally populates the 8 MB PSRAM (needed for scan-path buffering); on CPU-A/B the PSRAM footprint is DNP.
+Three discrete RP2350B implementations (sheets 7–9), each with the same pattern: 12 MHz crystal, 4 MB QSPI flash (W25Q class), 5 V→3.3 V LDO, BOOT + RST buttons, vertical USB-C with ESD diodes → common-mode choke → series resistors, TVS array. all three carry the 8 MB PSRAM (U20 on CPU-A, U23 on CPU-B, U26 on CPU-C). An earlier revision of this
+document said the PSRAM was DNP on CPU-A/B; that is wrong. The schematic fits it on all three sheets with no
+DNP marking, and it is populated on all three on the assembled board. CPU-C is the one that *needs* it, for
+scan-path buffering. The `DNP1`/`DNP2`/`DNP3` silkscreen near each BOOT button refers to the adjacent
+resistor (R207/R219/R231), not to the PSRAM.
 
 ### 4.1 CPU-A — Motion (grblHAL)
 

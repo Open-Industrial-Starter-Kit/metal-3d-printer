@@ -155,6 +155,17 @@ that is not a number is refused as `missingJsonKey` rather than read as zero.
 
 `getStatus` reports the last commanded position as `galvoX` / `galvoY`.
 
+If `galvoPower` is off, the command still succeeds — the frames go out and the PIO holds
+them, so the head moves there as soon as power arrives — but the reply carries a warning,
+because otherwise a bare success looks like the mirrors actually moved:
+
+```json
+{"from":"cpuc","result":"success","warning":"galvoPowerOff"}
+```
+
+`setGalvoStreaming` with `true` warns the same way. Turning streaming off does not, since
+that needs no power to take effect.
+
 ### Relays
 
 CPU-C drives five relays. Each command takes `"value"` as a boolean; `getStatus` reports the
@@ -191,6 +202,12 @@ firmware before the laser is ever fired in anger.
 | `unknownJsonGetType` / `unknownJsonSetType` / `unknownJsonCommandType` | second key not recognised |
 | `missingJsonKey` | a required key, usually `value`, was absent |
 | `valueOutOfRange` | a numeric value fell outside what the hardware allows |
+
+A reply may also carry a non-fatal `"warning"` alongside `"result":"success"`:
+
+| Warning | Meaning |
+| --- | --- |
+| `galvoPowerOff` | accepted and recorded, but K6/K7 are open so the scan head has no ±15 V and will not move |
 | `lineTooLong` | the line exceeded 512 characters |
 | `unknownTarget` | from **CPU-B**, when `target` is neither `cpub` nor `cpuc` |
 
