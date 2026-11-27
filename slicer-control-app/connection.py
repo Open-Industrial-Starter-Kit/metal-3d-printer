@@ -735,9 +735,21 @@ class Connection(QObject):
         self.send({"target": "cpuc", **obj})
 
     def set_galvo_power(self, on: bool) -> None:
-        """Drive CPU-C's galvo power relays."""
+        """Drive CPU-C's galvo power relays.
+
+        The state is shown as commanded straight away, then reconciled by the
+        status read below. Without that the display is inverted for as long as
+        the reply takes: the caller asks for ON, the cached value is still OFF,
+        and anything redrawing from the cache in between shows OFF while the
+        relays are closing. Reconciling rather than trusting the command keeps
+        a refusal honest -- CPU-C's answer still has the last word.
+        """
+        on = bool(on)
         self.cpuc({"type": "command", "commandType": "setGalvoPower",
-                   "value": bool(on)})
+                   "value": on})
+        if on != self._galvo_power:
+            self._galvo_power = on
+            self.galvo_power_changed.emit(on)
         self.request_galvo_status()
 
     def request_galvo_status(self, silent: bool = False) -> None:

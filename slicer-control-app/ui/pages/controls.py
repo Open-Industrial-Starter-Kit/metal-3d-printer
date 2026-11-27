@@ -1139,9 +1139,11 @@ class ControlsPage(QWidget):
     def _on_galvo(self) -> None:
         """Toggle CPU-C's galvo power.
 
-        The button's checked state follows what CPU-C reports, not the click --
-        the same pattern the other machine-state toggles use, so a refused or
-        lost command cannot leave the button claiming a powered head.
+        The button shows the commanded state at once (set_galvo_power emits it)
+        and CPU-C's next status reply reconciles it, so a refused or lost
+        command still cannot leave the button claiming a powered head for long.
+        Syncing from the cached value here instead showed the inverse of the
+        click until the reply arrived.
         """
         conn = self._conn
         if conn is None:
