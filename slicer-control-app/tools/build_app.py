@@ -17,9 +17,8 @@ produce the same shape of result:
 What it does, in order
 ----------------------
 1. Checks the things that silently produce a broken app rather than a failed
-   build: a missing PyInstaller, a vendor/ tree that was never fetched (the CAM
-   tab would be empty), and on macOS a missing .icns (PyInstaller warns and
-   ships its own icon).
+   build: a missing PyInstaller, and on macOS a missing .icns (PyInstaller warns
+   and ships its own icon).
 2. Removes the previous build/ and dist/ for this platform. PyInstaller is
    happy to reuse them, and a stale dist/ is how a "rebuilt" app ends up
    shipping yesterday's code.
@@ -57,7 +56,6 @@ APP_NAME = "Piccola CNC" if sys.platform == "darwin" else "PiccolaCNC"
 
 #: Bundles the CAM tab serves. Their absence is not a build error — the tab
 #: reports it at runtime — which is exactly why it is worth saying up front.
-VENDOR_DIRS = ("kirimoto", "easytrace")
 
 
 def say(msg: str) -> None:
@@ -90,13 +88,6 @@ def preflight() -> list[str]:
         import PyInstaller                                  # noqa: F401
     except ImportError:
         problems.append("PyInstaller is not installed (pip install pyinstaller)")
-
-    missing = [d for d in VENDOR_DIRS
-               if not os.path.isdir(os.path.join(ROOT, "vendor", d))]
-    if missing:
-        problems.append(
-            "vendor/%s missing — the CAM tab would be empty. Run: "
-            "python3 tools/fetch_vendor.py all" % ", vendor/".join(missing))
 
     if sys.platform == "darwin" and not os.path.isfile(
             os.path.join(ROOT, "images", "app_icon.icns")):

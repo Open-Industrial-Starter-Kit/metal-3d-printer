@@ -51,10 +51,6 @@ python -c "import open3d" >/dev/null 2>&1 || cat <<'WARN'
 
 WARN
 
-echo "[3/4] Fetching CAM vendor bundles (needs Node.js + git)..."
-python tools/fetch_vendor.py all || \
-    echo "[WARN] A CAM bundle could not be prepared — continuing without it."
-
 # The icon has to exist before PyInstaller runs, or it ships its own.
 if [ "$(uname -s)" = "Darwin" ]; then
     python tools/make_icns.py || exit 1

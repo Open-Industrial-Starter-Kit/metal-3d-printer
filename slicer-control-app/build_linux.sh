@@ -64,17 +64,6 @@ if ! "$PY" -c "import open3d" 2>/dev/null; then
     echo "       unavailable in this build (no wheel for this Python?)."
 fi
 
-# ── 2. CAM vendor bundles ────────────────────────────────────────────────────
-# Kiri:Moto is a local npm build that takes minutes; reuse an existing one
-# unless asked. REFETCH_VENDOR=1 forces a rebuild (e.g. after a patch change).
-echo "[2/6] CAM vendor bundles..."
-if [[ -f vendor/kirimoto/VERSION && "${REFETCH_VENDOR:-0}" != 1 ]]; then
-    echo "      vendor/kirimoto present - reusing (REFETCH_VENDOR=1 to rebuild)"
-elif ! "$PY" tools/fetch_vendor.py all; then
-    echo "[WARN] A CAM bundle could not be prepared - continuing without it."
-    echo "       That tab will say so at runtime. See docs/cam-integration.md."
-fi
-
 # ── 3. PyInstaller one-folder build ──────────────────────────────────────────
 # Through tools/build_app.py, like build_windows.bat and build_unix.sh, so the
 # Linux packages are made from exactly the build every platform gets. It clears
@@ -126,10 +115,9 @@ Depends: libc6 (>= $GLIBC_MIN), libgl1, libegl1, libglx0, libdrm2,
  libxcb1, libxcb-dri3-0, libxcb-cursor0, libxcb-icccm4, libxcb-image0,
  libxcb-keysyms1, libxcb-render-util0, fontconfig, fonts-dejavu-core
 Homepage: https://piccolacnc.com
-Description: Control and CAM app for the Piccola CNC milling machine
- Desktop controller for the Piccola CNC: jogging, job control, file
- management, probing and height maps over USB serial or WiFi, with
- Kiri:Moto (2D/3D) and EasyTrace5000 (PCB) CAM built in.
+Description: Slicer and control app for the OISK Metal 3D Printer
+ Desktop controller for the OISK Metal 3D Printer: jogging, job control,
+ file management and layer streaming over USB serial.
  .
  Self-contained: Python, Qt and all libraries are bundled under
  /opt/$PKG. Installs a udev rule so the logged-in user can open the

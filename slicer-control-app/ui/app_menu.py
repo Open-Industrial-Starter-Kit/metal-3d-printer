@@ -1543,9 +1543,9 @@ class AppMenuDrawer(QDialog):
         # compatibility graphics (gpu_mode.py). This is the way back to the GPU
         # once a driver update or another PC makes it usable again.
         import gpu_mode
-        v.addWidget(_section_title("CAM graphics"))
+        v.addWidget(_section_title("Graphics"))
         _, self._gpu_sw = _switch_row(
-            v, "Enable GPU for Kiri:Moto",
+            v, "Enable GPU",
             checked=not gpu_mode.saved_safe_graphics())
         self._gpu_sw.toggled.connect(self._toggle_gpu)
         v.addWidget(hline())
@@ -1701,7 +1701,7 @@ class AppMenuDrawer(QDialog):
             self._gpu_sw.setChecked(not on)
             self._gpu_sw.blockSignals(False)
             self.accept()
-            InfoDialog("CAM graphics", "The setting could not be saved.",
+            InfoDialog("Graphics", "The setting could not be saved.",
                        parent=host, success=False).exec()
             return
         if gpu_mode.safe_graphics() != on:

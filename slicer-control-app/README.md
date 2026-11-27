@@ -16,18 +16,29 @@
 > ### What was deliberately left out
 >
 > - **`vendor/kirimoto/`** -- Kiri:Moto, the CAM/slicing engine (~71 MB). It was generated build
->   output and gitignored in the source repo too; `tools/fetch_vendor.py kirimoto` refetches it
->   if ever wanted.
+>   output and gitignored in the source repo too.
 > - **`vendor/easytrace/`** -- EasyTrace5000, PCB image tracing (~5 MB).
 > - **`tools/patches/kirimoto/`** -- 70 patches against Kiri:Moto, useless without it.
 > - Build and release output, virtualenvs, `__pycache__`, and the source repo's git history.
 >
-> **Consequence:** the **CAM page does not work in this copy.** `main_window.py`,
-> `cam_server.py`, `connection.py` and about thirteen `ui/cam_*.py` modules still reference the
-> vendor tree. Nothing was stubbed out or deleted to hide that -- the code is as it was, so the
-> CAM imports and server paths are live references to directories that are not here. LPBF needs
-> its own layer-generation path anyway, so this is where the slicer work starts rather than
-> something to repair.
+> ### What has been removed since
+>
+> - **The CAM subsystem.** `ui/pages/cam.py` is now an empty placeholder that keeps the page's
+>   interface (`gcode_exported`, `wire`, `export_root`, `shutdown`) so the export hand-off and
+>   upload queue in `main_window.py` stay wired for a real slicer. The 54 `ui/cam_*.py` modules,
+>   `cam_server.py`, the CAM docs and the vendor-fetch tooling are gone with it.
+> - **The laser distance sensor**, which this machine does not have.
+> - **Spindle control**, which this machine does not have.
+> - **WiFi**, leaving USB serial as the only transport.
+>
+> Each was a separate commit, so `git log -- slicer-control-app` shows exactly what went and why,
+> and any one of them can be read back in isolation.
+>
+> ### Still inherited and still wrong for this machine
+>
+> The milling-specific flows that were not in scope above are still here and still describe a
+> mill: tool length probing, Z0 and XY0 probing, height maps, facing, and Rotary Mode. The
+> README text below documents all of it, for the Piccola machine.
 >
 > Original project README follows.
 

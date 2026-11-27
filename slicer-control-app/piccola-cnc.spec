@@ -9,7 +9,6 @@ Build (on the TARGET OS — there is no cross-compiling here):
 or by hand:
 
     pip install -r requirements.txt pyinstaller
-    python3 tools/fetch_vendor.py all    # CAM bundles must exist BEFORE this
     pyinstaller --noconfirm piccola-cnc.spec
 
 Output, one-FOLDER in every case (see below):
@@ -26,15 +25,13 @@ in exactly four things: the app name, the icon format, whether there is a macOS
 The icons/ and images/ folders are bundled as data; the app loads them with a
 path relative to the ui/ package ("../icons", "../images"), which resolves to
 the PyInstaller bundle root at runtime, so no code changes are required.
-vendor/ (the browser CAM bundles) is bundled the same way and located through
-cam_server.VENDOR_DIR, which is _MEIPASS-aware.
 
 ────────────────────────────────────────────────────────────────────────────────
 ONE-FOLDER, NOT ONE-FILE — this changed when the CAM page landed
 ────────────────────────────────────────────────────────────────────────────────
 This spec used to produce a single windowed PiccolaCNC.exe and explicitly EXCLUDED
-QtWebEngine to keep it small. The CAM page (ui/pages/cam.py) now hosts Kiri:Moto
-and EasyTrace5000 in a QWebEngineView, so QtWebEngine has to ship.
+QtWebEngine to keep it small. It is still listed below, because the 3-D views
+pull Qt's WebEngine in; the CAM page itself is now an empty placeholder.
 
 QtWebEngine is not one-file friendly. It is not a single library but a helper
 *executable* (QtWebEngineProcess) plus ICU data, locale packs and v8 snapshots
@@ -105,11 +102,6 @@ ONEFILE = os.environ.get("PICCOLA_ONEFILE") == "1"
 datas = [
     ("icons", "icons"),
     ("images", "images"),
-    # Vendored browser CAM tools (Kiri:Moto, EasyTrace5000). Large: EasyTrace is
-    # ~5 MB, a built Kiri:Moto considerably more. Populate with
-    # `python3 tools/fetch_vendor.py all` before building — a missing bundle is
-    # not a build error, the CAM tab just reports it at runtime.
-    ("vendor", "vendor"),
 ]
 
 # Optional backends imported lazily / conditionally — list them so the frozen

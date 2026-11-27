@@ -1,7 +1,7 @@
 """
 ui/splash.py
 Full-screen connection splash, reproducing the design's Home.svg 1:1: a white
-screen with the bold "Welcome to Piccola CNC" title, a "Searching for connection"
+screen with the bold "Welcome to OISK Metal 3D Printer" title, a "Searching for connection"
 subtitle, and a continuously rotating recycling spinner. Shown whenever no
 machine is connected; fades out (450 ms, like the mobile app) once a serial /
 WiFi transport comes up.
@@ -36,7 +36,7 @@ _SPIN_C  = "#1C1B1F"      # design: recycling spinner colour
 
 # The welcome wordmark is rendered live as text (using the app's own font stack)
 # rather than a baked SVG, so the brand name is a real editable string.
-TITLE_TEXT  = "Welcome to Piccola CNC"
+TITLE_TEXT  = "Welcome to OISK Metal 3D Printer"
 _TITLE_FONT = "Helvetica Neue"    # matches the app's global font (ui/theme.py)
 
 # Rotation geometry of the recycling glyph, measured from icons/searching.svg as

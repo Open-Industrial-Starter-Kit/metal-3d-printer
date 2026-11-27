@@ -162,8 +162,8 @@ def main():
     lock.setStaleLockTime(0)          # never treat a live lock as stale
     if not lock.tryLock(100):
         QMessageBox.warning(
-            None, "Piccola CNC",
-            "Piccola CNC is already running.\n"
+            None, "OISK Metal 3D Printer",
+            "OISK Metal 3D Printer is already running.\n"
             "Only one instance of the app can be open at a time.")
         sys.exit(1)
 

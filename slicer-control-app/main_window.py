@@ -28,7 +28,6 @@ from ui.pages.live_preview import LivePreviewPage
 from ui.pages.console import ConsolePage
 from ui.pages.cam import CamPage
 from ui.machine_chooser import MachineChooserDialog
-from cam_server import CamServer
 from connection import Connection
 from ui.tooltips import TRANSPARENT
 
@@ -73,7 +72,7 @@ class StatusBar(QFrame):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Piccola CNC")
+        self.setWindowTitle("OISK Metal 3D Printer")
         self.resize(1420, 820)
         # Minimum size keeps the full controls page (incl. the step-size area)
         # visible without scrolling, and lets the responsive file manager fit
@@ -125,24 +124,11 @@ class MainWindow(QMainWindow):
         # through — the content then reads as a white rounded card on the gray.
         self._stack.setStyleSheet(TRANSPARENT)
 
-        # Loopback static server for the vendored browser CAM tools. Started
-        # eagerly (it is a bound socket and a daemon thread — microseconds), but
-        # the heavyweight Chromium views inside CamPage stay lazy until the tab
-        # is first opened.
-        # The rotary animator keeps its rendered keyframes here, so a job
-        # already rendered once opens in Animate with every point of it
-        # instantly (see cam_server.py, anim-cache). Under the app's data
-        # folder with the other CAM files.
-        from PySide6.QtCore import QStandardPaths
-        _base = (QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation)
-                 or os.path.expanduser("~/.piccola-cnc"))
-        self._cam_server = CamServer(anim_cache_dir=os.path.join(_base, "cam", "anim-cache"))
-
         self._file_page     = FileManagerPage()
         self._controls_page = ControlsPage()
         self._preview_page  = LivePreviewPage()
         self._console_page  = ConsolePage()
-        self._cam_page      = CamPage(self._cam_server)
+        self._cam_page      = CamPage()
         self._cam_page.gcode_exported.connect(self._on_cam_export)
         self._controls_page.facing_job_ready.connect(self._on_facing_job)
 
@@ -765,8 +751,5 @@ class MainWindow(QMainWindow):
         # timer that outlives the connection it is polling fires into a dead
         # object during teardown.
         self._preview_page.shutdown()
-        # Drop the Chromium views before the profile and the interpreter go
-        # away, then release the loopback port.
         self._cam_page.shutdown()
-        self._cam_server.stop()
         super().closeEvent(event)

@@ -83,10 +83,9 @@ def read(path: str) -> dict:
     """
     out = {"tools": [], "zmin": None, "warnings": {}, "origin": None,
            "rotary": None, "rotary_top": False}
-    try:
-        from ui.cam_gcode_header import LENGTH_WARNING as prefix
-    except Exception:
-        prefix = _WARN_PREFIX
+    # The CAM header writer that defined this prefix is gone; _WARN_PREFIX is
+    # the same string, kept here so a file exported by the old app still reads.
+    prefix = _WARN_PREFIX
     try:
         with open(path, "r", errors="replace") as fh:
             for i, line in enumerate(fh):
