@@ -85,6 +85,18 @@ both processors the same way. Lines are newline terminated; every reply is a sin
 | CPU-C's own USB CDC port | direct, for bring-up and debugging |
 | UART link from CPU-B | normal path, with the host talking only to CPU-B |
 
+The CPU-B link runs at **2 Mbaud**, 8N1. The rate divides exactly on the RP2350 PL011 at
+either 125 MHz or 150 MHz `clk_peri` (zero baud error), and the link is a short PCB trace
+through the 10R series resistors R90/R91, so a 500 ns bit time is uncontroversial. The rate
+is set in two places that must agree: `CPUC_BAUD_RATE` in the CPU-B firmware and
+`CPUB_BAUD_RATE` here. The CPU-A link is unaffected and stays at 115200, which is grblHAL's
+rate.
+
+At 2 Mbaud the 32 byte hardware RX FIFO fills in ~160 µs, so `cpub_link_poll()` must keep
+being called from the inner streaming loop, where it runs roughly every 5 µs. Anything that
+blocks longer than 160 µs — a chatty `printf` to USB CDC with `debuggingBase` on, for
+instance — can drop bytes. An interrupt driven ring buffer would remove that risk.
+
 A reply always goes back on whichever transport the command arrived on, and carries
 `"from":"cpuc"` so a host reading CPU-B's mirrored stream can tell the two processors apart.
 On boot CPU-C emits `{"from":"cpuc","event":"linkUp"}` on the CPU-B link.

@@ -32,7 +32,12 @@
 #define CPUB_UART        uart0
 #define CPUB_UART_TX_PIN 0
 #define CPUB_UART_RX_PIN 1
-#define CPUB_BAUD_RATE   115200
+// 2 Mbaud; must match CPUC_BAUD_RATE in the CPU-B firmware.
+// NOTE: at this rate the 32 byte hardware RX FIFO fills in ~160 us, so cpub_link_poll()
+// has to keep being called from the inner streaming loop (it runs every ~5 us there).
+// Anything that blocks longer than 160 us -- a chatty printf to USB CDC with debuggingBase
+// on, for instance -- can drop bytes. An IRQ driven ring buffer would remove that risk.
+#define CPUB_BAUD_RATE   2000000
 
 //[2026-11-27] Relays driven by CPU-C, named after the nets on the V2 schematic.
 //

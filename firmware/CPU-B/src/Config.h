@@ -65,7 +65,10 @@ typedef struct {
 #define SERIAL_BUFFER_SIZE 5000
 #define USB_BAUD_RATE 2000000
 #define CPUA_BAUD_RATE 115200
-#define CPUC_BAUD_RATE 115200
+// 2 Mbaud. The link is a short PCB trace through the 10R series resistors R90/R91, so
+// signal integrity is a non-issue at a 500 ns bit time, and the RP2350 PL011 divides
+// clk_peri down to this cleanly (max is clk_peri/16, several Mbaud).
+#define CPUC_BAUD_RATE 2000000
 
 // CPU-C link: UART1 on GP4 (TX) and GP5 (RX), reaching CPU-C's GP1 (RX) and GP0 (TX)
 // through the 10R series resistors R90/R91.
