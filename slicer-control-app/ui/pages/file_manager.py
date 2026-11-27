@@ -1049,13 +1049,6 @@ class FileManagerPage(QWidget):
                 return None
             if dlg.choice == "keep":
                 name = alt
-        # A rotary program that re-zeroes A at its end must not move A0 for the
-        # next file -- see ui/rotary_fix.py. The corrected copy is what gets
-        # uploaded; the file on disk is never touched.
-        from ui import rotary_fix
-        path, a_fixes = rotary_fix.fixed_copy(path)
-        if a_fixes:
-            self._tell_rotary_fix(os.path.basename(path), a_fixes)
         try:
             with open(path) as fh:
                 self._upload_lines_total = sum(1 for ln in fh if ln.strip())
@@ -1071,22 +1064,6 @@ class FileManagerPage(QWidget):
         self._scroll.verticalScrollBar().setValue(0)
         self._conn.start_transfer(path, name)
         return True
-
-    def _tell_rotary_fix(self, name: str, fixes: list) -> None:
-        """Say that the uploaded copy's A re-zero was corrected, and why."""
-        from ui.pages.dialogs import InfoDialog
-        _n, old, new = fixes[0]
-        more = f" (and {len(fixes) - 1} more)" if len(fixes) > 1 else ""
-        dlg = InfoDialog(
-            "Rotary A-zero corrected",
-            f"{name} ends by re-zeroing A with \"{old}\"{more}. The chuck is "
-            "not on a whole turn there, so that line would have moved your A0 "
-            "and the next file would cut at the wrong angle.\n\n"
-            f"The copy sent to the machine uses \"{new}\" instead: the extra "
-            "turns are still cleared, and A0 stays where you set it. Your "
-            "file on disk is unchanged.",
-            parent=self, success=True)
-        dlg.open()
 
     def _end_upload_row(self) -> None:
         if self._upload_row is not None:

@@ -183,7 +183,7 @@ def _style_line_edit(le: QLineEdit) -> None:
 # ── Hardware-settings sub-sheet ───────────────────────────────────────────────
 
 class HardwareSettingsDialog(_Sheet):
-    """Sub-sheet: housing + door interlock + probe ref Z + probe height.
+    """Sub-sheet: housing + door interlock + probe height.
 
     Housing, probe-Z and probe-height mirror the mobile Hardware-settings
     sheet. The door interlock has no mobile counterpart yet — it is the
@@ -229,12 +229,6 @@ class HardwareSettingsDialog(_Sheet):
             checked=bool(allow),
             enabled=bool(housing) and allow is not None)
         self._door_sw.toggled.connect(self._toggle_door_motion)
-
-        self._refz = _row_button("Probe Reference Z", "Edit",
-                                 icon_name="settings")
-        self._refz.setEnabled(connected)
-        self._refz.clicked.connect(self._edit_ref_z)
-        self._lay.addWidget(self._refz)
 
         self._probe_h = _row_button(self._probe_height_text(), "Edit",
                                     icon_name="settings")
@@ -317,22 +311,6 @@ class HardwareSettingsDialog(_Sheet):
 
     def _toggle_door_motion(self, on: bool) -> None:
         self._conn.set("setHousingSettings", allowMotionWhenDoorOpen=bool(on))
-
-    def _edit_ref_z(self) -> None:
-        from ui.pages.dialogs import TextInputDialog
-        host = self.parent()
-        self.accept()
-        dlg = TextInputDialog("Probe Reference Z",
-                              "Reference Z must be a number between -60 and -40.",
-                              initial="50", suffix="(− mm)", parent=host)
-        if dlg.exec():
-            try:
-                v = abs(float(dlg.text().replace(",", ".")))
-            except ValueError:
-                return
-            if 40 <= v <= 60:
-                self._conn.set("setToolLengthReferences",
-                               toolLengthReferenceZ=-v)
 
     def _edit_probe_height(self) -> None:
         from ui.pages.dialogs import TextInputDialog
@@ -1167,16 +1145,6 @@ class AppMenuDrawer(QDialog):
         self._conn_row.setEnabled(conn.is_offline)
         self._conn_row.clicked.connect(self._switch_machine)
         v.addWidget(self._conn_row)
-        # Offline (dev) only: the simulated machine's rotary axis cable, so
-        # Rotary Mode can be tried without hardware. On enters Rotary Mode as
-        # if the cable went in (the Rotary setup on Controls also plugs it in
-        # by itself); off unplugs it, which is how Rotary Mode is left.
-        self._rotary_sw = None
-        if conn.is_offline:
-            self._rotary_lbl, self._rotary_sw = _switch_row(
-                v, "Rotary axis connected (offline)",
-                checked=bool(conn.flags().get("rotaryAxisConnected", False)))
-            self._rotary_sw.toggled.connect(conn.set_offline_rotary)
         v.addWidget(hline())
 
         # ── CAM graphics ────────────────────────────────────────────────────
@@ -1214,7 +1182,7 @@ class AppMenuDrawer(QDialog):
 
         # Mirror the mobile app: refresh everything when the menu opens.
         for g in ("machineName", "firmwareVersion",
-                  "deviceId", "getToolLength", "getToolLengthReferences",
+                  "deviceId",
                   "getHousingSettings", "getMachineUsage", "getProbeHeight"):
             conn.get(g)
 

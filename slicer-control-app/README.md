@@ -18,7 +18,7 @@ passthrough — see [`../firmware/CPU-C/README.md`](../firmware/CPU-C/README.md)
 | Page | What it does | Code |
 |---|---|---|
 | **Files** | Jobs on CPU-B's SD card: search, sort, upload, download, rename, delete. Uploads go out as `startFileTransfer` + `fcl` chunks. | `ui/pages/file_manager.py` |
-| **Controls** | Jog pad (XY + Z), step size and speed, homing, unlock, soft reset, work-zero buttons, Frame. | `ui/pages/controls.py` |
+| **Controls** | Jog pad (XY + Z), step size and speed, homing, unlock, soft reset, work-zero buttons, Go to XY₀, Type coordinates, Dry run, Facing, Frame. | `ui/pages/controls.py` |
 | **Slicer** | Empty placeholder. This is where layer generation will go. | `ui/pages/cam.py` |
 | **Live Preview** | 3-D view of the opened job's toolpath with live position; already-cut path in orange. | `ui/pages/live_preview.py` |
 | **Console** | Raw TX/RX with the machine; send JSON or G-code by hand; save the log. | `ui/pages/console.py` |
@@ -73,11 +73,27 @@ why, and any one can be read back in isolation.
 - **Spindle control**, which this machine does not have — including the pre-start check
   that stopped the spindle before a job.
 - **WiFi**, in full.
+- **The homing lock** — the overlay that blocked the whole window on connect until the
+  machine had homed. Homing is still available from the Controls toolbar; it is no longer
+  compulsory, which matters because this machine's homing is not configured yet.
+- **Tool-length probing** (the toolbar read-out, its flow, the Probe Reference Z setting and
+  the `getToolLength` poll CPU-B was refusing anyway).
+- **Detect Z₀** and its flow, and the now-empty *Sensor detection* group it sat in.
+- **Bed to front.**
+- **Rotary Mode in full** — the toolbar toggle, the setup flow, the A-axis step row, Stock
+  length, Go to X₀, the A-zero upload fix, the ROTARY chip, and the rotary gating that ran
+  through most of the Controls page.
 
-**Still inherited and still wrong for this machine:** Z0 and tool-length probing, Facing,
-and Rotary Mode. Facing still emits `M3`/`S`/`M5` into the G-code it generates, which is
-why the spindle removal left it alone — half-editing it would produce wrong G-code rather
-than no G-code. These are to port or remove whole, not to half-edit.
+**Still inherited and still wrong for this machine:** Facing, which generates a milling
+raster and still emits `M3`/`S`/`M5` into it — left whole because half-editing it would
+produce wrong G-code rather than no G-code. Rotary *G-code parsing* also survives in the
+preview and job summary (`ui/pages/live_preview.py`, `ui/job_summary.py`): it reads a rotary
+header and wraps a toolpath onto a bar. That is dormant file-format handling, not control,
+and unpicking it would mean refactoring a working 3-D renderer for no gain.
+
+**The A axis** (powder reservoir on this machine) now shows its position in the right panel
+permanently — it used to appear only in Rotary Mode. Neither A nor B has a jog control; the
+jog pad is X/Y/Z only.
 
 **Not yet connected to this machine at all:** nothing here knows about layers, the galvo,
 the recoater or CPU-C. Driving a build means using CPU-B's `sendFileToCPUC` and CPU-C's

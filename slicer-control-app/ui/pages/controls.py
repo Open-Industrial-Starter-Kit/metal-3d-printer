@@ -41,8 +41,6 @@ _STEP_VALUES = [0.1, 1.0, 5.0, 10.0, 50.0, 100.0]   # X / Y step sizes (mm)
 _Z_STEP_VALUES = [0.01, 0.05, 0.1, 1.0, 5.0, 10.0, 50.0]   # fine 0.01/0.05 up to 50 mm/step
 # Feed rates (mm/min) for Slow / Normal / Fast — matches the Android app config.
 _FEED_VALUES = [200, 750, 2000]
-# A-axis (rotary) step choices in degrees.
-_A_STEP_VALUES = [1.0, 10.0, 45.0, 90.0]
 # Continuous-jog timing: a press released within the threshold is a discrete
 # step move; holding longer streams jog keep-alives every 120 ms, comfortably
 # below the firmware's 350 ms keep-alive watchdog.
@@ -136,11 +134,11 @@ class IconButton(QPushButton):
         self.updateGeometry()
 
     def set_text(self, text: str) -> None:
-        """Change the caption (the Bed button reads differently in rotary mode)."""
+        """Change the caption."""
         self._tl.setText(text)
 
     def set_icon(self, icon_name: str) -> None:
-        """Change the icon (Frame becomes Stock length in rotary mode)."""
+        """Change the icon."""
         if self._il is None or icon_name == self._icon_name:
             return
         self._icon_name = icon_name
@@ -234,116 +232,6 @@ class TopActionButton(QPushButton):
         super().changeEvent(e)
         if e.type() == QEvent.EnabledChange:
             self._refresh_enabled_look()
-
-
-class ToolLengthButton(QFrame):
-    """Compound tool-length control: icon, title, editable value pill, and a
-    'detect' sub-button (white card)."""
-
-    #: Shown until the machine reports a tool length. The card must never
-    #: invent a number — anything in this pill reads as a real measurement.
-    PLACEHOLDER = "—"
-
-    def __init__(self):
-        super().__init__()
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        self._lay = QHBoxLayout(self)
-
-        self._icon = QLabel()
-        self._icon.setStyleSheet(TRANSPARENT_NO_BORDER)
-        self._lay.addWidget(self._icon)
-        self._lay.addStretch()          # centre the title/pill between icon and detect
-
-        # Title + editable value pill
-        self._center = QVBoxLayout()
-        self._center.setAlignment(Qt.AlignCenter)
-        self._title = QLabel("Tool length")
-        self._title.setAlignment(Qt.AlignCenter)
-        self._center.addWidget(self._title)
-
-        self._pill = QFrame()
-        self._pill_l = QHBoxLayout(self._pill)
-        self._value_lbl = QLabel(self.PLACEHOLDER)
-        self._value_lbl.setAlignment(Qt.AlignCenter)
-        self._pill_l.addWidget(self._value_lbl)
-        self._center.addWidget(self._pill)
-        self._lay.addLayout(self._center)
-        self._lay.addStretch()          # …and keep the detect button hard right
-
-        # Detect sub-button (sensor icon + label)
-        self._detect_btn = QPushButton()
-        self._detect_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self._db = QVBoxLayout(self._detect_btn)
-        self._db.setAlignment(Qt.AlignCenter)
-        self._detect_icon = QLabel()
-        self._detect_icon.setAlignment(Qt.AlignCenter)
-        self._detect_icon.setStyleSheet(TRANSPARENT_NO_BORDER)
-        self._detect_icon.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self._db.addWidget(self._detect_icon)
-        self._dl = QLabel("Detect")
-        self._dl.setAlignment(Qt.AlignCenter)
-        self._dl.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self._db.addWidget(self._dl)
-        self._lay.addWidget(self._detect_btn)
-
-        bind(self, self._apply_scale)
-
-    def _apply_scale(self, *_):
-        self.setMinimumHeight(px(84))
-        # Dim the whole card (icon, text, pill, detect sub-button) while disabled
-        # — child labels/buttons don't follow the frame's disabled state on their
-        # own, so without this the tool-length card still looks active during a
-        # job or manual motion.
-        on = self.isEnabled()
-        fg = TXT if on else _DISABLED_FG
-        fg2 = TXT2 if on else _DISABLED_FG
-        card_bg = WHITE if on else _DISABLED_BG
-        card_bd = BORDER if on else _DISABLED_BORDER
-        self.setStyleSheet(
-            f"background: {card_bg}; border-radius: {px(12)}px; "
-            f"border: 1px solid {card_bd};"
-        )
-        self._lay.setContentsMargins(px(16), px(8), px(12), px(8))
-        self._lay.setSpacing(px(12))
-        self._icon.setPixmap(icons.pixmap("tool-length", px(34), fg))
-        self._center.setSpacing(px(4))
-        self._title.setStyleSheet(
-            f"background: transparent; border: none; font-size: {fs(15)}px; color: {fg};"
-        )
-        self._pill.setStyleSheet(
-            f"background: {LIGHT if on else _DISABLED_BG}; "
-            f"border-radius: {px(15)}px; border: none;"
-        )
-        self._pill_l.setContentsMargins(px(14), px(4), px(14), px(4))
-        self._pill_l.setSpacing(px(8))
-        self._value_lbl.setStyleSheet(
-            f"background: transparent; border: none; font-size: {fs(13)}px; color: {fg2};"
-        )
-        self._detect_btn.setFixedSize(px(64), px(58))
-        self._detect_btn.setStyleSheet(f"""
-            QPushButton {{ background: {PANEL if on else _DISABLED_BG};
-                           border: none; border-radius: {px(10)}px; }}
-            QPushButton:hover {{ background: {'#D2D2D2' if on else _DISABLED_BG}; }}
-        """)
-        self._db.setContentsMargins(px(6), px(4), px(6), px(4))
-        self._db.setSpacing(px(2))
-        self._detect_icon.setPixmap(icons.pixmap("detect-sensor", px(26), fg))
-        self._dl.setStyleSheet(
-            f"background: transparent; border: none; font-size: {fs(12)}px; color: {fg};"
-        )
-
-    def changeEvent(self, e):
-        super().changeEvent(e)
-        if e.type() == QEvent.EnabledChange:
-            self._apply_scale()
-
-    def set_value(self, text: str) -> None:
-        self._value_lbl.setText(text)
-
-    def clear_value(self) -> None:
-        """Back to the placeholder — no machine, no measurement."""
-        self._value_lbl.setText(self.PLACEHOLDER)
 
 
 # ── Sub-widgets ───────────────────────────────────────────────────────────────
@@ -547,30 +435,6 @@ class StepSizeRow(QWidget):
         self._style_extra()
         self.value_changed.emit()
 
-    def set_max(self, limit: float | None) -> None:
-        """Grey out the segments above *limit* (None: all usable). Rotary Mode
-        asks for this: with the bar in the chuck a 50 mm X step or a 10 mm Z
-        step is a crash waiting for a tap, so those stay visible but dead. The
-        custom "…" pill is left alone. If the selected segment is one that just
-        went dead, the largest usable one takes over and value_changed fires."""
-        changed = False
-        for i, v in enumerate(self._values):
-            b = self._group.button(i)
-            if b is None:
-                continue
-            ok = limit is None or v <= limit
-            if b.isEnabled() != ok:
-                b.setEnabled(ok)
-                b.setToolTip("" if ok else _tip(f"{v:g} mm is too big a step in Rotary Mode."))
-            if not ok and b.isChecked():
-                changed = True
-        if changed:
-            best = max((i for i, v in enumerate(self._values)
-                        if limit is None or v <= limit), default=None)
-            if best is not None:
-                self._group.button(best).setChecked(True)
-                self.value_changed.emit()
-
     def value(self) -> float:
         """Return the currently selected step size in mm."""
         if self._custom_active and self._custom_value is not None:
@@ -709,7 +573,6 @@ class JogPad(QWidget):
         self._btn_se = JogDirButton(svg="se", size=62, circular=True)
 
         self._info = _InfoBox(["X 100", "Y 100"], w=104, h=104)
-        self._rotary = False
 
         #       col0     col1     col2
         # row0:  nw       n        ne
@@ -732,20 +595,8 @@ class JogPad(QWidget):
         self._grid.setSpacing(px(6))
         self._grid.setContentsMargins(px(2), px(2), px(2), px(2))
 
-    def set_rotary(self, rotary: bool) -> None:
-        """Rotary-axis parity with the mobile app: the vertical (N/S) buttons
-        become the A axis, the four diagonal buttons disappear (combined XY
-        moves have no rotary equivalent), and the centre read-out shows A."""
-        self._rotary = bool(rotary)
-        axis = "A" if self._rotary else "Y"
-        self._btn_n.set_axis_label(axis)
-        self._btn_s.set_axis_label(axis)
-        for d in (self._btn_nw, self._btn_ne, self._btn_sw, self._btn_se):
-            d.setVisible(not self._rotary)
-
     def set_info(self, step_x: str, step_y: str, speed: str) -> None:
-        axis = "A" if self._rotary else "Y"
-        self._info.set_lines([f"X {step_x}", f"{axis} {step_y}"], speed)
+        self._info.set_lines([f"X {step_x}", f"Y {step_y}"], speed)
 
 
 class ZPad(QWidget):
@@ -829,9 +680,9 @@ class _HoldJog(QObject):
         self._signs = signs          # e.g. {"x": +1, "y": -1} — sign only
         self._feed_fn = feed_fn      # () -> feed rate (mm/min)
         self._tap_fn = tap_fn        # discrete step move
-        # () -> bool gating continuous hold. The rotary A axis has no firmware
-        # jog (README 5.31), so its buttons pass a fn returning False and stay
-        # discrete-tap only, matching the mobile app.
+        # () -> bool gating continuous hold. A button whose axis has no firmware
+        # jog passes a fn returning False and stays discrete-tap only. Nothing
+        # does now; the hook is kept because the A and B axes will need it.
         self._hold_enabled_fn = hold_enabled_fn
         self._pressed = False
         self._continuous = False
@@ -956,17 +807,9 @@ class ControlsPage(QWidget):
         self._conn = None
         self._machine_status = ""       # base status, lowercase (gating)
         self._current_ja = 0.0          # latest A-axis job position (degrees)
-        # Rotary mode: Bed back always returns to the machine Y the Rotary mode
-        # setup parked the bed at (dialogs.ROTARY_PARK_KEY, persisted). Which
-        # of Bed forward / Bed back the button offers is read off the live
-        # machine Y against that park, so a restart cannot lose it.
         self._pos_known = False         # a position report has arrived
         self._current_my: float | None = None
-        self._bed_back_shown: bool | None = None
         self._prefs = QSettings("InMachines", "MiniCNC2")
-        # The old "where Bed forward left from" record -- the one a restart
-        # could leave at the placeholder 0 -- is not used any more.
-        self._prefs.remove("controls/rotaryBedParkMy")
         self._hold_jogs: list[_HoldJog] = []
         self.setStyleSheet(TRANSPARENT)
         root = QVBoxLayout(self)
@@ -983,14 +826,10 @@ class ControlsPage(QWidget):
         self._action_btns["homing"]   = TopActionButton("home",   "Homing")
         self._action_btns["unlock"]   = TopActionButton("unlock", "Unlock")
         self._action_btns["softreset"] = TopActionButton("reset", "Reset")
-        self._tool_length = ToolLengthButton()
-        self._action_btns["rotary"]  = TopActionButton("rotary",  "Rotary\nmode",     checkable=True)
 
         top_row.addWidget(self._action_btns["homing"],    2)
         top_row.addWidget(self._action_btns["unlock"],    2)
         top_row.addWidget(self._action_btns["softreset"], 2)
-        top_row.addWidget(self._tool_length,              4)
-        top_row.addWidget(self._action_btns["rotary"],    2)
         root.addLayout(top_row)
 
         # Main content row ────────────────────────────────────────────────────
@@ -1049,15 +888,10 @@ class ControlsPage(QWidget):
         # Row 0: section headers, bottom-aligned so they hug the buttons below.
         move_grid.addLayout(_head("move-to", "Move to"),
                             0, 0, 1, 3, Qt.AlignLeft | Qt.AlignBottom)
-        move_grid.addLayout(_head("sensor", "Sensor detection"),
-                            0, 4, 1, 3, Qt.AlignLeft | Qt.AlignBottom)
 
-        # Row 1: the two button groups (cols 0-2 and 4-6; col 3 is the gap).
         move_grid.addWidget(_btn("goto_xy0",   "target", "Go to XY₀"),        1, 0)
-        move_grid.addWidget(_btn("bed_front",  "bed",    "Bed to front"),     1, 1)
-        move_grid.addWidget(_btn("type_coord", None,     "Type coordinates"), 1, 2)
-        move_grid.addWidget(_btn("detect_z0",     "detect-z0",     "Detect Z₀"),      1, 4)
-        move_grid.setColumnStretch(7, 1)         # push the right pair to the edge
+        move_grid.addWidget(_btn("type_coord", None,     "Type coordinates"), 1, 1)
+        move_grid.setColumnStretch(7, 1)
 
         jog_lay.addLayout(move_grid)
 
@@ -1107,14 +941,8 @@ class ControlsPage(QWidget):
         sl.addWidget(_section_header("Step Size (mm)"))
         self._step_x = StepSizeRow("X", default=3, cmin=0.1, cmax=100.0)   # "10" stays preselected
         self._step_y = StepSizeRow("Y", default=3, cmin=0.1, cmax=100.0)
-        # A-axis step row (degrees) — replaces the Y row in place while a rotary
-        # axis is connected (mobile parity); hidden otherwise.
-        self._step_a = StepSizeRow("A", default=1, values=_A_STEP_VALUES,
-                                   cmin=0.1, cmax=360.0)
-        self._step_a.setVisible(False)
         sl.addWidget(self._step_x)
         sl.addWidget(self._step_y)
-        sl.addWidget(self._step_a)
         sl.addWidget(_section_header("Speed (mm/s)"))
         self._speed_xy = SpeedRow(default=1)
         sl.addWidget(self._speed_xy)
@@ -1238,18 +1066,9 @@ class ControlsPage(QWidget):
         jp = self._jog_pad
         zp = self._z_pad
 
-        def _rotary() -> bool:
-            return bool(conn.flags().get("rotaryAxisConnected", False))
-
-        # In rotary mode the vertical buttons drive the A axis (absolute moveA,
-        # tap-only — no firmware jog), otherwise they jog Y as before.
         self._hold_jogs = [
-            _HoldJog(jp._btn_n, conn, {"y": +_Y}, xy_feed,
-                     lambda: self._move_a(+1) if _rotary() else _jog_y(+_Y),
-                     hold_enabled_fn=lambda: not _rotary()),
-            _HoldJog(jp._btn_s, conn, {"y": -_Y}, xy_feed,
-                     lambda: self._move_a(-1) if _rotary() else _jog_y(-_Y),
-                     hold_enabled_fn=lambda: not _rotary()),
+            _HoldJog(jp._btn_n, conn, {"y": +_Y}, xy_feed, lambda: _jog_y(+_Y)),
+            _HoldJog(jp._btn_s, conn, {"y": -_Y}, xy_feed, lambda: _jog_y(-_Y)),
             _HoldJog(jp._btn_e,  conn, {"x": +1}, xy_feed, lambda: _jog_x(+1)),
             _HoldJog(jp._btn_w,  conn, {"x": -1}, xy_feed, lambda: _jog_x(-1)),
             # Diagonal Y matches the cardinal N/S: upper 45° arrows send the same
@@ -1267,32 +1086,22 @@ class ControlsPage(QWidget):
         ]
         zp._btn_ztop.clicked.connect(lambda: conn.cmd("grblHomingZ"))
 
-        # ── A-axis (rotary) row ────────────────────────────────────────────
         conn.position_changed.connect(self._on_position_changed)
-        self._set_rotary_ui(conn.flags().get("rotaryAxisConnected", False))
-
-        # ── Toolbar extras ─────────────────────────────────────────────────
-        self._tool_length._detect_btn.clicked.connect(self._on_tool_length_detect)
-        conn.tool_length_changed.connect(
-            lambda v: self._tool_length.set_value(f"{v:.1f} mm"))
-        self._action_btns["rotary"].clicked.connect(self._on_rotary)
 
         # ── Move-to / sensor-detection buttons ─────────────────────────────
         b = self._bottom_btns
         b["goto_xy0"].clicked.connect(self._on_goto_xy0)
-        b["bed_front"].clicked.connect(self._on_bed_front)
         b["type_coord"].clicked.connect(self._on_type_coordinates)
         b["dry_run"].toggled.connect(self._on_dry_run_toggle)
         b["frame"].clicked.connect(self._on_frame)
         b["facing"].clicked.connect(self._on_facing)
-        b["detect_z0"].clicked.connect(self._on_detect_z0)
 
         # Reflect machine flags back into the toggles (dry run)
         conn.machine_flags_changed.connect(self._on_machine_flags)
 
         # Info boxes follow the selected step sizes / speed. Step rows notify
         # through value_changed so a custom "…" step refreshes them too.
-        for row in (self._step_x, self._step_y, self._step_a, self._step_z):
+        for row in (self._step_x, self._step_y, self._step_z):
             row.value_changed.connect(self._refresh_info_boxes)
         for grp in (self._speed_xy._group, self._speed_z._group):
             grp.idClicked.connect(lambda _i: self._refresh_info_boxes())
@@ -1313,22 +1122,7 @@ class ControlsPage(QWidget):
 
     def _on_homing(self) -> None:
         from ui.pages.dialogs import HomingOptionsDialog
-        rotary = self._conn.flags().get("rotaryAxisConnected", False)
-        HomingOptionsDialog(self._conn, rotary=rotary, parent=self).exec()
-
-    def _on_tool_length_detect(self) -> None:
-        from ui.pages.dialogs import ToolLengthFlow
-        ToolLengthFlow(self._conn, parent=self).exec()
-
-    def _on_detect_z0(self) -> None:
-        from ui.pages.dialogs import ProbeZ0Flow
-        ProbeZ0Flow(self._conn, parent=self).exec()
-
-    def _on_rotary(self) -> None:
-        from ui.pages.dialogs import RotaryFlow
-        RotaryFlow(self._conn, parent=self).exec()
-        self._action_btns["rotary"].setChecked(
-            self._conn.flags().get("rotaryAxisConnected", False))
+        HomingOptionsDialog(self._conn, parent=self).exec()
 
     # ── State feedback ────────────────────────────────────────────────────────
 
@@ -1341,9 +1135,6 @@ class ControlsPage(QWidget):
     def _on_frame(self) -> None:
         conn = self._conn
         if conn is None:
-            return
-        if conn.flags().get("rotaryAxisConnected", False):
-            self._frame_stock()
             return
         if getattr(self, "_frame_checking", False):
             return
@@ -1455,242 +1246,10 @@ class ControlsPage(QWidget):
         if getattr(self, "_framing", False) and not getattr(self, "_frame_moved", False):
             self._framing = False
 
-    # ── Stock length (rotary mode) ───────────────────────────────────────────
-    #
-    # Frame traces the job's X/Y outline, and the firmware does it itself
-    # (frameJob) -- with Y moves, which it refuses while the rotary is
-    # connected. On a bar the question Frame answers is simpler anyway: which
-    # stretch of the bar does the job cut, and how long is that? So in rotary
-    # mode the button is Stock length: Z goes up to the top of its travel,
-    # then X runs to the job's left end (X min), on to its right end (X max),
-    # and back to where it was. Y and A do not move, and Z stays up.
-    #
-    # Z at the top, not at the job's own safe height: tried on 2026-11-18 and
-    # the tool hovering 3 mm over the bar was hard to see along it; from the
-    # top the run is easy to follow, and it is clear of anything on the bar.
-    # (Until then this was "Frame stock".)
-    #
-    # The moves go out as GRBL ``$J=`` jogs, which the firmware passes through
-    # with the rotary connected (as Bed forward does). X is in work coordinates
-    # (``G90``, the active work offset), which is what the job's bounds are in;
-    # Z goes to machine Z (``G53``). The job's X extent comes from the same two
-    # places the Start check reads (job_fit): the firmware's
-    # getOpenedFileBounds reply and the local copy of the file. It is checked
-    # against the travel (the soft limits) first, so a move that cannot fit
-    # says so instead of stopping at the limit.
-    #
-    # One jog at a time: a raw line is a priority send that clears whatever is
-    # still waiting in the port's output buffer, so lines fired back to back
-    # can lose one. Each is sent once the machine is seen to have finished the
-    # last -- Jog, then Idle again -- or, for one too short to catch, after
-    # _FS_QUIET_S of Idle. An alarm, a lost connection or a step that never
-    _FS_BOUNDS_WAIT_S = 2.5
-    _FS_POLL_MS = 100
-    _FS_QUIET_S = 1.5
-    _FS_STEP_TIMEOUT_S = 180.0
-
-    def _frame_stock(self) -> None:
-        conn = self._conn
-        if conn is None or getattr(self, "_fs", None) is not None:
-            return
-        if not self._pos_known:
-            conn.motion_error.emit(
-                "Position Not Known Yet",
-                "The machine has not reported where it is yet. "
-                "Try again in a moment.")
-            return
-        import time
-        from ui import job_fit
-        self._fs = {"phase": "reading"}
-        self._sync_gates()
-        state = {"reply": None}
-
-        def on_bounds(p) -> None:
-            state["reply"] = dict(p)
-
-        conn.opened_file_bounds_received.connect(on_bounds)
-        conn.get("getOpenedFileBounds")
-        if job_fit.machine_ranges(conn.grbl_settings()) is None:
-            conn.request_grbl_settings()
-        t0 = time.monotonic()
-
-        def poll() -> None:
-            have = (state["reply"] is not None and
-                    job_fit.machine_ranges(conn.grbl_settings()) is not None)
-            if not have and time.monotonic() - t0 < self._FS_BOUNDS_WAIT_S:
-                QTimer.singleShot(100, poll)
-                return
-            try:
-                conn.opened_file_bounds_received.disconnect(on_bounds)
-            except (RuntimeError, TypeError):
-                pass
-            self._frame_stock_plan(state["reply"])
-
-        QTimer.singleShot(100, poll)
-
-    def _frame_stock_fail(self, title: str, text: str) -> None:
-        self._fs = None
-        self._sync_gates()
-        if self._conn is not None:
-            self._conn.motion_error.emit(title, text)
-
-    def _frame_stock_plan(self, reply) -> None:
-        conn = self._conn
-        if conn is None:
-            self._fs = None
-            return
-        from ui import job_fit
-        name = conn.opened_file_name()
-        ext = job_fit.extents_from_reply(reply)
-        ext.update(job_fit.extents_from_file(conn.cached_file_path(name) if name else None))
-        if "X" not in ext:
-            self._frame_stock_fail(
-                "Stock Length",
-                "The opened job's extent along X could not be read, so there "
-                "is nothing to measure. Open the job again and retry.")
-            return
-        ranges = job_fit.machine_ranges(conn.grbl_settings())
-        if ranges is None:
-            self._frame_stock_fail(
-                "Machine Travel Not Read Yet",
-                "The machine's travel ($130-$132) has not been read yet, so the "
-                "soft limits are not known. Try again in a moment.")
-            return
-        pos = conn.current_position()
-        xlo, xhi = ext["X"]
-        problems = job_fit.check({"X": (xlo, xhi)}, pos, ranges)
-        if problems:
-            self._frame_stock_fail(
-                "Stock Length Would Pass the Soft Limit",
-                "From where the work zero is set now, the move would go past "
-                "the machine's travel and stop at the soft limit, so nothing "
-                "was moved:\n\n" + "\n\n".join(problems))
-            return
-        x0 = float(pos.get("jx", 0.0))
-        feed = max(100, int(self._speed_xy.feed_mmmin()))
-        zfeed = max(100, int(self._speed_z.feed_mmmin()))
-        # Z to the top of its travel first (machine Z, G53), then the bar's
-        # stretch from X min to X max, then back to where X was; Z stays up
-        ztop = ranges["Z"][1] - 0.5
-        steps = []
-        if float(pos.get("mz", 0.0)) < ztop - 0.01:
-            steps.append(f"$J=G53 G90 Z{ztop:.3f} F{zfeed}")
-        steps += [f"$J=G90 X{xlo:.3f} F{feed}",
-                  f"$J=G90 X{xhi:.3f} F{feed}",
-                  f"$J=G90 X{x0:.3f} F{feed}"]
-        self._fs = {"phase": "moving", "steps": steps, "i": 0,
-                    "sent": 0.0, "started": False}
-        self._sync_gates()
-        QTimer.singleShot(0, self._frame_stock_next)
-
-    # ── Go to X0 (rotary mode) ───────────────────────────────────────────────
-    #
-    # Go to XY0 is the firmware's returnJobXY0Macro, which moves Y -- refused
-    # while the rotary is connected, so the button used to be greyed out in
-    # rotary mode. There it is Go to X0 instead: Z up to the top of its travel
-    # (clear of the bar and the chuck, whatever height the tool was left at),
-    # then X to the work zero. Y and A do not move, and Z stays up. X0 is
-    # checked against the travel (soft limits) first. Same raw-jog runner as
-    # Stock length (_frame_stock_next).
     def _on_goto_xy0(self) -> None:
         conn = self._conn
-        if conn is None:
-            return
-        if conn.flags().get("rotaryAxisConnected", False):
-            self._goto_x0()
-        else:
+        if conn is not None:
             conn.cmd("returnJobXY0Macro")
-
-    def _goto_x0(self) -> None:
-        conn = self._conn
-        if conn is None or getattr(self, "_fs", None) is not None:
-            return
-        if not self._pos_known:
-            conn.motion_error.emit(
-                "Position Not Known Yet",
-                "The machine has not reported where it is yet. "
-                "Try again in a moment.")
-            return
-        from ui import job_fit
-        ranges = job_fit.machine_ranges(conn.grbl_settings())
-        if ranges is None:
-            conn.request_grbl_settings()
-            conn.motion_error.emit(
-                "Machine Travel Not Read Yet",
-                "The machine's travel ($130-$132) has not been read yet, so the "
-                "soft limits and the top of Z are not known. Try again in a "
-                "moment.")
-            return
-        pos = conn.current_position()
-        problems = job_fit.check({"X": (0.0, 0.0)}, pos, ranges)
-        if problems:
-            conn.motion_error.emit(
-                "Go to X₀ Would Pass the Soft Limit",
-                "The X work zero is outside the machine's travel, so the move "
-                "would stop at the soft limit. Nothing was moved:\n\n"
-                + "\n\n".join(problems))
-            return
-        feed = max(100, int(self._speed_xy.feed_mmmin()))
-        zfeed = max(100, int(self._speed_z.feed_mmmin()))
-        ztop = ranges["Z"][1] - 0.5
-        steps = []
-        if float(pos.get("mz", 0.0)) < ztop - 0.01:
-            steps.append(f"$J=G53 G90 Z{ztop:.3f} F{zfeed}")
-        steps.append(f"$J=G90 X0.000 F{feed}")
-        self._fs = {"phase": "moving", "steps": steps, "i": 0, "sent": 0.0,
-                    "started": False, "title": "Go to X₀"}
-        self._sync_gates()
-        QTimer.singleShot(0, self._frame_stock_next)
-
-    def _frame_stock_next(self) -> None:
-        import time
-        fs = getattr(self, "_fs", None)
-        conn = self._conn
-        if fs is None or conn is None:
-            return
-        if fs["i"] >= len(fs["steps"]):
-            self._frame_stock_end()
-            return
-        line = fs["steps"][fs["i"]]
-        fs["i"] += 1
-        fs["sent"] = time.monotonic()
-        fs["started"] = False
-        conn.send_raw(line)
-        QTimer.singleShot(self._FS_POLL_MS, self._frame_stock_poll)
-
-    def _frame_stock_poll(self) -> None:
-        import time
-        fs = getattr(self, "_fs", None)
-        conn = self._conn
-        if fs is None or conn is None:
-            return
-        if not (conn.is_serial_connected or conn.is_offline_link):
-            self._frame_stock_end()
-            return
-        st = self._machine_status
-        if st == "alarm":
-            self._frame_stock_end()
-            what = fs.get("title", "Stock Length")
-            conn.motion_error.emit(
-                f"{what} Stopped",
-                f"The machine went into alarm during {what}. Check the work "
-                "zero and that the move fits inside the machine, then unlock "
-                "it before continuing.")
-            return
-        if st in ("jog", "run"):
-            fs["started"] = True
-        waited = time.monotonic() - fs["sent"]
-        if st == "idle" and (fs["started"] or waited >= self._FS_QUIET_S):
-            QTimer.singleShot(150, self._frame_stock_next)
-            return
-        if waited > self._FS_STEP_TIMEOUT_S:
-            self._frame_stock_end()
-            return
-        QTimer.singleShot(self._FS_POLL_MS, self._frame_stock_poll)
-
-    def _frame_stock_end(self) -> None:
-        self._fs = None
-        self._sync_gates()
 
     def _on_facing(self) -> None:
         """Open the facing setup and pass the finished program upward.
@@ -1714,195 +1273,7 @@ class ControlsPage(QWidget):
             b.blockSignals(True)
             b.setChecked(flags["dryRunEnabled"])
             b.blockSignals(False)
-        if "rotaryAxisConnected" in flags:
-            b = self._action_btns["rotary"]
-            b.blockSignals(True)
-            b.setChecked(flags["rotaryAxisConnected"])
-            b.blockSignals(False)
-            self._set_rotary_ui(bool(flags["rotaryAxisConnected"]))
         self._sync_gates()
-
-    def _set_rotary_ui(self, rotary: bool) -> None:
-        """Reshape the jog UI for rotary parity with the mobile app: the jog
-        pad's vertical buttons become the A axis and its diagonals disappear,
-        and the settings panel swaps the Y step row for the A (degrees) row."""
-        rotary = bool(rotary)
-        self._jog_pad.set_rotary(rotary)
-        self._step_y.setVisible(not rotary)
-        self._step_a.setVisible(rotary)
-        # Big jog steps make no sense with a bar in the chuck: X keeps up to
-        # 10 mm, Z up to 5 mm; the rest is greyed until rotary comes off.
-        self._step_x.set_max(10.0 if rotary else None)
-        self._step_z.set_max(5.0 if rotary else None)
-        self._refresh_info_boxes()
-        # The park is NOT cleared when rotary reads off: every launch starts
-        # with no flags (rotary off) until the machine reports, and clearing
-        # here lost the park on each restart.
-        self._bed_back_shown = None
-        self._refresh_bed_button(rotary)
-        self._refresh_frame_button(rotary)
-        g = self._bottom_btns.get("goto_xy0")
-        if g is not None:
-            g.set_text("Go to X₀" if rotary else "Go to XY₀")
-            g.setToolTip(_tip(
-                "Z goes up to the top of its travel.",
-                "Then X moves to the work zero.",
-                "Y and A do not move.",
-                "The move is checked against the soft limits first.")
-                if rotary else "")
-
-    def _refresh_frame_button(self, rotary: bool) -> None:
-        b = self._bottom_btns.get("frame")
-        if b is None:
-            return
-        if rotary:
-            b.set_text("Stock length")
-            b.set_icon("stock-length")
-            b.setToolTip(_tip(
-                "Z goes up to the top of its travel.",
-                "Then X runs from the opened job's X minimum to its X "
-                "maximum and back, showing the stretch of the bar the job "
-                "will cut.",
-                "Y and A do not move.",
-                "The move is checked against the soft limits first."))
-        else:
-            b.set_text("Frame")
-            b.set_icon("frame")
-            b.setToolTip("")
-
-    #: How far (mm) the bed may sit from the rotary park and still count as
-    #: parked -- beyond it the button offers Bed back.
-    _BED_AT_PARK_MM = 0.5
-
-    def _rotary_park_my(self) -> float | None:
-        """Machine Y Rotary mode parked the bed at, or None if never recorded."""
-        from ui.pages.dialogs import ROTARY_PARK_KEY
-        v = self._prefs.value(ROTARY_PARK_KEY, None)
-        try:
-            return None if v in (None, "") else float(v)
-        except (TypeError, ValueError):
-            return None
-
-    def _bed_away_from_park(self) -> bool:
-        park = self._rotary_park_my()
-        if park is None or not self._pos_known or self._current_my is None:
-            return False
-        return abs(self._current_my - park) > self._BED_AT_PARK_MM
-
-    def _refresh_bed_button(self, rotary: bool) -> None:
-        b = self._bottom_btns.get("bed_front")
-        if b is None:
-            return
-        if not rotary:
-            self._bed_back_shown = None
-            b.set_text("Bed to front")
-            b.setToolTip(_tip("Homes Y: the bed moves all the way to the front."))
-            return
-        back = self._bed_away_from_park()
-        if back == self._bed_back_shown:
-            return
-        self._bed_back_shown = back
-        if back:
-            b.set_text("Bed back")
-            b.setToolTip(_tip(
-                "The bed moves back to where Rotary Mode parked it "
-                f"(machine Y {self._rotary_park_my():.3f})."))
-        else:
-            b.set_text("Bed forward")
-            b.setToolTip(_tip(
-                "Z goes up to the top of its travel.",
-                f"Then the bed moves {self._bed_forward_mm():g} mm toward "
-                "the front, so you can reach the tool."))
-
-    def _bed_forward_mm(self) -> float:
-        """Distance Bed forward moves (preference controls/rotaryBedForwardMm,
-        40 mm unless changed)."""
-        try:
-            d = float(self._prefs.value("controls/rotaryBedForwardMm", 40.0))
-        except (TypeError, ValueError):
-            d = 40.0
-        return d if d > 0 else 40.0
-
-    def _on_bed_front(self) -> None:
-        """Bed to front (Y homing) -- or, in rotary mode, Bed forward / Bed back.
-
-        With the rotary connected the firmware refuses every Y command it
-        understands (``rotaryYLock``: moveY, grblHomingY, the macros), because
-        it parked the bed at the rotary working position itself. The operator
-        still needs the bed nearer for a tool change on the rotary chuck. The
-        firmware does pass raw GRBL lines through untouched, and a ``$J=`` jog
-        on Y moves the bed with the rotary connected (checked on the machine).
-        So in rotary mode this button jogs: Z to the top of its travel first
-        (clears the stock), then Y toward the front by a stored distance (40 mm
-        unless the preference is changed); the park position is recorded and the button turns
-        into **Bed back**, which jogs Y back to it so the job runs from where
-        the firmware parked the bed. Jogs are soft-limit checked by GRBL
-        (``error:15`` -> the End of Travel notice), and a running jog is ended
-        by the Reset button like any other.
-
-        Front = machine Y toward its home end: Bed to front *is* Y homing, and
-        the machine homes Y at machine 0 with its travel running negative
-        (job_fit), so toward the front means increasing machine Y."""
-        conn = self._conn
-        if conn is None:
-            return
-        if not conn.flags().get("rotaryAxisConnected", False):
-            conn.cmd("grblHomingY")
-            return
-        from ui import job_fit
-        if not self._pos_known:
-            # Right after a launch the position is still the placeholder 0:
-            # a jog planned from it would go to the wrong place.
-            conn.motion_error.emit(
-                "Position Not Known Yet",
-                "The machine has not reported where the bed is yet. "
-                "Try again in a moment.")
-            return
-        feed = max(100, int(self._speed_xy.feed_mmmin()))
-        if self._bed_away_from_park():
-            conn.send_raw(f"$J=G53 G90 Y{self._rotary_park_my():.3f} F{feed}")
-            return
-        # One press, no dialog: the distance is a stored preference
-        # (controls/rotaryBedForwardMm, 40 mm unless changed), clamped to the
-        # travel below.
-        dist = self._bed_forward_mm()
-        pos = conn.current_position()
-        my = float(pos.get("my", 0.0))
-        ranges = job_fit.machine_ranges(conn.grbl_settings())
-        if ranges is None:
-            # Travel not read yet: ask for it (for next time) and let GRBL's
-            # own soft limit refuse a jog that would go too far.
-            conn.request_grbl_settings()
-        else:
-            room = ranges["Y"][1] - my - 0.5
-            if room <= 0.01:
-                conn.motion_error.emit(
-                    "Bed Already at the Front",
-                    "The bed is at the front end of its travel.")
-                return
-            dist = min(dist, room)
-            ztop = ranges["Z"][1] - 0.5
-            zfeed = max(100, int(self._speed_z.feed_mmmin()))
-            if float(pos.get("mz", 0.0)) < ztop - 0.01:
-                conn.send_raw(f"$J=G53 G90 Z{ztop:.3f} F{zfeed}")
-                # The Y jog follows after a beat, not in the same instant: a
-                # priority send cancels and resets whatever is still in the
-                # port's output buffer before it writes, so two raw lines
-                # fired back to back could lose the first (the Z lift) --
-                # and a jog that never arrived is a press that did nothing.
-                QTimer.singleShot(250, lambda: self._rotary_bed_jog(conn, my, dist, feed))
-                return
-        self._rotary_bed_jog(conn, my, dist, feed)
-
-    def _rotary_bed_jog(self, conn, my: float, dist: float, feed: int) -> None:
-        # Bed forward never moves the park. Only when Rotary mode has never
-        # recorded one (set up before this app version, or from the machine
-        # itself) is the place the bed leaves taken as the park.
-        if self._rotary_park_my() is None:
-            from ui.pages.dialogs import ROTARY_PARK_KEY
-            self._prefs.setValue(ROTARY_PARK_KEY, f"{my:.3f}")
-        conn.send_raw(f"$J=G53 G90 Y{my + dist:.3f} F{feed}")
-
     def _on_status_for_gates(self, status: str) -> None:
         self._machine_status = str(status).split(":")[0].strip().lower()
         self._sync_gates()
@@ -1912,9 +1283,7 @@ class ControlsPage(QWidget):
         """Enable/disable the page according to the machine state (Android
         button-mask parity): motion and procedures are blocked while a job
         runs (Run/Hold), during homing and while a guided procedure is busy;
-        unlock is only offered in Alarm; detection additionally
-        needs the distance sensor; the rotary axis locks Y motion, probing
-        and homing (Z homing stays available on the Z pad)."""
+        unlock is only offered in Alarm."""
         conn = self._conn
         if conn is None:
             return
@@ -1922,7 +1291,6 @@ class ControlsPage(QWidget):
         flags = conn.flags()
         st = self._machine_status
         busy = bool(flags.get("procedureBusy", False))
-        rotary = bool(flags.get("rotaryAxisConnected", False))
         job_running = bool(flags.get("jobRunning", False))
         job_paused = bool(flags.get("jobPaused", False))
         door_blocked = conn.door_blocked()
@@ -1952,73 +1320,34 @@ class ControlsPage(QWidget):
         motion = connected and not busy and not machine_running
         acting = motion
 
-        # Jog pads, step/speed pills, A axis
+        # Jog pads, step/speed pills
         for w in (self._jog_pad, self._z_pad,
-                  self._step_x, self._step_y, self._step_a, self._step_z,
+                  self._step_x, self._step_y, self._step_z,
                   self._speed_xy, self._speed_z):
             w.setEnabled(motion)
 
         # Move-to / detection buttons
         b = self._bottom_btns
-        # Go to XY0 moves Y, which the rotary locks -- in rotary mode it is
-        # Go to X0 instead (raw jog lines, see _goto_x0), so it stays enabled;
-        # not while that or Stock length is already running.
-        b["goto_xy0"].setEnabled(acting and (not rotary
-                                             or getattr(self, "_fs", None) is None))
-        # Bed to front is Y homing, which the firmware refuses with the rotary
-        # connected -- in rotary mode the button is Bed forward / Bed back
-        # instead (raw jog lines, see _on_bed_front), so it stays enabled.
-        b["bed_front"].setEnabled(acting)
+        b["goto_xy0"].setEnabled(acting)
         b["type_coord"].setEnabled(acting)
-        b["dry_run"].setEnabled(acting and not rotary)
-        # Facing generates a program and uploads it. No open file
-        # needed; gated like dry-run because a flat raster means nothing on a
-        # rotary bar, and nothing should go up the link mid-job.
-        b["facing"].setEnabled(acting and not rotary)
+        b["dry_run"].setEnabled(acting)
+        # Facing generates a program and uploads it. No open file needed;
+        # nothing should go up the link mid-job.
+        b["facing"].setEnabled(acting)
         # Frame needs a file open and can't run while a job/macro is active.
-        # It moves Y, which the rotary locks -- so in rotary mode the button is
-        # Stock length instead (X and Z only, raw jog lines; see _frame_stock),
-        # and stays enabled; not while one is already running.
-        b["frame"].setEnabled(acting and has_file
-                              and getattr(self, "_fs", None) is None)
-        b["detect_z0"].setEnabled(acting and not rotary)
+        b["frame"].setEnabled(acting and has_file)
 
         # Toolbar actions.
         a = self._action_btns
-        a["homing"].setEnabled(acting and not rotary)
+        a["homing"].setEnabled(acting)
         a["unlock"].setEnabled(connected and st == "alarm")
         a["softreset"].setEnabled(motion)
-        a["rotary"].setEnabled(acting and not rotary)
-
-        # Tool length probing is deactivated in rotary mode
-        self._tool_length.setEnabled(connected and not machine_running and not rotary)
-        # No machine, no measurement: back to the placeholder, so the previous
-        # machine's length can't be read as this one's. The connection forgets
-        # its cached value at the same time (_reset_machine_state), so the next
-        # one re-emits even when it reports the same number.
-        if not connected:
-            self._tool_length.clear_value()
 
     def _on_position_changed(self, pos: dict) -> None:
         self._current_ja = float(pos.get("ja", self._current_ja))
         if "my" in pos:
             self._pos_known = True
             self._current_my = float(pos["my"])
-            if self._conn is not None:
-                self._refresh_bed_button(
-                    bool(self._conn.flags().get("rotaryAxisConnected", False)))
-
-    def _move_a(self, direction: int) -> None:
-        """Step the A axis one step in the given direction.
-
-        Tap-only: the firmware has no A-axis jog (README 5.31). Relative for
-        the same reason as the XYZ steps — `self._current_ja` comes from the
-        status poll, so a second tap before it catches up used to step from a
-        stale angle and come out short."""
-        if not self._conn:
-            return
-        self._conn.cmd("moveA", a=round(direction * self._step_a.value(), 4),
-                       relative=True, feedRate=self._speed_xy.feed_mmmin())
 
     def _on_link_toggled(self, on: bool) -> None:
         self._refresh_link_look()
@@ -2054,10 +1383,8 @@ class ControlsPage(QWidget):
         speed_names = {200: "Slow", 750: "Normal", 2000: "Fast"}
         sp = speed_names.get(self._speed_xy.feed_mmmin(), "Normal")
         spz = speed_names.get(self._speed_z.feed_mmmin(), "Normal")
-        rotary = bool(self._conn and
-                      self._conn.flags().get("rotaryAxisConnected", False))
-        second = self._step_a.value() if rotary else self._step_y.value()
-        self._jog_pad.set_info(_fmt(self._step_x.value()), _fmt(second), sp)
+        self._jog_pad.set_info(_fmt(self._step_x.value()),
+                               _fmt(self._step_y.value()), sp)
         self._z_pad.set_info(_fmt(self._step_z.value()), spz)
 
     def _on_type_coordinates(self) -> None:
@@ -2066,6 +1393,5 @@ class ControlsPage(QWidget):
         from ui.pages.dialogs import TypeCoordinatesDialog
         if not self._conn:
             return
-        rotary = bool(self._conn.flags().get("rotaryAxisConnected", False))
-        TypeCoordinatesDialog(self._conn, parent=self, rotary=rotary,
+        TypeCoordinatesDialog(self._conn, parent=self,
                               feed_provider=self._speed_xy.feed_mmmin).exec()

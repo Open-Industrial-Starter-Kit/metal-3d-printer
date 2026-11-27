@@ -4,8 +4,7 @@ Modal dialogs matching the Piccola CNC desktop design language: white card, larg
 icon, big title, warning rows, and gray rounded check/close buttons.
 
 Includes the multi-phase procedure flows mirrored from the mobile app:
-probe Z0, tool length, rotary mode, homing options, plus generic confirm /
-input dialogs.
+homing options, plus generic confirm / input dialogs.
 """
 
 import math
@@ -712,179 +711,7 @@ class _ProcedureFlow(FlowDialog):
         pass
 
 
-class ProbeZ0Flow(_ProcedureFlow):
-    completion_type = "probeZ0Completed"
-
-    def __init__(self, conn, parent=None):
-        super().__init__(conn, parent)
-        self.set_phase(self.build_phase(
-            "sensor", "Z0 detection",
-            [_warning_row("Make sure the probe is placed under the spindle and "
-                          "the crocodile clamp is attached to the end mill."),
-             _setup_diagram("setup-probe-bed"),
-             lbl("Is this the current setup?", sz=15, color=TXT,
-                 align=Qt.AlignCenter)],
-            [("✓", self._start, True), ("✕", self.reject, True)],
-        ))
-
-    def _start(self):
-        self._conn.cmd("probeSetJobZ0Macro")
-        self.show_progress("Z0 detection", "Probing in progress…",
-                           self._cancel_procedure)
-
-    def on_procedure_done(self, success: bool, payload: dict) -> None:
-        if success:
-            self.show_result(True, "Z0 set successfully",
-                             "The probe plate has been detected and Z0 has been set.")
-        else:
-            self.show_result(False, "Probing failed",
-                             "The probe did not trigger. Check the probe plate "
-                             "connection and try again.")
-
-
-class ToolLengthFlow(_ProcedureFlow):
-    completion_type = "probeToolLengthCompleted"
-
-    def __init__(self, conn, parent=None):
-        super().__init__(conn, parent)
-        self.set_phase(self.build_phase(
-            "tool-length", "Tool length detection",
-            [_warning_row("The probe must be placed on top of the bed, "
-                          "aligned with the tool."),
-             _setup_diagram("setup-probe-bed"),
-             lbl("Is this the current setup?", sz=15, color=TXT,
-                 align=Qt.AlignCenter)],
-            [("✓", self._start, True), ("✕", self.reject, True)],
-        ))
-
-    def _start(self):
-        self._conn.cmd("probeToolLengthMacro")
-        self.show_progress("Tool length detection in progress",
-                           "Please wait until the process is finished.",
-                           self._cancel_procedure)
-
-    def on_procedure_done(self, success: bool, payload: dict) -> None:
-        if success:
-            try:
-                plain = f"{float(payload.get('toolLength')):.1f}"
-                value = f"{plain} mm"
-            except (TypeError, ValueError):
-                plain, value = "", "—"
-            val = lbl(value, sz=30, bold=True, color=TXT, align=Qt.AlignCenter)
-            self.set_phase(self.build_phase(
-                None, "Tool length successfully detected", [val],
-                [("copy", lambda: QGuiApplication.clipboard().setText(plain),
-                  bool(plain)),
-                 ("✓", self.accept, True)],
-                big_icon_glyph="✓", icon_color=RUN_C,
-            ))
-        else:
-            self.show_result(False, "Measurement failed",
-                             "The probe did not trigger. Check the probe plate "
-                             "connection and try again.")
-
-
-#: Machine Y the Rotary mode setup parked the bed at (QSettings InMachines /
-#: MiniCNC2). Written only when Rotary mode finishes parking; Bed back on the
-#: Controls page always returns there.
-ROTARY_PARK_KEY = "controls/rotaryParkMy"
-
-
-def remember_rotary_park(conn) -> None:
-    """Store the bed's current machine Y as the rotary park position."""
-    from PySide6.QtCore import QSettings
-    try:
-        my = float(conn.current_position().get("my"))
-    except (TypeError, ValueError, AttributeError):
-        return
-    QSettings("InMachines", "MiniCNC2").setValue(ROTARY_PARK_KEY, f"{my:.3f}")
-
-
-class RotaryFlow(_ProcedureFlow):
-    completion_type = ""        # driven by machine status + flags
-
-    def __init__(self, conn, parent=None):
-        super().__init__(conn, parent)
-        rows = [
-            _warning_row("The bed will move forward now. Please ensure there "
-                         "are no obstacles."),
-            _warning_row("Z probing and tool length will be deactivated."),
-        ]
-        self.set_phase(self.build_phase(
-            "rotary", "Initializing rotary mode", rows,
-            [("start", self._install, True), ("✕", self.reject, True)],
-        ))
-
-    def _install(self):
-        self._conn.cmd("installRotary")
-        self.show_progress("Moving to installation position…",
-                           "Please ensure there are no obstacles.",
-                           self._abort)
-        self._conn.machine_status_changed.connect(self._on_install_status)
-
-    def _abort(self):
-        self._conn.cmd("grblSoftReset")
-        self.reject()
-
-    def _on_install_status(self, status: str) -> None:
-        if status.split(":")[0] != "Idle":
-            return
-        try:
-            self._conn.machine_status_changed.disconnect(self._on_install_status)
-        except (RuntimeError, TypeError):
-            pass
-        self._setup_phase()
-
-    def _setup_phase(self):
-        steps = QWidget()
-        sv = QVBoxLayout(steps)
-        sv.setContentsMargins(px(20), 0, px(20), 0)
-        sv.setSpacing(px(8))
-        for i, step in enumerate([
-                "For safety, remove any end mill from the spindle",
-                "Install the rotary axis on the bed in the correct position",
-                "Connect the rotary axis cable"], 1):
-            sv.addWidget(lbl(f"{i}.  {step}", sz=14, color=TXT))
-        self._done_btn_phase = self.build_phase(
-            "rotary", "Rotary axis setup", [steps],
-            [("done", self._position, self._conn.flags().get("rotaryAxisConnected", False)),
-             ("✕", self._abort, True)],
-        )
-        self.set_phase(self._done_btn_phase)
-        self._conn.machine_flags_changed.connect(self._on_flags)
-
-    def _on_flags(self, flags: dict) -> None:
-        if flags.get("rotaryAxisConnected"):
-            try:
-                self._conn.machine_flags_changed.disconnect(self._on_flags)
-            except (RuntimeError, TypeError):
-                pass
-            self._setup_phase()      # rebuild with the done button enabled
-
-    def _position(self):
-        self._conn.cmd("moveToRotaryPosition")
-        self.show_progress("Moving to rotary working position…", "",
-                           self._abort)
-        self._conn.machine_status_changed.connect(self._on_position_status)
-
-    def _on_position_status(self, status: str) -> None:
-        if status.split(":")[0] != "Idle":
-            return
-        try:
-            self._conn.machine_status_changed.disconnect(self._on_position_status)
-        except (RuntimeError, TypeError):
-            pass
-        # Remember where the bed was parked: Bed back (Controls) always returns
-        # here. Read a beat later -- the status and the position arrive in the
-        # same report, the status first, so the position seen right now can
-        # still be from before the move ended.
-        # Not in the developer offline mode: its bed never moved, and storing
-        # that would send the real machine's Bed back to the wrong place.
-        conn = self._conn
-        if not getattr(conn, "is_offline", False):
-            QTimer.singleShot(1000, lambda: remember_rotary_park(conn))
-        self.show_result(True, "Rotary mode ready",
-                         "The rotary axis is installed and in working position.")
+#: #: Controls page always returns there.
 
 
 # ── Homing options popup (design: Homing options - desktop.svg) ───────────────
@@ -892,7 +719,7 @@ class RotaryFlow(_ProcedureFlow):
 class HomingOptionsDialog(QDialog):
     """XYZ / X / Y / Z homing chooser; emits the chosen command."""
 
-    def __init__(self, conn, rotary: bool = False, parent=None):
+    def __init__(self, conn, parent=None):
         super().__init__(parent)
         self._conn = conn
         self.setModal(True)
@@ -926,10 +753,10 @@ class HomingOptionsDialog(QDialog):
             self._home_btns.append((b, w, h))
             return b
 
-        self._grid.addWidget(_home_btn("XYZ", "grblHoming", 170, 200, not rotary))
+        self._grid.addWidget(_home_btn("XYZ", "grblHoming", 170, 200, True))
         self._mid = QVBoxLayout()
-        self._mid.addWidget(_home_btn("X", "grblHomingX", 160, 91, not rotary))
-        self._mid.addWidget(_home_btn("Y", "grblHomingY", 160, 91, not rotary))
+        self._mid.addWidget(_home_btn("X", "grblHomingX", 160, 91, True))
+        self._mid.addWidget(_home_btn("Y", "grblHomingY", 160, 91, True))
         self._grid.addLayout(self._mid)
         self._grid.addWidget(_home_btn("Z", "grblHomingZ", 90, 200, True))
         self._v.addLayout(self._grid)
@@ -981,23 +808,20 @@ class TypeCoordinatesDialog(QDialog):
     current position in the selected system, updated live), per-axis inputs and
     a Go button, plus two quick-action cards (go to XY₀ / bed to front). Entering
     value(s) and pressing Go moves there in the selected system: job → ``move*``
-    (work coords), machine → ``moveMachine*`` (absolute). In rotary mode the Y
-    axis is replaced by A (degrees), the quick action becomes 'go to XA₀' and
-    bed-to-front is disabled (mobile parity). The dialog issues the commands via
-    *conn* itself and closes on action."""
+    (work coords), machine → ``moveMachine*`` (absolute). The dialog issues the
+    commands via *conn* itself and closes on action."""
 
     # axis → (job-position key, machine-position key)
     _AXIS_KEY = {"X": ("jx", "mx"), "Y": ("jy", "my"),
                  "Z": ("jz", "mz"), "A": ("ja", "ma")}
 
-    def __init__(self, conn, parent=None, rotary: bool = False,
+    def __init__(self, conn, parent=None,
                  feed_provider=None):
         super().__init__(parent)
         self._conn = conn
-        self._rotary = rotary
         self._feed = feed_provider or (lambda: 800)
         self._tab = "job"                       # "job" | "machine"
-        self._axes = ["X", "A", "Z"] if rotary else ["X", "Y", "Z"]
+        self._axes = ["X", "Y", "Z"]
         self.setModal(True)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
 
@@ -1103,28 +927,17 @@ class TypeCoordinatesDialog(QDialog):
         if not any(v is not None for v in vals.values()):
             return
         job = self._tab == "job"
-        if self._rotary:
-            # X / Z follow the coordinate system; A always rides moveA.
-            if vals.get("X") is not None:
-                self._conn.cmd("moveX" if job else "moveMachineX",
-                               x=round(vals["X"], 4), feedRate=feed)
-            if vals.get("A") is not None:
-                self._conn.cmd("moveA", a=round(vals["A"], 4), feedRate=feed)
-            if vals.get("Z") is not None:
-                self._conn.cmd("moveZ" if job else "moveMachineZ",
-                               z=round(vals["Z"], 4), feedRate=feed)
-        else:
-            # Combined move (mobile parity): unspecified axes hold their current
-            # value in the selected coordinate system.
-            pos = self._conn.current_position()
-            idx = 0 if job else 1
-            xyz = {}
-            for a in ("X", "Y", "Z"):
-                v = vals.get(a)
-                xyz[a.lower()] = round(
-                    v if v is not None else pos[self._AXIS_KEY[a][idx]], 4)
-            self._conn.cmd("moveXYZ" if job else "moveMachineXYZ",
-                           **xyz, feedRate=feed)
+        # Combined move (mobile parity): unspecified axes hold their current
+        # value in the selected coordinate system.
+        pos = self._conn.current_position()
+        idx = 0 if job else 1
+        xyz = {}
+        for a in ("X", "Y", "Z"):
+            v = vals.get(a)
+            xyz[a.lower()] = round(
+                v if v is not None else pos[self._AXIS_KEY[a][idx]], 4)
+        self._conn.cmd("moveXYZ" if job else "moveMachineXYZ",
+                       **xyz, feedRate=feed)
         self.accept()
 
     def _teardown(self) -> None:

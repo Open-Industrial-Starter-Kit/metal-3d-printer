@@ -18,7 +18,6 @@ from ui.scale import mgr, px, font, bind
 from ui.widgets import lbl
 from ui.top_bar import TopBar
 from ui.splash import SplashOverlay
-from ui.homing import HomingOverlay
 from ui.side_menu import SideMenu
 from ui.right_panel import RightPanel
 from ui.bottom_bar import BottomBar
@@ -232,28 +231,7 @@ class MainWindow(QMainWindow):
         # a connected, idle machine so the UI can be used without any hardware.
         self._splash.offline_requested.connect(self._enter_offline)
 
-        # Initial homing flow (mobile-app parity): shown once a machine connects
-        # and reports it has not homed since power-on. Sits above the splash so
-        # it takes over the moment the splash finishes fading.
-        self._homing_done = False
-        self._homing_in_progress = False
-        self._homing_failed = False
-        self._rotary_connected = False
-        self._rotary_known = False
-        self._homing_retry = QTimer(self)
-        self._homing_retry.setSingleShot(True)
-        self._homing_retry.setInterval(150)
-        self._homing_retry.timeout.connect(self._sync_homing)
-
-        self._homing = HomingOverlay(central)
-        self._homing.start_requested.connect(self._start_homing)
-        self._homing.cancel_requested.connect(self._cancel_homing)
-        self._conn.machine_flags_changed.connect(self._on_machine_flags)
-        # Re-evaluate the homing overlay on status changes too, so it appears
-        # promptly once the machine starts reporting after a (re)connect.
-        self._conn.machine_status_changed.connect(lambda *_: self._sync_homing())
-        self._conn.procedure_completed.connect(self._on_procedure_completed)
-        # The app menu is unreachable while a job runs/holds, during homing
+        # The app menu is unreachable while a job runs/holds, while homing
         # or while a procedure is busy (Android parity, App.tsx ~10449).
         self._menu_status = ""
         self._conn.machine_status_changed.connect(self._on_menu_gate_status)
@@ -330,8 +308,7 @@ class MainWindow(QMainWindow):
         self._layout_overlays()
 
     def _layout_overlays(self):
-        # Keep the splash + homing overlays covering the whole client area (incl.
-        # the top bar). The homing overlay sits above the splash.
+        # Keep the splash covering the whole client area, including the top bar.
         central = self.centralWidget()
         if central is None:
             return
@@ -339,11 +316,6 @@ class MainWindow(QMainWindow):
         if splash is not None:
             splash.setGeometry(central.rect())
             splash.raise_()
-        homing = getattr(self, "_homing", None)
-        if homing is not None:
-            homing.setGeometry(central.rect())
-            if not homing.isHidden():
-                homing.raise_()
 
     def _push_viewport_width(self):
         # Let the file manager compact its columns to the visible width
@@ -585,86 +557,6 @@ class MainWindow(QMainWindow):
         self._offline_ok = connected
         self._update_connection()
 
-    # ── Initial homing flow ─────────────────────────────────────────────────
-
-    def _on_machine_flags(self, flags: dict) -> None:
-        self._sync_homing()
-
-    def _on_procedure_completed(self, mtype: str, result: str, _payload: dict) -> None:
-        if mtype != "homingCompleted":
-            return
-        self._homing_in_progress = False
-        if result == "success":
-            self._homing_done = True
-            self._homing_failed = False
-        else:
-            self._homing_failed = True
-        self._sync_homing()
-
-    def _start_homing(self) -> None:
-        if self._rotary_connected:
-            return
-        self._homing_in_progress = True
-        self._homing_failed = False
-        self._conn.home("grblHoming")     # marks HOMING status while it runs
-        self._sync_homing()
-
-    def _cancel_homing(self) -> None:
-        self._conn.cmd("stopJobReset")
-        self._homing_in_progress = False
-        self._homing_failed = False
-        self._sync_homing()
-
-    def _reset_homing(self) -> None:
-        """A dropped connection clears homing state so it re-prompts on reconnect."""
-        self._homing_done = False
-        self._homing_in_progress = False
-        self._homing_failed = False
-        self._rotary_known = False
-        self._rotary_connected = False
-        self._homing_retry.stop()
-        self._homing.hide()
-
-    def _sync_homing(self) -> None:
-        """Show/update the homing overlay based on the current machine state.
-
-        Reads the accumulated flag snapshot (conn.flags()) rather than the
-        machine_flags_changed delta, so a reconnect to a machine in the same
-        state still evaluates correctly (mobile-app parity: HomingModal shows
-        while wsConnected && rotaryAxisStatusKnown && !homingDone)."""
-        connected = self._serial_ok or self._offline_ok
-        flags = self._conn.flags()
-        # rotary status is "known" once the machine has reported it at least
-        # once this session (the flag key is present in the snapshot).
-        rotary_known = "rotaryAxisConnected" in flags
-        self._rotary_connected = bool(flags.get("rotaryAxisConnected", False))
-        # Homing is done for this power cycle once the machine reports it, or
-        # once a homingCompleted success arrived (sticky until disconnect).
-        if flags.get("homedSincePowerOn") is True:
-            self._homing_done = True
-
-        should_show = connected and rotary_known and not self._homing_done
-        if not should_show:
-            self._homing.hide()
-            # Still connected and not yet homed, but the deciding rotary flag
-            # hasn't arrived (or was missed): keep polling so the overlay
-            # appears as soon as the machine reports — this closes the
-            # intermittent "homing popup never came up" gap on (re)connect.
-            if connected and not self._homing_done and not rotary_known:
-                self._homing_retry.start()
-            return
-        # Wait for the connection splash to finish fading before taking over.
-        if not self._splash.isHidden():
-            self._homing_retry.start()
-            return
-        self._homing.set_state(
-            in_progress=self._homing_in_progress,
-            failed=self._homing_failed,
-            rotary_connected=self._rotary_connected,
-            machine_name=self._conn.machine_info().get("machineName", ""))
-        self._layout_overlays()
-        self._homing.show_overlay()
-
     def _update_connection(self) -> None:
         """Reflect overall transport connectivity in the dot, status badge, and bar."""
         connected = self._serial_ok or self._offline_ok
@@ -672,11 +564,9 @@ class MainWindow(QMainWindow):
         self._right_panel.set_connected(connected)
         if connected:
             self._splash.finish()
-            self._sync_homing()
         else:
             self._status_bar.update_text("Disconnected — searching for machine…")
             self._splash.search()
-            self._reset_homing()
 
     def _enter_offline(self) -> None:
         """Simulate a connected machine (no hardware) for UI development."""

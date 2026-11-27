@@ -227,7 +227,7 @@ class JogDirButton(QPushButton):
 
     def set_axis_label(self, text: str) -> None:
         """Change the axis letter shown beside the arrow (e.g. Y ↔ A when a
-        rotary axis is connected). No-op if this button has no label."""
+        state changes). No-op if this button has no label."""
         if self._axis_lbl is not None:
             self._axis_lbl.setText(text)
 

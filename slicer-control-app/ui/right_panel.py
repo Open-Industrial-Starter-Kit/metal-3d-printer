@@ -1,8 +1,7 @@
 """
 ui/right_panel.py
 Right-hand status and coordinate panel showing machine state (IDLE / RUNNING /
-PAUSED / ERROR) and XYZA axis positions with zero buttons. The A (rotary,
-degrees) row is only visible while a rotary axis is connected.
+PAUSED / ERROR) and XYZA axis positions with zero buttons.
 """
 
 from PySide6.QtWidgets import (
@@ -46,8 +45,7 @@ class RightPanel(QFrame):
         self._chips_lay = QHBoxLayout()
         self._chips_lay.setAlignment(Qt.AlignCenter)
         self._chip_dry = QLabel("DRY RUN")
-        self._chip_rotary = QLabel("ROTARY")
-        for chip in (self._chip_dry, self._chip_rotary):
+        for chip in (self._chip_dry,):
             chip.setAlignment(Qt.AlignCenter)
             chip.hide()
             self._chips_lay.addWidget(chip)
@@ -95,8 +93,7 @@ class RightPanel(QFrame):
             row.addWidget(zb)
             self._coords_lay.addWidget(frame)
 
-        # A axis (rotary, degrees) is hidden until a rotary axis is connected.
-        self._axis_row_frames["A"].hide()
+        # The A axis (powder reservoir) stays visible: this machine has one.
 
         self._lay.addWidget(coords)
 
@@ -104,7 +101,7 @@ class RightPanel(QFrame):
         # Directly under the axis rows: the door gates motion (see
         # controls._door_blocked), so it belongs with the read-outs the
         # operator is already watching. Hidden until the machine reports a
-        # door sensor at all — same idea as the rotary A row.
+        # door sensor at all.
         self._metric_cards: list[tuple] = []
         self._door_open: bool | None = None
         self._door_lbl = self._metric_row(self._lay, None, "Door", None)
@@ -148,7 +145,7 @@ class RightPanel(QFrame):
         self._status_lay.setContentsMargins(px(8), px(8), px(8), px(8))
         self.status_title.setFont(font(18, bold=True))
         self._chips_lay.setSpacing(px(4))
-        for chip in (self._chip_dry, self._chip_rotary):
+        for chip in (self._chip_dry,):
             chip.setFont(font(9, bold=True))
             chip.setStyleSheet(
                 f"background: rgba(255, 255, 255, 0.55); color: {TXT2}; "
@@ -281,13 +278,10 @@ class RightPanel(QFrame):
         self.set_status(base or "idle")
 
     def _on_flags(self, flags: dict) -> None:
-        """Toggle the rotary A row, the DRY RUN / ROTARY chips and the door."""
-        rotary = bool(flags.get("rotaryAxisConnected", False))
+        """Toggle the DRY RUN chip and the door row."""
         dry = bool(flags.get("dryRunEnabled", False) or flags.get("dryRunActive", False))
         self._job_running = bool(flags.get("jobRunning", self._job_running))
         self._job_paused = bool(flags.get("jobPaused", self._job_paused))
-        self._axis_row_frames["A"].setVisible(rotary)
-        self._chip_rotary.setVisible(rotary)
         self._chip_dry.setVisible(dry)
         # doorOpen rides on every status poll; housingInstalled only arrives
         # from getHousingSettings (asked for on connect).

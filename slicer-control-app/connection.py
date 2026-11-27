@@ -79,9 +79,6 @@ _MOTION_ERROR_NOTICES = {
     "notHomed": (
         "Homing Required",
         "Please home the machine before jogging."),
-    "rotaryYLock": (
-        "Y Axis Locked",
-        "The Y axis is locked while the rotary axis is connected."),
 }
 
 # Firmware upload rejection → (title, message) popup. The firmware names the
@@ -380,13 +377,11 @@ _SILENT_KEYS = frozenset({
     "esp32PassthroughStatus",
     "currentFileLine", "totalFileLines", "jobProgress",
     "estimatedRemainingSeconds",
-    "toolLength", "toolLengthReferenceZ",
-    "rotaryAxisConnected", "dryRunEnabled", "procedureBusy",
+    "dryRunEnabled", "procedureBusy",
     "machineName", "firmwareVersion", "deviceId",
     "powerOnHours", "runHours", "jobCount",
     "openedGcodeFileTotalLines", "fcl", "eof", "probeHeight",
     "housingInstalled", "allowMotionWhenDoorOpen", "doorOpen", "jobHistory",
-    "toolLengthReferenceZ",
 })
 
 # ── Which reply answers which request ────────────────────────────────────────
@@ -414,7 +409,6 @@ _REPLY_KEYS = {
                   "jobPositionX", "jobPositionY", "jobPositionZ"},
     "currentFeedRate": {"currentFeedRate"},
     "getFeedRateOverride": {"feedRateOverride"},
-    "getToolLength": {"toolLength", "toolLengthReferenceZ"},
     "jobProgress": {"jobProgress", "currentFileLine", "totalFileLines",
                     "estimatedRemainingSeconds"},
     "fileList": {"fileList", "gcodeFileList"},
@@ -437,7 +431,7 @@ _REPLY_KEYS = {
 #: an unknown request is shown (better a mislabelled line than a missing one),
 #: unless what arrived is visibly one of these.
 _POLLED_GETS = ("status", "positions", "currentFeedRate",
-                "getFeedRateOverride", "getToolLength",
+                "getFeedRateOverride",
                 "jobProgress", "fileList", "openedGcodeFileName")
 _POLLED_REPLY_KEYS = tuple(_REPLY_KEYS[g] for g in _POLLED_GETS)
 
@@ -466,7 +460,7 @@ def _reply_answers(req_text: str, payload: dict) -> bool:
 
 # Boolean machine-state flags surfaced via machine_flags_changed
 _FLAG_KEYS = (
-    "rotaryAxisConnected", "dryRunEnabled", "dryRunActive", "procedureBusy",
+    "dryRunEnabled", "dryRunActive", "procedureBusy",
     "jobRunning", "jobPaused", "jobResuming", "housingInstalled",
     # Door interlock: with the housing installed and the tool stopped, whether an
     # open door lets motion carry on. Arrives with housingInstalled from
@@ -493,7 +487,6 @@ WORK_AREA_MM = (150.0, 150.0)
 # Procedure-completion message types (msg["type"]) forwarded as signals
 _COMPLETION_TYPES = frozenset({
     "homingCompleted", "resumeCompleted",
-    "probeZ0Completed", "probeToolLengthCompleted",
 })
 
 # Commands that end a job early. A job that stops after one of these was
@@ -579,7 +572,6 @@ class Connection(QObject):
     # Extended telemetry (mobile-app parity)
     job_progress_changed     = Signal(dict)        # {percent, currentLine, totalLines, etaSeconds}
     machine_flags_changed    = Signal(dict)        # changed boolean flags (see _FLAG_KEYS)
-    tool_length_changed      = Signal(float)       # mm
     machine_info_changed     = Signal(dict)        # machineName / firmwareVersion / …
     grbl_setting_received    = Signal(int, float)  # ($N, value) from a `$$` listing
     procedure_completed      = Signal(str, str, dict)  # (type, result, full payload)
@@ -644,7 +636,6 @@ class Connection(QObject):
         self._flags: dict = {}                    # latest boolean machine flags
         self._machine_info: dict = {}             # machineName / firmwareVersion / …
         self._grbl_settings: dict[int, float] = {} # $N → value, from `$$`
-        self._tool_length: float | None = None
         self._job_progress: dict = {"percent": 0, "currentLine": 0,
                                     "totalLines": 0, "etaSeconds": 0}
         # Last file the overrides were reset for (Android parity: overrides
@@ -813,9 +804,6 @@ class Connection(QObject):
         """Latest machine identity/info fields."""
         return dict(self._machine_info)
 
-    def tool_length(self) -> float | None:
-        return self._tool_length
-
     def serial_port(self) -> str | None:
         """Device path of the USB serial link, or None."""
         return self._serial.port
@@ -950,10 +938,7 @@ class Connection(QObject):
         "jobPositionX": 0.0, "jobPositionY": 0.0,
         "jobPositionZ": 0.0, "jobPositionA": 0.0,
         "currentFeedRate": 0, "feedRateOverride": 100,
-        # No toolLength: the card shows its placeholder until something is
-        # actually measured, offline included — a canned number there reads as
-        # a real measurement.
-        "rotaryAxisConnected": False, "dryRunEnabled": False,
+        "dryRunEnabled": False,
         "dryRunActive": False, "procedureBusy": False,
         "jobRunning": False, "jobPaused": False, "jobResuming": False,
         "housingInstalled": True, "doorOpen": False,
@@ -985,63 +970,6 @@ class Connection(QObject):
         self.log_received.emit(
             "[Offline] Simulated machine — still searching for real hardware…",
             self.C_INFO)
-
-    # ── Offline rotary ───────────────────────────────────────────────────────
-    #
-    # Rotary Mode is the machine reporting rotaryAxisConnected, which the canned
-    # offline machine never did, and the Rotary setup (Controls → Rotary) waits
-    # for two moves to end and for the cable to be detected -- so offline it hung
-    # on its first step. The offline machine acts those out instead: each of the
-    # two setup moves reports Run, then Idle a moment later, and the cable is
-    # "plugged in" once the bed has moved to the installation position, where a
-    # real operator connects it. set_offline_rotary() plugs or unplugs it
-    # directly (app menu, offline only); unplugging is how Rotary Mode is left.
-    # Nothing else is simulated: jogs and other moves still change nothing.
-
-    _OFFLINE_MOVE_MS = 1500      # a setup move, Run -> Idle
-    _OFFLINE_CABLE_MS = 1000     # after the install move, the cable "goes in"
-
-    def _offline_command(self, obj: dict) -> None:
-        """Act out the few commands the offline machine knows; drop the rest."""
-        if obj.get("type") != "command":
-            return
-        ct = obj.get("commandType")
-        if ct == "installRotary":
-            self._offline_move(ct, then=lambda: QTimer.singleShot(
-                self._OFFLINE_CABLE_MS, lambda: self.set_offline_rotary(True)))
-        elif ct == "moveToRotaryPosition":
-            self._offline_move(ct)
-
-    def _offline_move(self, what: str, then=None) -> None:
-        self.log_received.emit(f"[Offline] Simulating {what}", self.C_INFO)
-
-        def status(s: str) -> None:
-            if self._offline:
-                self._route(json.dumps({"result": "success", "machineStatus": s}))
-
-        def done() -> None:
-            if not self._offline:
-                return
-            status("idle")
-            if then is not None:
-                then()
-
-        # Run on the next turn, not inside cmd(): the caller connects to the
-        # status signal right after sending.
-        QTimer.singleShot(0, lambda: status("run"))
-        QTimer.singleShot(self._OFFLINE_MOVE_MS, done)
-
-    def set_offline_rotary(self, connected: bool) -> None:
-        """Plug or unplug the offline machine's rotary axis cable (offline only)."""
-        if not self._offline:
-            return
-        if bool(self._flags.get("rotaryAxisConnected")) == bool(connected):
-            return
-        self._route(json.dumps({"result": "success",
-                                "rotaryAxisConnected": bool(connected)}))
-        self.log_received.emit(
-            "[Offline] Rotary axis cable "
-            + ("connected" if connected else "disconnected"), self.C_INFO)
 
     def exit_offline_mode(self) -> None:
         """Leave the developer offline mode by hand and go back to searching.
@@ -1087,8 +1015,6 @@ class Connection(QObject):
             self._serial.send_priority(msg)
             self.log_received.emit(f"[TX] {msg}", self.C_TX)
         else:
-            if self._offline:
-                self._offline_command(obj)
             return
         self._pending_user_reqs.append((time.monotonic(), msg))
 
@@ -1127,8 +1053,8 @@ class Connection(QObject):
     def _zero_a_on_launch(self, ja) -> None:
         """Start every app session with A reading 0, as the A zero button does.
 
-        The read-out comes up far from 0 after a relaunch (whole turns from the
-        last rotary job), and the operator zeroed it by hand every time. Done
+        The read-out can come up far from 0 after a relaunch, and the operator
+        zeroed it by hand every time. Done
         once per launch, at the first report with the machine Idle -- a
         reconnect later in the session keeps the A0 the operator is working
         with. Never while a job is running or paused: if the app comes up
@@ -1500,8 +1426,6 @@ class Connection(QObject):
                 self._send_silent({"type": "get", "getType": "openedGcodeFileName"})
             if t % 10 == 2:
                 self._send_silent({"type": "get", "getType": "getFeedRateOverride"})
-            if t % 25 == 7:
-                self._send_silent({"type": "get", "getType": "getToolLength"})
 
     # ── Incoming routing ──────────────────────────────────────────────────
 
@@ -1655,12 +1579,6 @@ class Connection(QObject):
                 # Homing finished — drop the local HOMING override; the next
                 # status poll surfaces the real (Idle/Alarm) state.
                 self._end_homing()
-            if mtype == "probeToolLengthCompleted" and result == "success":
-                try:
-                    self._tool_length = float(p["toolLength"])
-                    self.tool_length_changed.emit(self._tool_length)
-                except (KeyError, TypeError, ValueError):
-                    pass
             self.procedure_completed.emit(mtype, result, p)
             self.log_received.emit(f"{rx_label} {line}", rx_color)
             return
@@ -1674,16 +1592,6 @@ class Connection(QObject):
         if changed_flags:
             self.machine_flags_changed.emit(changed_flags)
             self._watch_job(changed_flags)
-
-        # Tool length (polled)
-        if ok and "toolLength" in p and mtype is None:
-            try:
-                tl = float(p["toolLength"])
-                if tl != self._tool_length:
-                    self._tool_length = tl
-                    self.tool_length_changed.emit(tl)
-            except (TypeError, ValueError):
-                pass
 
         # Job progress (suppressed during downloads — their chunks reuse the
         # currentFileLine/totalFileLines keys and would move the job bar)
@@ -1715,7 +1623,7 @@ class Connection(QObject):
         info_changed = {}
         for k in ("machineName", "firmwareVersion", "deviceId",
                   "powerOnHours", "runHours", "jobCount",
-                  "probeHeight", "toolLengthReferenceZ"):
+                  "probeHeight"):
             if k in p and self._machine_info.get(k) != p[k]:
                 self._machine_info[k] = p[k]
                 info_changed[k] = p[k]
@@ -1944,7 +1852,7 @@ class Connection(QObject):
         machine_status_changed only fire on a *delta*, so without this a
         reconnect to a machine in the same state would silently skip them —
         which is how the initial homing overlay could fail to reappear on
-        reconnect (its rotary/homed state never re-arrived)."""
+        reconnect (its homed state never re-arrived)."""
         if self._flags:
             self._flags = {}
         self._last_status = None
@@ -1953,7 +1861,6 @@ class Connection(QObject):
         # Also the tool length: it is emitted on a delta too, so a machine
         # reporting the same length as the last one would never re-emit and
         # the card would sit on its placeholder for good.
-        self._tool_length = None
         self._end_homing()
         # A job seen only up to a disconnect has no known ending.
         self._job_watch = None
