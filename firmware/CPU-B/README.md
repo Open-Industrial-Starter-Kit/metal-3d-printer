@@ -717,7 +717,11 @@ wait: the completion event is noticed by the CPU-C reader in the main loop.
 work area skips galvo blocks: their coordinates are scan-field millimetres, and a 170 mm field
 position would otherwise fail a 143 mm machine envelope for a move the gantry never makes.
 
-`firmware/CPU-C/examples/blocks.nc` is a two-layer example in this dialect.
+`firmware/CPU-C/examples/blocks.nc` is a two-layer example in this dialect, with the stage
+and the galvo taking turns. `firmware/CPU-C/examples/galvo_only.nc` is the mirrors on their
+own: one `M611` and no `M610` anywhere, for watching `GX`/`GY` move while the gantry provably
+does not. Measured over a 13.2 s run of it, 121 position samples: stage X, Y and Z span
+0.0000 mm while the galvo sweeps 90 mm on each axis.
 
 ### 5.13.3 `sendFileToCPUC`
 
