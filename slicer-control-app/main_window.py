@@ -470,7 +470,7 @@ class MainWindow(QMainWindow):
             # so say why instead of failing silently. The files are already on
             # disk, so nothing is lost.
             QMessageBox.information(
-                self, "CAM export",
+                self, "Slicer export",
                 f"{len(paths)} G-code file(s) exported, but they cannot be sent "
                 "right now.\n\nNo machine is connected, or a transfer is already "
                 "running. The files are saved here and can be uploaded later "
@@ -516,7 +516,7 @@ class MainWindow(QMainWindow):
         remaining = len(self._cam_queue)
         self._cam_queue.clear()
         QMessageBox.warning(
-            self, "CAM export",
+            self, "Slicer export",
             f"Could not send {remaining} remaining file(s) — the machine stayed "
             "busy.\n\nThey are still on disk and can be uploaded from the File "
             f"Manager:\n\n{os.path.dirname(path)}")

@@ -1,6 +1,6 @@
 """
 ui/side_menu.py
-Collapsible left navigation panel with File Manager, Controls, CAM,
+Collapsible left navigation panel with File Manager, Controls, Slicer,
 Live Preview, and Console nav items.
 """
 
@@ -97,7 +97,7 @@ class SideMenu(QFrame):
 
         # Order must match the page stack in main_window. Console stays last so
         # it remains the bottom entry.
-        labels = ["File\nManager", "Controls", "CAM", "Live\nPreview", "Console"]
+        labels = ["File\nManager", "Controls", "Slicer", "Live\nPreview", "Console"]
         self._items: list[NavItem] = []
         for i, text in enumerate(labels):
             item = NavItem(i, text)
