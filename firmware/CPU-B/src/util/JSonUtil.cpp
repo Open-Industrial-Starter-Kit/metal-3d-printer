@@ -229,8 +229,6 @@ JsonValueSetType JsonUtil::getJsonSetType(JsonDocument json) {
 
         if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_BASE_STR) == 0)
             return SET_DEBUGGING_BASE;
-        else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_SPINDLE_STR) == 0)
-            return SET_DEBUGGING_SPINDLE;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_STATUS_STR) == 0)
             return SET_DEBUGGING_STATUS;
         else if(strcmp(json[JSON_KEY_SET_TYPE_STR], JSON_VALUE_SET_DEBUGGING_MACRO_BUFFER_STR) == 0)

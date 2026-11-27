@@ -512,7 +512,6 @@ void setup() {
 
   //init of the default debugging settings, they will be overwritten by the settings from the EEPROM if they are present, otherwise the default settings will be saved to the EEPROM for future use
   debuggingSettings.debuggingBase = DEFAULT_DEBUGGING_BASE;
-  debuggingSettings.debuggingSpindle = DEFAULT_DEBUGGING_SPINDLE;
   debuggingSettings.debuggingStatus = DEFAULT_DEBUGGING_STATUS;
   debuggingSettings.debuggingMacroBuffer = DEFAULT_DEBUGGING_MACRO_BUFFER;
   debuggingSettings.debuggingSDCard = DEFAULT_DEBUGGING_SD_CARD;
@@ -1781,7 +1780,7 @@ void handlePauseFeedDrop() {
     pauseHoldRequestedMs = millis();
   }
 
-  if (debuggingSettings.debuggingSpindle)
+  if (debuggingSettings.debuggingJob)
     serialManager.USBSerialPrintln("Pause: feed at floor, motion held");
 
 }
@@ -1848,7 +1847,7 @@ void startResumeFeedRamp(int targetPercent) {
   resumeFeedRampLastStepMs = millis() - RESUME_FEED_DROP_STEP_MS;
   isResumeFeedRampActive = true;
 
-  if (debuggingSettings.debuggingSpindle) {
+  if (debuggingSettings.debuggingJob) {
     serialManager.USBSerialPrint("Resume feed ramp: drop to ");
     serialManager.USBSerialPrint(RESUME_FEED_START_PERCENT);
     serialManager.USBSerialPrint("%% then ramp back to ");
@@ -1886,7 +1885,7 @@ void handleResumeFeedRamp() {
         resumeFeedRampStepIntervalMs = RESUME_FEED_RAMP_TOTAL_MS / feedSteps;
         resumeFeedRampStage = RESUME_FEED_RAMPUP;
         resumeFeedRampLastStepMs = millis();
-        if (debuggingSettings.debuggingSpindle) {
+        if (debuggingSettings.debuggingJob) {
           serialManager.USBSerialPrint("Resume feed ramp: at floor ");
           serialManager.USBSerialPrint(feedRateOverride);
           serialManager.USBSerialPrint("%%, ramping to ");
@@ -1916,7 +1915,7 @@ void handleResumeFeedRamp() {
         }
         isResumeFeedRampActive = false;
         resumeFeedRampStage = RESUME_FEED_IDLE;
-        if (debuggingSettings.debuggingSpindle)
+        if (debuggingSettings.debuggingJob)
           serialManager.USBSerialPrintln("Resume feed ramp complete");
         maybeCompleteResume();
       }
@@ -3052,7 +3051,7 @@ void handleCPUALine() {
     int bufferSpindleOverride = grblUtil.getSpindleOverride(CPUALineArray);
 
     if (bufferSpindleOverride >= 0) {
-      if (debuggingSettings.debuggingSpindle && bufferSpindleOverride != spindleOverride) {
+      if (false && bufferSpindleOverride != spindleOverride) {
         serialManager.USBSerialPrint("Spindle override sync: local ");
         serialManager.USBSerialPrint(spindleOverride);
         serialManager.USBSerialPrint("%% -> grbl Ov: ");
@@ -6249,38 +6248,6 @@ void handleJsonSet(){
 
     break;
 
-    case SET_DEBUGGING_SPINDLE:
-
-      if(!receivedJsonBuffer[JSON_KEY_DEBUGGING_SPINDLE_STR].isNull()){
-
-        debuggingSettings.debuggingSpindle = receivedJsonBuffer[JSON_KEY_DEBUGGING_SPINDLE_STR].as<bool>();
-        eepromManager.saveDebuggingSettings(debuggingSettings);
-
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-      
-      }else{
-      
-        if(jsonSettings.enableJsonResponse){
-
-          clearResponseJsonBuffer();
-          responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
-          responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
-          serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
-          sendJsonResponse();
-
-        }
-      }
-
-
-    break;
-
     case SET_DEBUGGING_STATUS:
 
       if(!receivedJsonBuffer[JSON_KEY_DEBUGGING_STATUS_STR].isNull()){
@@ -7207,7 +7174,6 @@ void handleJsonGet(){
       responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
 
       responseJsonBuffer[JSON_KEY_DEBUGGING_BASE_STR] = debuggingSettings.debuggingBase;
-      responseJsonBuffer[JSON_KEY_DEBUGGING_SPINDLE_STR] = debuggingSettings.debuggingSpindle;
       responseJsonBuffer[JSON_KEY_DEBUGGING_STATUS_STR] = debuggingSettings.debuggingStatus;
       responseJsonBuffer[JSON_KEY_DEBUGGING_MACRO_BUFFER_STR] = debuggingSettings.debuggingMacroBuffer;
       responseJsonBuffer[JSON_KEY_DEBUGGING_SD_CARD_STR] = debuggingSettings.debuggingSDCard;

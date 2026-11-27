@@ -697,7 +697,6 @@ class DebuggingDialog(_Sheet):
         "debuggingMacroBuffer": "Macro buffer",
         "debuggingSDCard": "SD card",
         "debuggingJson": "JSON",
-        "debuggingESP32": "ESP32",
         "debuggingEEPROM": "EEPROM",
         "debuggingJob": "Job",
     }

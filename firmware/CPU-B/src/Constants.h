@@ -388,7 +388,6 @@ enum JsonValueGetType {
 //values for JSON_KEY_SET_TYPE
 enum JsonValueSetType {
   SET_DEBUGGING_BASE,
-  SET_DEBUGGING_SPINDLE,
   SET_DEBUGGING_STATUS,
   SET_DEBUGGING_MACRO_BUFFER,
   SET_DEBUGGING_SD_CARD,
@@ -409,7 +408,6 @@ enum JsonValueSetType {
 };
 
 #define JSON_VALUE_SET_DEBUGGING_BASE_STR "setDebuggingBase"
-#define JSON_VALUE_SET_DEBUGGING_SPINDLE_STR "setDebuggingSpindle"
 #define JSON_VALUE_SET_DEBUGGING_STATUS_STR "setDebuggingStatus"
 #define JSON_VALUE_SET_DEBUGGING_MACRO_BUFFER_STR "setDebuggingMacroBuffer"
 #define JSON_VALUE_SET_DEBUGGING_SD_CARD_STR "setDebuggingSDCard"
@@ -531,7 +529,6 @@ enum JsonValueSetType {
 #define JSON_KEY_JSON_ENABLE_JSON_RESPONSE_STR "enableJsonResponse"
 
 #define JSON_KEY_DEBUGGING_BASE_STR "debuggingBase"
-#define JSON_KEY_DEBUGGING_SPINDLE_STR "debuggingSpindle"
 #define JSON_KEY_DEBUGGING_STATUS_STR "debuggingStatus"
 #define JSON_KEY_DEBUGGING_MACRO_BUFFER_STR "debuggingMacroBuffer"
 #define JSON_KEY_DEBUGGING_SD_CARD_STR "debuggingSDCard"

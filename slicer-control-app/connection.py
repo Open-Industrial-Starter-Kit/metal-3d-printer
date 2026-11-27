@@ -489,7 +489,7 @@ _FLAG_KEYS = (
 # its own setDebugging<Name> and saved in the machine's EEPROM).
 DEBUGGING_KEYS = ("debuggingBase", "debuggingStatus",
                   "debuggingMacroBuffer", "debuggingSDCard", "debuggingJson",
-                  "debuggingESP32", "debuggingEEPROM", "debuggingJob")
+                  "debuggingEEPROM", "debuggingJob")
 
 # ── Machine geometry ─────────────────────────────────────────────────────────
 #: Usable bed, mm (firmware Config.h MAX_WORK_DIMENSION_XY_MM, grbl $130/$131).

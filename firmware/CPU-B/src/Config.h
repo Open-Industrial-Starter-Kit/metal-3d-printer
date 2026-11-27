@@ -14,7 +14,6 @@
 
 //DEBUG
 #define DEFAULT_DEBUGGING_BASE 0
-#define DEFAULT_DEBUGGING_SPINDLE 0
 #define DEFAULT_DEBUGGING_STATUS 0
 #define DEFAULT_DEBUGGING_MACRO_BUFFER 0
 #define DEFAULT_DEBUGGING_SD_CARD 1
@@ -29,7 +28,6 @@
 typedef struct {
 
   bool debuggingBase;
-  bool debuggingSpindle;
   bool debuggingStatus;
   bool debuggingMacroBuffer;
   bool debuggingSDCard;
