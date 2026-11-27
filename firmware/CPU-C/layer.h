@@ -12,6 +12,8 @@
 //   LOADING  a transfer is in progress
 //   READY    complete and not yet scanned
 //   SCANNING being streamed to the PIO right now -- refuses to be overwritten
+//   PAUSED   stopped at an M600 layer boundary, waiting for the recoat and a resume.
+//            Still refuses to be overwritten: the rest of the buffer has yet to be read.
 //   DONE     fully streamed; safe to replace
 //
 // Capacity is 4 MB of the 8 MB fitted, which is ~25x a typical layer. The remaining half is
@@ -31,6 +33,7 @@ typedef enum {
     LAYER_LOADING,
     LAYER_READY,
     LAYER_SCANNING,
+    LAYER_PAUSED,
     LAYER_DONE
 } layer_state_t;
 
@@ -52,7 +55,8 @@ void layer_clear(void);
 // Hand-off to the interpreter.
 const char *layer_data(void);
 bool        layer_mark_scanning(const char **err);
-void        layer_mark_done(void);
+void        layer_mark_paused(void);   // reached an M600 boundary
+void        layer_mark_done(void);     // reached the end of the buffer
 
 uint32_t layer_bytes(void);       // stored so far
 uint32_t layer_expected(void);    // declared by the sender

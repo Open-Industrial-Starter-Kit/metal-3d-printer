@@ -355,6 +355,25 @@ static void handle_command(api_source_t src, const char *json)
                  (unsigned)(layer_expected() - layer_bytes()));
         api_send(src, body);
 
+    } else if (strcmp(what, "setGalvoSpeeds") == 0) {
+
+        // Speeds in mm/s, delays in frames (10 us each). Every field optional.
+        double v;
+        if (json_get_double(json, "markSpeed", &v) && v > 0) gcode_config.mark_speed_mm_s = (float)v;
+        if (json_get_double(json, "jumpSpeed", &v) && v > 0) gcode_config.jump_speed_mm_s = (float)v;
+        if (json_get_double(json, "jumpDelay", &v) && v >= 0) gcode_config.jump_delay_frames = (uint16_t)v;
+        if (json_get_double(json, "markDelay", &v) && v >= 0) gcode_config.mark_delay_frames = (uint16_t)v;
+        if (json_get_double(json, "laserOnDelay", &v) && v >= 0) gcode_config.laser_on_delay_frames = (uint16_t)v;
+
+        char body[200];
+        snprintf(body, sizeof(body),
+                 "\"result\":\"success\",\"markSpeed\":%.1f,\"jumpSpeed\":%.1f,"
+                 "\"jumpDelay\":%u,\"markDelay\":%u,\"laserOnDelay\":%u",
+                 (double)gcode_config.mark_speed_mm_s, (double)gcode_config.jump_speed_mm_s,
+                 gcode_config.jump_delay_frames, gcode_config.mark_delay_frames,
+                 gcode_config.laser_on_delay_frames);
+        api_send(src, body);
+
     } else if (strcmp(what, "startLayer") == 0) {
 
         const char *err = "layerError";
@@ -371,7 +390,8 @@ static void handle_command(api_source_t src, const char *json)
 
     } else if (strcmp(what, "resumeLayer") == 0) {
 
-        if (layer_get_state() != LAYER_SCANNING) { api_fail(src, "layerNotScanning"); return; }
+        const char *rerr = "layerNotScanning";
+        if (!layer_mark_scanning(&rerr)) { api_fail(src, rerr); return; }
         gcode_resume();
         api_ok(src);
 
@@ -383,7 +403,9 @@ static void handle_command(api_source_t src, const char *json)
 
     } else if (strcmp(what, "clearLayer") == 0) {
 
-        if (layer_get_state() == LAYER_SCANNING) { api_fail(src, "layerBusy"); return; }
+        if (layer_get_state() == LAYER_SCANNING || layer_get_state() == LAYER_PAUSED) {
+            api_fail(src, "layerBusy"); return;
+        }
         layer_clear();
         api_ok(src);
 

@@ -27,6 +27,7 @@ static bool  s_absolute;
 static float s_unit;          // 1.0 for mm, 25.4 for inches
 static float s_x, s_y;
 static bool  s_laser_on;      // M3/M4 in force
+static float s_feed_mm_s;     // from F, 0 = use the configured mark speed
 static float s_power;         // 0..1
 
 // --- the move being emitted --------------------------------------------------------------
@@ -51,6 +52,7 @@ static void reset_modal(void)
     s_x = s_y  = 0.0f;
     s_laser_on = false;
     s_power    = 0.0f;
+    s_feed_mm_s = 0.0f;
     s_in_move  = false;
     s_hold     = 0;
     s_steps = s_step = 0;
@@ -120,7 +122,10 @@ static void begin_move(float nx, float ny, bool rapid)
     const float dx = nx - s_x, dy = ny - s_y;
     const float dist = sqrtf(dx * dx + dy * dy);
 
-    float speed = rapid ? gcode_config.jump_speed_mm_s : gcode_config.mark_speed_mm_s;
+    // An F word, if the program gave one, wins for marking moves. G-code expresses feed in
+    // mm/min, so it is converted here; jumps always use the configured jump speed.
+    float speed = rapid ? gcode_config.jump_speed_mm_s
+                        : (s_feed_mm_s > 0.0f ? s_feed_mm_s : gcode_config.mark_speed_mm_s);
     if (speed <= 0.0f) speed = 1000.0f;
 
     // One frame of travel. The galvo gets a position every frame whether or not it changed,
@@ -218,11 +223,15 @@ gcode_status_t gcode_next_point(gcode_point_t *out)
                     if (s_power < 0.0f) s_power = 0.0f;
                     if (s_power > 1.0f) s_power = 1.0f;
                 }
+                if (word(ls, le, 'F', &w) && w > 0.0f) s_feed_mm_s = w / 60.0f;
                 begin_move(nx, ny, g == 0);
                 continue;
             }
             continue;                           // arcs and the rest are not supported yet
         }
+
+        // a bare F line sets the feed for the moves that follow
+        if (word(ls, le, 'F', &v) && v > 0.0f) s_feed_mm_s = v / 60.0f;
 
         // a line with an S but no motion word still updates power
         if (word(ls, le, 'S', &v)) {

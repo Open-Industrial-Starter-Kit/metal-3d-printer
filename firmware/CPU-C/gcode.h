@@ -12,6 +12,7 @@
 // Supported, deliberately a small set:
 //   G0            rapid / jump   (laser gated off for the move)
 //   G1            linear move    (laser gated per the current M3/M5 state)
+//   F             feed in mm/min; overrides mark_speed for the moves that follow
 //   G90 / G91     absolute / relative
 //   G20 / G21     inches / millimetres
 //   M3 / M4       laser on, power from S (0..1 scaled by GCODE_S_MAX)

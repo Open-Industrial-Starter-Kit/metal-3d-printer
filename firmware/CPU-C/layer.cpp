@@ -26,6 +26,7 @@ const char *layer_state_name(void)
         case LAYER_LOADING:  return "loading";
         case LAYER_READY:    return "ready";
         case LAYER_SCANNING: return "scanning";
+        case LAYER_PAUSED:   return "paused";
         case LAYER_DONE:     return "done";
     }
     return "unknown";
@@ -47,7 +48,8 @@ bool layer_begin(uint32_t expected_bytes, uint32_t index, const char **err)
 {
     // The one rule worth enforcing: never overwrite a layer that is being scanned. Doing so
     // would pull the buffer out from under the interpreter mid-move.
-    if (s_state == LAYER_SCANNING) { *err = "layerBusy"; return false; }
+    // Never overwrite a buffer still in use. PAUSED counts: the rest of it is yet to be read.
+    if (s_state == LAYER_SCANNING || s_state == LAYER_PAUSED) { *err = "layerBusy"; return false; }
 
     if (expected_bytes == 0 || expected_bytes > LAYER_CAPACITY_BYTES) {
         *err = "layerTooLarge";
@@ -87,9 +89,17 @@ bool layer_append_chunk(const char *payload, size_t len, const char **err)
 
 bool layer_mark_scanning(const char **err)
 {
-    if (s_state != LAYER_READY && s_state != LAYER_DONE) { *err = "layerNotReady"; return false; }
+    if (s_state != LAYER_READY && s_state != LAYER_DONE && s_state != LAYER_PAUSED) {
+        *err = "layerNotReady";
+        return false;
+    }
     s_state = LAYER_SCANNING;
     return true;
+}
+
+void layer_mark_paused(void)
+{
+    if (s_state == LAYER_SCANNING) s_state = LAYER_PAUSED;
 }
 
 void layer_mark_done(void)

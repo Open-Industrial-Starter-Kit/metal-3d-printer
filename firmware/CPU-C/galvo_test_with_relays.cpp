@@ -272,6 +272,7 @@ static void run_gcode_frames(PIO pio, uint sm_x, uint sm_y)
 
         char body[128];
         if (st == GCODE_LAYER_END) {
+            layer_mark_paused();          // partly consumed: awaiting recoat and a resume
             snprintf(body, sizeof(body),
                      "\"event\":\"layerComplete\",\"layer\":%u,\"z\":%.3f",
                      (unsigned)gcode_layer_index(), (double)gcode_layer_thickness_mm());
