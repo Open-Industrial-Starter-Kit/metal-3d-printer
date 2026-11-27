@@ -270,16 +270,30 @@ static void run_gcode_frames(PIO pio, uint sm_x, uint sm_y)
         // the recoater sweeps the build area as soon as CPU-B hears this.
         laser_apply(false, 0.0f);
 
-        char body[128];
+        // The speeds are reported with every completed run on purpose. They live in RAM and
+        // survive until CPU-C reboots, so a run started today can still be using speeds some
+        // earlier session set -- which makes a timing measured now impossible to reproduce or
+        // model unless the run says what it actually used. An F word in the file overrides
+        // markSpeed per move, so this is the configured speed, not necessarily the one used.
+        char speeds[128];
+        snprintf(speeds, sizeof(speeds),
+                 ",\"markSpeed\":%.0f,\"jumpSpeed\":%.0f"
+                 ",\"jumpDelay\":%u,\"markDelay\":%u,\"laserOnDelay\":%u",
+                 (double)gcode_config.mark_speed_mm_s, (double)gcode_config.jump_speed_mm_s,
+                 gcode_config.jump_delay_frames, gcode_config.mark_delay_frames,
+                 gcode_config.laser_on_delay_frames);
+
+        char body[256];
         if (st == GCODE_LAYER_END) {
             layer_mark_paused();          // partly consumed: awaiting recoat and a resume
             snprintf(body, sizeof(body),
-                     "\"event\":\"layerComplete\",\"layer\":%u,\"z\":%.3f",
-                     (unsigned)gcode_layer_index(), (double)gcode_layer_thickness_mm());
+                     "\"event\":\"layerComplete\",\"layer\":%u,\"z\":%.3f%s",
+                     (unsigned)gcode_layer_index(), (double)gcode_layer_thickness_mm(),
+                     speeds);
         } else {
             layer_mark_done();
-            snprintf(body, sizeof(body), "\"event\":\"programComplete\",\"layer\":%u",
-                     (unsigned)gcode_layer_index());
+            snprintf(body, sizeof(body), "\"event\":\"programComplete\",\"layer\":%u%s",
+                     (unsigned)gcode_layer_index(), speeds);
         }
         json_api_emit(body);
         break;

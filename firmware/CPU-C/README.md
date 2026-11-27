@@ -412,6 +412,58 @@ and energy put down before it has is energy in the wrong place. An `F` word over
 `markSpeed` for the moves that follow it, so a file that sets its own feed wins over the
 command for as long as it is running.
 
+### How fast it can go
+
+The frame rate is fixed: 319 PIO cycles per 20-bit frame from a 32 MHz state machine clock is
+9.97 us, so 100.3 kHz. Nothing in the firmware changes that, which means scan time is just
+`path_length / speed` and the speed is only ever the step between consecutive commanded
+positions. Measured on `examples/sweep.nc` (30 passes, 79.1 m of marking, no `F` word so
+`setGalvoSpeeds` governs):
+
+| markSpeed mm/s | mm per frame | scan | shapes |
+| --- | --- | --- | --- |
+| 5 000 | 0.05 | 16.60 s | correct |
+| 10 000 | 0.10 | 8.72 s | correct |
+| 20 000 | 0.20 | 4.78 s | correct |
+| 40 000 | 0.40 | 2.84 s | correct |
+| 60 000 | 0.60 | 2.16 s | **rounded and shrunk** |
+| 100 000 | 1.00 | 1.63 s | rounded and shrunk |
+| 200 000 | 2.00 | 1.22 s | rounded and shrunk |
+
+Linear to within a few percent until the shapes fail, and the failure is not the electronics.
+Rounding **and** shrinking together is amplitude attenuation: the mirrors are a low-pass
+system being driven past their bandwidth, so they stop reaching the commanded extremes.
+No amount of interpolation fixes that -- the limit is the scan head. The circle's trajectory
+frequency is `speed / 314 mm`, which puts this head's limit between 127 Hz (40 000 mm/s, fine)
+and 191 Hz (60 000 mm/s, failing).
+
+Past 40 000 the returns collapse anyway: jumps and settle delays become the floor, so 5x the
+speed buys 2.3x the time.
+
+**None of this constrains printing.** LPBF mark speed is set by energy density,
+`E = P / (v * h)`: the RFL-C200A at 200 W with a 100 um hatch gives 2.0 J/mm2 at 1000 mm/s and
+1.0 at 2000 mm/s, and powder wants something in that range. Real scanning will run at
+500-3000 mm/s, where the head is nowhere near its bandwidth and the data path has 10-80x
+headroom. The speed ceiling above matters for drawing test patterns quickly, not for parts.
+
+### Speeds live in RAM
+
+`gcode_config` is not persisted and not reset between layers, so speeds set by
+`setGalvoSpeeds` stay in force until CPU-C reboots -- including across host sessions. A run
+started today can be using speeds something set days ago, which makes a timing impossible to
+reproduce or model unless you know what it actually used. Two consequences:
+
+- `programComplete` and `layerComplete` both report `markSpeed`, `jumpSpeed`, `jumpDelay`,
+  `markDelay` and `laserOnDelay`, so every finished run says what it ran at. An `F` word
+  overrides `markSpeed` per move, so these are the *configured* speeds.
+- `setGalvoSpeeds` with no fields changes nothing and just reports all five.
+
+The compiled defaults are 1000 mm/s marking, 3000 mm/s jumping, and 300/200/50 us of jump,
+mark and laser-on delay. The delays are not padding: a galvo needs a few hundred microseconds
+to settle after a jump, and a mark that starts before the mirror has arrived puts energy in
+the wrong place. They cost about 30% of the scan time at 20 000 mm/s and proportionally far
+less at printing speeds.
+
 ### Beam control
 
 The interpreter drives two pins per point, which are the same ones the fiber laser will use:

@@ -1,9 +1,11 @@
 ; demo.nc - full SD -> CPU-B -> CPU-C -> PSRAM -> PIO run
 ; square, hatch, crosshair, circle, star, infinity  x100
 ; single continuous program - no layer breaks, runs straight to programComplete
+; F1200000 = 20000 mm/s: measured safe on this head. At 60000+ the mirrors cannot
+; follow and the shapes round off and shrink.
 G21
 G90
-F300000
+F1200000
 ; ---------- pass 1/100 ----------
 G0 X75.00 Y75.00
 M3 S800
