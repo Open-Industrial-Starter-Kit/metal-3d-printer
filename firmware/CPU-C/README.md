@@ -131,6 +131,8 @@ CPU-C's command set, so the two can be extended independently.
 | `{"type":"get","getType":"getFirmwareVersion"}` | `"firmwareVersion":"0.1.0-bringup"` |
 | `{"type":"get","getType":"getStatus"}` | `firmwareVersion`, `galvoStreaming`, `galvoPower`, `laserInterlock`, `laserMainPower`, `laserRemoteOn`, `galvoX`, `galvoY`, `shape`, `numPoints`, `uptimeMs` |
 | `{"type":"get","getType":"getDebuggingSettings"}` | `debuggingBase`, `enableJsonResponse` |
+| `{"type":"get","getType":"getLayerInfo"}` | layer buffer state - see below |
+| `{"type":"get","getType":"getPsramInfo"}` | `psramAvailable`, `psramSizeBytes`, `readbackOk`, `csPin` |
 | `{"type":"set","setType":"setDebuggingBase","value":true}` | `"result":"success"` |
 | `{"type":"set","setType":"setEnableJsonResponse","value":true}` | `"result":"success"` |
 | `{"type":"command","commandType":"setGalvoPower","value":true}` | `"result":"success"` |
@@ -139,6 +141,8 @@ CPU-C's command set, so the two can be extended independently.
 | `{"type":"command","commandType":"setLaserInterlock","value":true}` | `"result":"success"` |
 | `{"type":"command","commandType":"setLaserMainPower","value":true}` | `"result":"success"` |
 | `{"type":"command","commandType":"setLaserRemoteOn","value":true}` | `"result":"success"` |
+| `{"type":"command","commandType":"startLayerTransfer","bytes":19,"layer":7}` | `bytesRemaining` |
+| `{"type":"command","commandType":"clearLayer"}` | `"result":"success"` |
 
 `setGalvoStreaming` stops CPU-C pushing new XY2-100 frames without stopping the state
 machines, so the head holds its last position rather than the scan restarting.
@@ -258,6 +262,75 @@ With CPU-C on USB, or through CPU-B by adding `"target":"cpuc"`:
 
 Per-sweep console logging is off by default, so replies are readable; turn it back on with
 `setDebuggingBase` when you want it.
+
+## Layer transfer
+
+One layer of G-code is held in PSRAM at a time. The LPBF cycle makes that enough: while
+CPU-A runs the Z move, reservoir and recoater the galvo is idle, and a layer crosses the
+2 Mbaud link in well under a second against 5-15 s of recoat. There is no need to buffer
+ahead, and a single buffer keeps the ownership rules trivial.
+
+The protocol mirrors the PC->CPU-B file upload, so there is one chunking convention to learn
+rather than two.
+
+### Sequence
+
+```json
+{"target":"cpuc","type":"command","commandType":"startLayerTransfer","bytes":19,"layer":7}
+{"target":"cpuc","lcl":"G21|G90|G0 X10 Y10"}
+{"target":"cpuc","lcl":"M3 S500|G1 X90 Y10|M5|M600 L7 Z0.03"}
+```
+
+`bytes` is what CPU-C will store, counting **one newline per line**. `layer` is optional and
+only used for reporting. Lines inside `lcl` are separated by `|`, never newlines, so each
+chunk stays a single-line JSON object; empty tokens are skipped. Keep a chunk under about
+1.8 KB -- the line buffer is 2048 bytes.
+
+Each chunk is acknowledged, and the last one says so:
+
+```json
+{"from":"cpuc","result":"success","bytesRemaining":11}
+{"from":"cpuc","result":"success","bytesRemaining":0,"layerStored":"success","bytes":19}
+```
+
+Counting **bytes rather than lines** is a deliberate difference from the CPU-B upload. The
+line-counting version has a trap -- blank lines collapse, so a `filelines` that includes them
+never finalises -- and byte counting sidesteps it.
+
+### State
+
+```json
+{"target":"cpuc","type":"get","getType":"getLayerInfo"}
+```
+
+```json
+{"from":"cpuc","result":"success","state":"ready","layer":7,
+ "bytes":19,"bytesExpected":19,"bytesRemaining":0,
+ "capacityBytes":4194304,"streamed":false}
+```
+
+| `state` | Meaning |
+| --- | --- |
+| `empty` | nothing loaded |
+| `loading` | a transfer is in progress |
+| `ready` | complete, not yet scanned |
+| `scanning` | being streamed to the PIO right now |
+| `done` | fully streamed, safe to replace |
+
+`streamed` is true only in `done`, so a host can ask "has this layer been run?" without
+tracking it.
+
+### Overwriting
+
+`startLayerTransfer` replaces whatever is there -- except while `scanning`, where it is
+refused with `layerBusy` and the existing contents are left untouched. Pulling the buffer out
+from under the interpreter mid-move is the one thing that must not be possible.
+`clearLayer` resets it, and is refused the same way.
+
+Capacity is **4 MB** of the 8 MB fitted, roughly 25x a typical layer. The other half is
+deliberately left free so a second buffer can be added later without moving anything. Errors:
+`layerTooLarge`, `layerOverflow`, `layerTransferNotStarted`, `layerNotReady`, `layerBusy`.
+
 
 ## Building
 

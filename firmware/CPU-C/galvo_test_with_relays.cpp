@@ -11,6 +11,7 @@
 #include "hardware/clocks.h"
 #include "hardware/uart.h"
 #include "json_api.h"
+#include "layer.h"
 #include "xy2_100.pio.h"   // NEW: generated from modified PIO file with .side_set 2
 
 
@@ -237,6 +238,7 @@ int main() {
 
     //[2026-11-27] Bring up the CPU-B link and the JSON API before the galvo starts
     cpub_link_init();
+    layer_init();
     json_api_init(usb_write, cpub_link_write);
     api_state.galvo_max_x_mm = X_MAX_POS_MM;
     api_state.galvo_max_y_mm = Y_MAX_POS_MM;

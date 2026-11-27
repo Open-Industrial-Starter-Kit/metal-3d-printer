@@ -14,7 +14,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define JSON_API_LINE_CHARS 512
+// Big enough for a layer-transfer chunk. The control envelope needs a fraction of this.
+#define JSON_API_LINE_CHARS 2048
 #define JSON_API_FIRMWARE_VERSION "0.1.0-bringup"
 
 // Which transport a line arrived on; the reply goes back the same way.

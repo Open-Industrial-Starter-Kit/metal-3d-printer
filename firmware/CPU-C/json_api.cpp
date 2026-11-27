@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include "pico/stdlib.h"
 #include "hardware/psram.h"
+#include "layer.h"
 
 api_state_t api_state = {
     /* debugging_base       */ false,
@@ -74,6 +75,21 @@ static bool json_get_string(const char *json, const char *key, char *out, size_t
     if (n >= outlen) n = outlen - 1;
     memcpy(out, v, n);
     out[n] = '\0';
+    return true;
+}
+
+// Like json_get_string but hands back a pointer into the original line. Used for the layer
+// chunk payload, which is far too big to copy onto the stack.
+static bool json_get_string_ref(const char *json, const char *key,
+                                const char **start, size_t *len)
+{
+    const char *v = find_value(json, key);
+    if (v == NULL || *v != '"') return false;
+    v++;
+    const char *end = strchr(v, '"');
+    if (end == NULL) return false;
+    *start = v;
+    *len   = (size_t)(end - v);
     return true;
 }
 
@@ -197,6 +213,20 @@ static void handle_get(api_source_t src, const char *json)
                  (unsigned long)to_ms_since_boot(get_absolute_time()));
         api_send(src, body);
 
+    } else if (strcmp(what, "getLayerInfo") == 0) {
+
+        const uint32_t stored = layer_bytes(), expect = layer_expected();
+        snprintf(body, sizeof(body),
+                 "\"result\":\"success\",\"state\":\"%s\",\"layer\":%u,"
+                 "\"bytes\":%u,\"bytesExpected\":%u,\"bytesRemaining\":%u,"
+                 "\"capacityBytes\":%u,\"streamed\":%s",
+                 layer_state_name(), (unsigned)layer_index(),
+                 (unsigned)stored, (unsigned)expect,
+                 (unsigned)(expect > stored ? expect - stored : 0),
+                 (unsigned)layer_capacity(),
+                 layer_get_state() == LAYER_DONE ? "true" : "false");
+        api_send(src, body);
+
     } else if (strcmp(what, "getPsramInfo") == 0) {
 
         // Proves the size rather than trusting the part number. Distinct patterns are
@@ -293,7 +323,28 @@ static void handle_command(api_source_t src, const char *json)
         }
     }
 
-    if (strcmp(what, "setGalvoPosition") == 0) {
+    if (strcmp(what, "startLayerTransfer") == 0) {
+
+        double bytes = 0, index = 0;
+        if (!json_get_double(json, "bytes", &bytes)) { api_fail(src, "missingJsonKey"); return; }
+        json_get_double(json, "layer", &index);      // optional
+
+        const char *err = "layerError";
+        if (!layer_begin((uint32_t)bytes, (uint32_t)index, &err)) { api_fail(src, err); return; }
+
+        char body[128];
+        snprintf(body, sizeof(body),
+                 "\"result\":\"success\",\"bytesRemaining\":%u",
+                 (unsigned)(layer_expected() - layer_bytes()));
+        api_send(src, body);
+
+    } else if (strcmp(what, "clearLayer") == 0) {
+
+        if (layer_get_state() == LAYER_SCANNING) { api_fail(src, "layerBusy"); return; }
+        layer_clear();
+        api_ok(src);
+
+    } else if (strcmp(what, "setGalvoPosition") == 0) {
 
         double x, y;
         if (!json_get_double(json, "x", &x) || !json_get_double(json, "y", &y)) {
@@ -334,6 +385,29 @@ static void handle_command(api_source_t src, const char *json)
 
 static void dispatch(api_source_t src, const char *json)
 {
+    // Layer chunks first, before any other parsing. They are the only high volume message
+    // on this link and carry no "type" envelope, exactly like CPU-B's "fcl".
+    {
+        const char *payload; size_t plen;
+        if (json_get_string_ref(json, "lcl", &payload, &plen)) {
+            const char *err = "layerError";
+            if (!layer_append_chunk(payload, plen, &err)) { api_fail(src, err); return; }
+
+            const uint32_t stored = layer_bytes(), expect = layer_expected();
+            char body[160];
+            if (layer_get_state() == LAYER_READY)
+                snprintf(body, sizeof(body),
+                         "\"result\":\"success\",\"bytesRemaining\":0,\"layerStored\":\"success\","
+                         "\"bytes\":%u", (unsigned)stored);
+            else
+                snprintf(body, sizeof(body),
+                         "\"result\":\"success\",\"bytesRemaining\":%u",
+                         (unsigned)(expect > stored ? expect - stored : 0));
+            api_send(src, body);
+            return;
+        }
+    }
+
     char type[32];
     if (!json_get_string(json, "type", type, sizeof(type))) {
         api_fail_echo(src, "unknownJsonType", json);
