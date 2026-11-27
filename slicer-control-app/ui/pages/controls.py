@@ -600,8 +600,7 @@ class JogPad(QWidget):
 
 
 class ZPad(QWidget):
-    """Z-axis jog column (up / info / down) with the Z-top-limit button to the
-    right of the up button."""
+    """Z-axis jog column (up / info / down)."""
 
     def __init__(self):
         super().__init__()
@@ -612,18 +611,9 @@ class ZPad(QWidget):
         self._btn_up = JogDirButton("up", "Z", size=72)                     # ▲ / Z
         self._btn_down = JogDirButton("down", "Z", size=72, label_first=True)  # Z / ▼
 
-        top_stop = jog_btn("", size=46, bg=WHITE)
-        top_stop.setToolTip("Z top limit")
-
         self._info = _InfoBox(["Z 10"], w=96, h=88)
-        self._btn_ztop = top_stop
 
-        #         col0          col1
-        # row0:   up button     z-top (top-aligned)
-        # row1:   z_info
-        # row2:   down button
         grid.addWidget(self._btn_up,   0, 0, Qt.AlignCenter)
-        grid.addWidget(top_stop,       0, 1, Qt.AlignTop | Qt.AlignLeft)
         grid.addWidget(self._info,     1, 0, Qt.AlignCenter)
         grid.addWidget(self._btn_down, 2, 0, Qt.AlignCenter)
         grid.setRowStretch(3, 1)
@@ -633,8 +623,6 @@ class ZPad(QWidget):
     def _apply_scale(self, *_):
         self._grid.setSpacing(px(6))
         self._grid.setContentsMargins(px(2), px(2), px(2), px(2))
-        self._btn_ztop.setIcon(icons.icon("z-top", px(22), TXT))
-        self._btn_ztop.setIconSize(QSize(px(22), px(22)))
 
     def set_info(self, step_z: str, speed: str) -> None:
         self._info.set_lines([f"Z {step_z}"], speed)
@@ -1103,7 +1091,6 @@ class ControlsPage(QWidget):
             _HoldJog(bp._btn_down, conn, {}, z_feed, lambda: _jog_b(-1),
                      hold_enabled_fn=lambda: False),
         ]
-        zp._btn_ztop.clicked.connect(lambda: conn.cmd("grblHomingZ"))
 
         conn.position_changed.connect(self._on_position_changed)
 
