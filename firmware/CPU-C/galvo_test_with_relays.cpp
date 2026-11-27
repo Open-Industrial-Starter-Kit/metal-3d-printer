@@ -34,10 +34,20 @@
 #define CPUB_UART_RX_PIN 1
 #define CPUB_BAUD_RATE   115200
 
-//[2026-07-16] Relay pins for Metal 3D Printer Board
-#define RELAY1_PIN 19 //Relay 1 for Metal 3D Printer Board
-#define RELAY2_PIN 20 //Relay 2 for Metal 3D Printer Board
-#define RELAY_INTERVAL_MS 5000 //toggle relays every 5 seconds
+//[2026-11-27] Relays driven by CPU-C, named after the nets on the V2 schematic.
+//
+// Galvo supply. The scan head needs BOTH rails, so the two are driven together as one
+// "galvo power" control: energising +15 V without -15 V would feed the head an asymmetric
+// supply. They are separate nets on the board, hence two pins.
+#define GALVO_NEG_RLY_PIN      19   // PIO_15V_RLY  -> K7, -15 V to the scan head
+#define GALVO_POS_RLY_PIN      20   // PIO_PWR_RLY  -> K6, +15 V to the scan head
+
+// Raycus RFL-C200A control relays. These are individual relay controls, NOT a power-up
+// sequencer: the vendor's required order is interlock closed, then main power, then remote
+// on, and honouring that is the caller's job.
+#define LASER_INTERLOCK_RLY_PIN  24   // Interlock_RLY  -> the DB25 interlock pin pairs
+#define LASER_MAIN_POWER_RLY_PIN 26   // LaserPowerON   -> REMOTE_PWRON
+#define LASER_REMOTE_ON_RLY_PIN  25   // LaserRemoteON  -> REMOTE_ON
 
 // --- Configurable galvo limits (mm to 16-bit mapping) ---
 #define X_MAX_POS_MM   250.0
@@ -225,14 +235,17 @@ int main() {
     json_api_init(usb_write, cpub_link_write);
     cpub_link_write("{\"from\":\"cpuc\",\"event\":\"linkUp\"}\r\n");
 
-    //[2026-07-16] Init relay pins as outputs, start OFF
-    gpio_init(RELAY1_PIN);
-    gpio_set_dir(RELAY1_PIN, true);
-    gpio_put(RELAY1_PIN, 0);
-
-    gpio_init(RELAY2_PIN);
-    gpio_set_dir(RELAY2_PIN, true);
-    gpio_put(RELAY2_PIN, 0);
+    //[2026-11-27] Every relay starts as a driven-low output, so nothing is energised by
+    // merely powering the board and no coil is left floating.
+    static const uint relay_pins[] = {
+        GALVO_NEG_RLY_PIN, GALVO_POS_RLY_PIN,
+        LASER_INTERLOCK_RLY_PIN, LASER_MAIN_POWER_RLY_PIN, LASER_REMOTE_ON_RLY_PIN,
+    };
+    for (size_t i = 0; i < sizeof(relay_pins) / sizeof(relay_pins[0]); i++) {
+        gpio_init(relay_pins[i]);
+        gpio_set_dir(relay_pins[i], true);
+        gpio_put(relay_pins[i], 0);
+    }
 
     // Load programs
     uint offset_master = pio_add_program(pio, &xy2_100_program); // X+CLK+SYNC via side-set
@@ -318,8 +331,11 @@ int main() {
     uint instr = pio_encode_set(pio_y, 0);
 
     //[2026-07-16] Relay state and timer
-    bool relay_state = false;
-    uint32_t relay_timer = to_ms_since_boot(get_absolute_time());
+    // last state written to each relay, so the GPIO is only touched on a change
+    bool galvo_power_applied      = false;
+    bool laser_interlock_applied  = false;
+    bool laser_main_power_applied = false;
+    bool laser_remote_on_applied  = false;
 
 
 
@@ -530,15 +546,35 @@ int main() {
             //     }
             }
 
-            //[2026-11-27] K6/K7 now follow the API rather than a 5 s test toggle, so the
-            // scan head is only powered when something asks for it. Applied every pass; the
-            // write is idempotent and costs one register store.
-            if (relay_state != api_state.galvo_relays) {
-                relay_state = api_state.galvo_relays;
-                gpio_put(RELAY1_PIN, relay_state);
-                gpio_put(RELAY2_PIN, relay_state);
+            //[2026-11-27] Relays follow the API rather than a 5 s test toggle, so nothing is
+            // energised unless something asks. Each is written only when it actually changes.
+            if (galvo_power_applied != api_state.galvo_power) {
+                galvo_power_applied = api_state.galvo_power;
+                gpio_put(GALVO_NEG_RLY_PIN, galvo_power_applied);   // both rails together:
+                gpio_put(GALVO_POS_RLY_PIN, galvo_power_applied);   // never one without the other
                 if (api_state.debugging_base)
-                    printf("CPUC: galvo relays %s\n", relay_state ? "ON" : "OFF");
+                    printf("CPUC: galvo power %s\n", galvo_power_applied ? "ON" : "OFF");
+            }
+
+            if (laser_interlock_applied != api_state.laser_interlock) {
+                laser_interlock_applied = api_state.laser_interlock;
+                gpio_put(LASER_INTERLOCK_RLY_PIN, laser_interlock_applied);
+                if (api_state.debugging_base)
+                    printf("CPUC: laser interlock %s\n", laser_interlock_applied ? "CLOSED" : "OPEN");
+            }
+
+            if (laser_main_power_applied != api_state.laser_main_power) {
+                laser_main_power_applied = api_state.laser_main_power;
+                gpio_put(LASER_MAIN_POWER_RLY_PIN, laser_main_power_applied);
+                if (api_state.debugging_base)
+                    printf("CPUC: laser main power %s\n", laser_main_power_applied ? "ON" : "OFF");
+            }
+
+            if (laser_remote_on_applied != api_state.laser_remote_on) {
+                laser_remote_on_applied = api_state.laser_remote_on;
+                gpio_put(LASER_REMOTE_ON_RLY_PIN, laser_remote_on_applied);
+                if (api_state.debugging_base)
+                    printf("CPUC: laser remote on %s\n", laser_remote_on_applied ? "ON" : "OFF");
             }
 
     }

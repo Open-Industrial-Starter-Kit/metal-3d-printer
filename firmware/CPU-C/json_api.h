@@ -32,7 +32,13 @@ typedef struct {
     bool debugging_base;        // chatty per-sweep logging on the console
     bool enable_json_response;  // when false only serialPing still answers
     bool galvo_streaming;       // push XY2-100 frames to the PIO
-    bool galvo_relays;          // K6/K7 closed, so the head has its +/-15 V
+
+    // Relays. Every one of these is OFF at boot and only closes when asked.
+    bool galvo_power;           // K6+K7 together: +/-15 V to the scan head
+    bool laser_interlock;       // Interlock_RLY, the RFL-C200A interlock pairs
+    bool laser_main_power;      // LaserPowerON  -> REMOTE_PWRON
+    bool laser_remote_on;       // LaserRemoteON -> REMOTE_ON
+
     int  num_points;            // points in the current shape (read only)
     int  shape;                 // 0 = circle, 1 = rectangle (read only)
 } api_state_t;

@@ -117,18 +117,44 @@ CPU-C's command set, so the two can be extended independently.
 | --- | --- |
 | `{"type":"serialPing"}` | `"result":"success"` |
 | `{"type":"get","getType":"getFirmwareVersion"}` | `"firmwareVersion":"0.1.0-bringup"` |
-| `{"type":"get","getType":"getStatus"}` | `firmwareVersion`, `galvoStreaming`, `galvoRelays`, `shape`, `numPoints`, `uptimeMs` |
+| `{"type":"get","getType":"getStatus"}` | `firmwareVersion`, `galvoStreaming`, `galvoPower`, `laserInterlock`, `laserMainPower`, `laserRemoteOn`, `shape`, `numPoints`, `uptimeMs` |
 | `{"type":"get","getType":"getDebuggingSettings"}` | `debuggingBase`, `enableJsonResponse` |
 | `{"type":"set","setType":"setDebuggingBase","value":true}` | `"result":"success"` |
 | `{"type":"set","setType":"setEnableJsonResponse","value":true}` | `"result":"success"` |
-| `{"type":"command","commandType":"setGalvoRelays","value":true}` | `"result":"success"` |
+| `{"type":"command","commandType":"setGalvoPower","value":true}` | `"result":"success"` |
 | `{"type":"command","commandType":"setGalvoStreaming","value":false}` | `"result":"success"` |
-
-`setGalvoRelays` closes K6 and K7, which is what puts ±15 V on the scan head. It defaults to
-**false** at boot, so the head stays unpowered until something asks for it.
+| `{"type":"command","commandType":"setLaserInterlock","value":true}` | `"result":"success"` |
+| `{"type":"command","commandType":"setLaserMainPower","value":true}` | `"result":"success"` |
+| `{"type":"command","commandType":"setLaserRemoteOn","value":true}` | `"result":"success"` |
 
 `setGalvoStreaming` stops CPU-C pushing new XY2-100 frames without stopping the state
 machines, so the head holds its last position rather than the scan restarting.
+
+### Relays
+
+CPU-C drives five relays. Each command takes `"value"` as a boolean; `getStatus` reports the
+current state of all of them.
+
+| Command | GPIO | Net | Switches |
+| --- | --- | --- | --- |
+| `setGalvoPower` | GP20 + GP19 | `PIO_PWR_RLY`, `PIO_15V_RLY` | K6 and K7, the +15 V and −15 V rails to the scan head |
+| `setLaserInterlock` | GP24 | `Interlock_RLY` | the RFL-C200A interlock pin pairs on the DB25 |
+| `setLaserMainPower` | GP26 | `LaserPowerON` | `REMOTE_PWRON`, the laser's main-power emulation |
+| `setLaserRemoteOn` | GP25 | `LaserRemoteON` | `REMOTE_ON`, the laser's start emulation |
+
+**Every relay is open at boot** and only closes when something asks, so powering the board
+energises nothing.
+
+`setGalvoPower` deliberately drives **both** K6 and K7 from one command. They are separate
+nets on the board, but the scan head needs a symmetric supply and energising +15 V without
+−15 V would feed it an asymmetric one, so the API does not expose the rails individually.
+
+The three laser commands are **individual relay controls, not a power-up sequencer.** The
+Raycus RFL-C200A has a required order — interlock closed first, then main power, then remote
+on, with timing between them documented in the vendor guide and embedded in sheet 6 of the
+schematic. Honouring that order is the caller's job; CPU-C will close any of these relays on
+request, in any order. A sequencer with the interlock and timing enforced belongs in the
+firmware before the laser is ever fired in anger.
 
 ### Errors
 
@@ -186,7 +212,8 @@ and is not the final firmware:
   precomputed into a fixed 20 000 point buffer
 - there is a control API but no scan path interface, so the host still cannot send geometry
 - the 8 MB PSRAM is not used
-- there is no fiber laser control in this project
+- the fiber laser's relays can be switched, but there is no power-up sequencer, no
+  PWM/analog power control and no reading of the laser's status inputs yet
 - `PICO_BOARD` is `weact_studio_rp2350b_core`, a development board rather than
   this PCB; the pin map above is correct but the board definition is not
 - it contains a leftover debug pin, `pio_gpio_init(pio, 6)`. GP6 is outside

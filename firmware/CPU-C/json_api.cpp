@@ -9,7 +9,10 @@ api_state_t api_state = {
     /* debugging_base       */ false,
     /* enable_json_response */ true,
     /* galvo_streaming      */ true,
-    /* galvo_relays         */ false,   // head stays unpowered until asked
+    /* galvo_power          */ false,   // every relay is open at boot and
+    /* laser_interlock      */ false,   // only closes when something asks,
+    /* laser_main_power     */ false,   // so nothing is energised by merely
+    /* laser_remote_on      */ false,   // powering the board
     /* num_points           */ 0,
     /* shape                */ 1,
 };
@@ -130,11 +133,15 @@ static void handle_get(api_source_t src, const char *json)
     } else if (strcmp(what, "getStatus") == 0) {
         snprintf(body, sizeof(body),
                  "\"result\":\"success\",\"firmwareVersion\":\"%s\","
-                 "\"galvoStreaming\":%s,\"galvoRelays\":%s,"
+                 "\"galvoStreaming\":%s,\"galvoPower\":%s,"
+                 "\"laserInterlock\":%s,\"laserMainPower\":%s,\"laserRemoteOn\":%s,"
                  "\"shape\":%d,\"numPoints\":%d,\"uptimeMs\":%lu",
                  JSON_API_FIRMWARE_VERSION,
                  api_state.galvo_streaming ? "true" : "false",
-                 api_state.galvo_relays ? "true" : "false",
+                 api_state.galvo_power ? "true" : "false",
+                 api_state.laser_interlock ? "true" : "false",
+                 api_state.laser_main_power ? "true" : "false",
+                 api_state.laser_remote_on ? "true" : "false",
                  api_state.shape, api_state.num_points,
                  (unsigned long)to_ms_since_boot(get_absolute_time()));
         api_send(src, body);
@@ -187,12 +194,25 @@ static void handle_command(api_source_t src, const char *json)
 
     bool value;
 
-    if (strcmp(what, "setGalvoRelays") == 0) {
-        if (!json_get_bool(json, "value", &value)) { api_fail(src, "missingJsonKey"); return; }
-        api_state.galvo_relays = value;      // main() drives K6/K7 from this
-        api_ok(src);
+    // Every relay command is "name a relay, give it a state". main() applies these to the
+    // GPIOs; nothing here touches hardware directly.
+    struct { const char *name; bool *flag; } relays[] = {
+        { "setGalvoPower",     &api_state.galvo_power      },  // K6 + K7, +/-15 V to the head
+        { "setLaserInterlock", &api_state.laser_interlock  },  // Interlock_RLY
+        { "setLaserMainPower", &api_state.laser_main_power },  // REMOTE_PWRON
+        { "setLaserRemoteOn",  &api_state.laser_remote_on  },  // REMOTE_ON
+    };
 
-    } else if (strcmp(what, "setGalvoStreaming") == 0) {
+    for (size_t i = 0; i < sizeof(relays) / sizeof(relays[0]); i++) {
+        if (strcmp(what, relays[i].name) == 0) {
+            if (!json_get_bool(json, "value", &value)) { api_fail(src, "missingJsonKey"); return; }
+            *relays[i].flag = value;
+            api_ok(src);
+            return;
+        }
+    }
+
+    if (strcmp(what, "setGalvoStreaming") == 0) {
         if (!json_get_bool(json, "value", &value)) { api_fail(src, "missingJsonKey"); return; }
         api_state.galvo_streaming = value;   // main() stops pushing frames when false
         api_ok(src);
