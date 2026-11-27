@@ -1,0 +1,74 @@
+; two-layer LPBF example for CPU-C
+; each block ends with M600, which is the layer boundary:
+;   CPU-C parks the mirrors, gates the laser off and stops,
+;   CPU-B then runs the Z move / reservoir / recoater on CPU-A,
+;   and resumes CPU-C for the next layer.
+G21
+G90
+; ---- layer 0 ----
+G0 X20 Y20
+M3 S800
+G1 X80 Y20
+G1 X80 Y80
+G1 X20 Y80
+G1 X20 Y20
+M5
+G0 X24 Y24
+M3 S800
+G1 X76 Y24
+M5
+G0 X24 Y34
+M3 S800
+G1 X76 Y34
+M5
+G0 X24 Y44
+M3 S800
+G1 X76 Y44
+M5
+G0 X24 Y54
+M3 S800
+G1 X76 Y54
+M5
+G0 X24 Y64
+M3 S800
+G1 X76 Y64
+M5
+G0 X24 Y74
+M3 S800
+G1 X76 Y74
+M5
+M600 L0 Z0.030
+; ---- layer 1 ----
+G0 X20 Y20
+M3 S800
+G1 X80 Y20
+G1 X80 Y80
+G1 X20 Y80
+G1 X20 Y20
+M5
+G0 X24 Y24
+M3 S800
+G1 X24 Y76
+M5
+G0 X34 Y24
+M3 S800
+G1 X34 Y76
+M5
+G0 X44 Y24
+M3 S800
+G1 X44 Y76
+M5
+G0 X54 Y24
+M3 S800
+G1 X54 Y76
+M5
+G0 X64 Y24
+M3 S800
+G1 X64 Y76
+M5
+G0 X74 Y24
+M3 S800
+G1 X74 Y76
+M5
+M600 L1 Z0.030
+; end of file

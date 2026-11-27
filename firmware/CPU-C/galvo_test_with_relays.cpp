@@ -12,6 +12,8 @@
 #include "hardware/uart.h"
 #include "json_api.h"
 #include "layer.h"
+#include "gcode.h"
+#include "hardware/pwm.h"
 #include "xy2_100.pio.h"   // NEW: generated from modified PIO file with .side_set 2
 
 
@@ -54,6 +56,15 @@
 #define LASER_INTERLOCK_RLY_PIN  24   // Interlock_RLY  -> the DB25 interlock pin pairs
 #define LASER_MAIN_POWER_RLY_PIN 26   // LaserPowerON   -> REMOTE_PWRON
 #define LASER_REMOTE_ON_RLY_PIN  25   // LaserRemoteON  -> REMOTE_ON
+
+// Beam control, driven per point by the G-code interpreter.
+//   Laser_PWM goes to the LM358 PWM-to-0..10 V converter, so it sets POWER.
+//   Laser_MOD+ is the RFL-C200A's TTL modulation input, so it is the GATE.
+// Both are harmless with only a red pointer attached, and this is the same code path the
+// fiber laser will take, so it is worth exercising from the start.
+#define LASER_PWM_PIN  21   // Laser_PWM  -> power
+#define LASER_MOD_PIN  22   // Laser_MOD+ -> on/off gate
+#define LASER_PWM_WRAP 1000 // duty resolution; ~20 kHz so the converter's filter can smooth it
 
 // --- Configurable galvo limits (mm to 16-bit mapping) ---
 #define X_MAX_POS_MM   250.0
@@ -216,6 +227,64 @@ static void api_poll(void)
         json_api_feed(API_SRC_USB, (char)c);
 }
 
+static void laser_init(void)
+{
+    gpio_set_function(LASER_PWM_PIN, GPIO_FUNC_PWM);
+    pwm_config cfg = pwm_get_default_config();
+    pwm_config_set_clkdiv(&cfg, 7.5f);               // ~20 kHz at wrap 1000
+    pwm_config_set_wrap(&cfg, LASER_PWM_WRAP - 1);
+    pwm_init(pwm_gpio_to_slice_num(LASER_PWM_PIN), &cfg, true);
+    pwm_set_gpio_level(LASER_PWM_PIN, 0);
+
+    gpio_init(LASER_MOD_PIN);
+    gpio_set_dir(LASER_MOD_PIN, true);
+    gpio_put(LASER_MOD_PIN, 0);                      // gated off
+}
+
+static void laser_apply(bool on, float power)
+{
+    if (power < 0.0f) power = 0.0f;
+    if (power > 1.0f) power = 1.0f;
+    pwm_set_gpio_level(LASER_PWM_PIN, (uint16_t)(power * (LASER_PWM_WRAP - 1)));
+    gpio_put(LASER_MOD_PIN, on);
+}
+
+// Feeds the PIO from the interpreter. Paced by the TX FIFO rather than a delay: push while
+// there is room and stop when there is not, so the state machines set the rate and the loop
+// simply keeps up. This is also the shape DMA will take over later.
+static void run_gcode_frames(PIO pio, uint sm_x, uint sm_y)
+{
+    while (!pio_sm_is_tx_fifo_full(pio, sm_x) && !pio_sm_is_tx_fifo_full(pio, sm_y)) {
+
+        gcode_point_t gp;
+        const gcode_status_t st = gcode_next_point(&gp);
+
+        if (st == GCODE_POINT) {
+            pio_sm_put(pio, sm_x, pack_x_frame(gp.x_mm));
+            pio_sm_put(pio, sm_y, pack_y_frame(gp.y_mm));
+            laser_apply(gp.laser_on, gp.power);
+            continue;
+        }
+
+        // Anything other than a point ends the run. Gate the beam off before saying so:
+        // the recoater sweeps the build area as soon as CPU-B hears this.
+        laser_apply(false, 0.0f);
+
+        char body[128];
+        if (st == GCODE_LAYER_END) {
+            snprintf(body, sizeof(body),
+                     "\"event\":\"layerComplete\",\"layer\":%u,\"z\":%.3f",
+                     (unsigned)gcode_layer_index(), (double)gcode_layer_thickness_mm());
+        } else {
+            layer_mark_done();
+            snprintf(body, sizeof(body), "\"event\":\"programComplete\",\"layer\":%u",
+                     (unsigned)gcode_layer_index());
+        }
+        json_api_emit(body);
+        break;
+    }
+}
+
 int main() {
     stdio_init_all();
 
@@ -238,6 +307,7 @@ int main() {
 
     //[2026-11-27] Bring up the CPU-B link and the JSON API before the galvo starts
     cpub_link_init();
+    laser_init();
     layer_init();
     json_api_init(usb_write, cpub_link_write);
     api_state.galvo_max_x_mm = X_MAX_POS_MM;
@@ -507,8 +577,9 @@ int main() {
             //pio_sm_put_blocking(pio, sm_x, x_frames[i]);
             //pio_sm_put_blocking(pio, sm_y, y_frames[i]);
             //[2026-11-27] the API can pause streaming without stopping the state machines,
-            // so the head holds its last position instead of the scan restarting
-            if (api_state.galvo_streaming) {
+            // so the head holds its last position instead of the scan restarting.
+            // The built in test rectangle stands aside while a layer is being scanned.
+            if (api_state.galvo_streaming && !gcode_is_running()) {
                 pio_sm_put(pio, sm_x, x_frames[i]); // seamlessly updates
                 pio_sm_put(pio, sm_y, y_frames[i]); // seamlessly updates
             }
@@ -518,6 +589,10 @@ int main() {
             sleep_us(delaygalvo);//
 
             api_poll();   //[2026-11-27] keep both command FIFOs drained
+
+            //[2026-11-27] when a layer is loaded and started, the interpreter owns the PIO
+            if (gcode_is_running())
+                run_gcode_frames(pio, sm_x, sm_y);
 
             //[2026-11-27] Park the mirrors at a commanded point. One frame per axis is
             // enough: the PIO's pull is non-blocking, so with an empty FIFO it keeps

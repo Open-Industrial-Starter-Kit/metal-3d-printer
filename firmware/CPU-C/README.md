@@ -143,6 +143,9 @@ CPU-C's command set, so the two can be extended independently.
 | `{"type":"command","commandType":"setLaserRemoteOn","value":true}` | `"result":"success"` |
 | `{"type":"command","commandType":"startLayerTransfer","bytes":19,"layer":7}` | `bytesRemaining` |
 | `{"type":"command","commandType":"clearLayer"}` | `"result":"success"` |
+| `{"type":"command","commandType":"startLayer"}` | `"result":"success"` |
+| `{"type":"command","commandType":"resumeLayer"}` | `"result":"success"` |
+| `{"type":"command","commandType":"abortLayer"}` | `"result":"success"` |
 
 `setGalvoStreaming` stops CPU-C pushing new XY2-100 frames without stopping the state
 machines, so the head holds its last position rather than the scan restarting.
@@ -330,6 +333,59 @@ from under the interpreter mid-move is the one thing that must not be possible.
 Capacity is **4 MB** of the 8 MB fitted, roughly 25x a typical layer. The other half is
 deliberately left free so a second buffer can be added later without moving anything. Errors:
 `layerTooLarge`, `layerOverflow`, `layerTransferNotStarted`, `layerNotReady`, `layerBusy`.
+
+
+## Scanning a layer
+
+`startLayer` hands the PSRAM buffer to the G-code interpreter and gives it the PIO. The
+built-in test rectangle stands aside for as long as the interpreter is running, so the two
+never fight for the FIFO.
+
+```json
+{"target":"cpuc","type":"command","commandType":"setGalvoPower","value":true}
+{"target":"cpuc","type":"command","commandType":"startLayer"}
+```
+
+Frames are pushed **paced by the PIO TX FIFO**, not by a delay: the loop pushes while there
+is room and stops when there is not, so the state machines set the rate. That is also the
+shape DMA will take over later.
+
+At `M600` the interpreter stops, the beam is gated off **before** anything is reported — the
+recoater sweeps the build area as soon as CPU-B hears this — and an unsolicited event
+arrives:
+
+```json
+{"from":"cpuc","event":"layerComplete","layer":0,"z":0.030}
+```
+
+CPU-B then runs the Z move, reservoir and recoater on CPU-A, and continues:
+
+```json
+{"target":"cpuc","type":"command","commandType":"resumeLayer"}
+```
+
+At the end of the buffer the layer is marked `done` and:
+
+```json
+{"from":"cpuc","event":"programComplete","layer":1}
+```
+
+`abortLayer` stops immediately, gates the beam off and marks the layer `done` so it can be
+replaced. `getLayerInfo` gains `running` and `scanPos`, the interpreter's byte offset into
+the buffer, for progress.
+
+### Beam control
+
+The interpreter drives two pins per point, which are the same ones the fiber laser will use:
+
+| Pin | Net | Role |
+| --- | --- | --- |
+| GP21 | `Laser_PWM` | power — PWM at ~20 kHz into the LM358 PWM-to-0–10 V converter |
+| GP22 | `Laser_MOD+` | gate — the RFL-C200A's TTL modulation input |
+
+`M3`/`M4` with `S` set the power (`S1000` is full scale), `M5` gates off, and `G0` rapids are
+always gated off regardless. `laser_on_delay_frames` holds the gate shut for the first few
+frames of a mark so the mirrors are moving before energy goes down.
 
 
 ## Building

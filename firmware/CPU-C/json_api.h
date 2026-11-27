@@ -61,4 +61,9 @@ void json_api_init(api_write_fn write_usb, api_write_fn write_cpub);
 // Feed received bytes. Lines are assembled per source and dispatched on '\n' or '\r'.
 void json_api_feed(api_source_t src, char c);
 
+// Unsolicited event, wrapped as {"from":"cpuc",<body>} and sent to whichever transport
+// started the current layer. Used for layerComplete and programComplete, which arrive
+// without anyone having asked.
+void json_api_emit(const char *body);
+
 #endif // JSON_API_H

@@ -6,6 +6,7 @@
 #include "pico/stdlib.h"
 #include "hardware/psram.h"
 #include "layer.h"
+#include "gcode.h"
 
 api_state_t api_state = {
     /* debugging_base       */ false,
@@ -25,6 +26,7 @@ api_state_t api_state = {
 };
 
 static api_write_fn s_write[API_SRC_COUNT] = { NULL, NULL };
+static api_source_t s_event_src = API_SRC_USB;   // where layer events go
 
 static char   s_line[API_SRC_COUNT][JSON_API_LINE_CHARS];
 static size_t s_len[API_SRC_COUNT]  = { 0, 0 };
@@ -175,6 +177,11 @@ static void api_fail_echo(api_source_t src, const char *error, const char *line)
     api_send(src, body);
 }
 
+void json_api_emit(const char *body)
+{
+    api_send(s_event_src, body);
+}
+
 // ---------------------------------------------------------------------------------------
 // Command handling
 // ---------------------------------------------------------------------------------------
@@ -225,6 +232,15 @@ static void handle_get(api_source_t src, const char *json)
                  (unsigned)(expect > stored ? expect - stored : 0),
                  (unsigned)layer_capacity(),
                  layer_get_state() == LAYER_DONE ? "true" : "false");
+        // append live interpreter progress
+        {
+            char prog[96];
+            snprintf(prog, sizeof(prog),
+                     ",\"running\":%s,\"scanPos\":%u",
+                     gcode_is_running() ? "true" : "false",
+                     (unsigned)gcode_byte_offset());
+            strncat(body, prog, sizeof(body) - strlen(body) - 1);
+        }
         api_send(src, body);
 
     } else if (strcmp(what, "getPsramInfo") == 0) {
@@ -337,6 +353,32 @@ static void handle_command(api_source_t src, const char *json)
                  "\"result\":\"success\",\"bytesRemaining\":%u",
                  (unsigned)(layer_expected() - layer_bytes()));
         api_send(src, body);
+
+    } else if (strcmp(what, "startLayer") == 0) {
+
+        const char *err = "layerError";
+        if (!layer_mark_scanning(&err)) { api_fail(src, err); return; }
+
+        gcode_load(layer_data(), layer_bytes());
+        gcode_start();
+        s_event_src = src;                 // layerComplete goes back to whoever asked
+
+        // The test rectangle must not fight the interpreter for the FIFO.
+        api_state.galvo_streaming = false;
+
+        api_ok_warn(src, api_state.galvo_power ? NULL : "galvoPowerOff");
+
+    } else if (strcmp(what, "resumeLayer") == 0) {
+
+        if (layer_get_state() != LAYER_SCANNING) { api_fail(src, "layerNotScanning"); return; }
+        gcode_resume();
+        api_ok(src);
+
+    } else if (strcmp(what, "abortLayer") == 0) {
+
+        gcode_abort();
+        layer_mark_done();
+        api_ok(src);
 
     } else if (strcmp(what, "clearLayer") == 0) {
 
