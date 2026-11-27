@@ -79,6 +79,28 @@ _MOTION_ERROR_NOTICES = {
     "notHomed": (
         "Homing Required",
         "Please home the machine before jogging."),
+    # The four ways startJob can be refused. Without these the firmware says no
+    # and the app says nothing at all, so Start looks like a dead button.
+    #
+    # macroRunning is the awkward one: it does not mean a macro in any sense the
+    # operator would recognise. Any command sent while CPU-B is still waiting for
+    # GRBL's "ok" is queued and sets that flag until it drains, so a Start landing
+    # just after something else loses the race for well under a second.
+    "macroRunning": (
+        "Machine Busy",
+        "The machine is still finishing the last command, so the job was not "
+        "started. Try Start again in a moment."),
+    "jobAlreadyRunning": (
+        "Job Already Running",
+        "A job is already running or paused. Stop it before starting another."),
+    "noFileOpened": (
+        "No File Open",
+        "No file is open on the machine. Open one from the Files page first — "
+        "selecting a row is what opens it."),
+    "fileTransferInProgress": (
+        "Upload In Progress",
+        "A file is still being uploaded to the machine. Wait for it to finish "
+        "before starting a job."),
 }
 
 # Firmware upload rejection → (title, message) popup. The firmware names the
@@ -619,9 +641,6 @@ class Connection(QObject):
             "mx": 0.0, "my": 0.0, "mz": 0.0, "ma": 0.0, "mb": 0.0,
             "jx": 0.0, "jy": 0.0, "jz": 0.0, "ja": 0.0, "jb": 0.0,
         }
-        # A is set to 0 once per app launch, at the first Idle report
-        # (_zero_a_on_launch)
-        self._launch_a_zeroed: bool = False
         self._file_list_snapshot: tuple = ()
         # Last fileList reply was cut off by the firmware (see _salvage_file_list)
         self._file_list_truncated: bool = False
@@ -1049,34 +1068,6 @@ class Connection(QObject):
 
     def set(self, set_type: str, **extra) -> None:
         self.send({"type": "set", "setType": set_type, **extra})
-
-    def _zero_a_on_launch(self, ja) -> None:
-        """Start every app session with A reading 0, as the A zero button does.
-
-        The read-out can come up far from 0 after a relaunch, and the operator
-        zeroed it by hand every time. Done
-        once per launch, at the first report with the machine Idle -- a
-        reconnect later in the session keeps the A0 the operator is working
-        with. Never while a job is running or paused: if the app comes up
-        mid-job, A is left alone for the whole session. Alarm / homing / no
-        status yet: wait for Idle.
-        """
-        status = self._last_status or ""
-        if (status in ("Run", "Hold")
-                or self._flags.get("jobRunning") or self._flags.get("jobPaused")):
-            self._launch_a_zeroed = True
-            return
-        if status != "Idle":
-            return
-        self._launch_a_zeroed = True
-        try:
-            ja = float(ja)
-        except (TypeError, ValueError):
-            return
-        if abs(ja) < 1e-6:
-            return
-        self.set("setJobA", jobA=0.0)
-        self.log_received.emit(f"[A] A read {ja:g} at launch: set to 0", self.C_INFO)
 
     def get(self, get_type: str, **extra) -> None:
         """A `get` request. *extra* carries the request's own parameters —
@@ -1568,8 +1559,6 @@ class Connection(QObject):
             if pos != self._last_pos:
                 self._last_pos = pos
                 self.position_changed.emit(pos)
-        if ok and not self._launch_a_zeroed and "jobPositionA" in p:
-            self._zero_a_on_launch(p["jobPositionA"])
 
         # Feed rate
         if ok and "currentFeedRate" in p:
