@@ -66,7 +66,7 @@ def _dlg_button(glyph: str, w: int = 110) -> QPushButton:
 
 
 def _setup_diagram(icon_name: str, w: int = 170, h: int = 96) -> QLabel:
-    """Centred setup illustration (spindle / probe over the bed with the bed
+    """Centred setup illustration (tool / probe over the bed with the bed
     line) shown in a scan flow's confirm phase, mirroring the mobile app."""
     d = QLabel()
     d.setAlignment(Qt.AlignCenter)
@@ -579,115 +579,6 @@ class FileExistsDialog(FlowDialog):
     def _pick(self, choice: str) -> None:
         self.choice = choice
         self.accept()
-
-
-#: How long the spindle is given to coast to a full stop after M5 before a job
-#: may start, in seconds. GRBL reports 0 rpm as soon as M5 lands, while the
-#: motor is still turning.
-SPINDLE_SPINDOWN_S = 5
-
-
-class SpindleRunningDialog(FlowDialog):
-    """Stops the spindle before a job starts.
-
-    Starting a job with the spindle already running (left on from the spindle
-    controls) has destroyed the spindle motor driver: the job start resets the
-    firmware's spindle state while the motor is still turning at speed. So
-    Start goes through here first: "Spindle is running" → Stop spindle (M5) →
-    a SPINDLE_SPINDOWN_S countdown while it coasts down → "Start the job now?".
-    Accepted means: stopped, start the job. With *running* False the spindle
-    is already off but stopped too recently, so it opens on the countdown
-    (*wait_s* left).
-    """
-
-    def __init__(self, conn, running: bool, wait_s: float = SPINDLE_SPINDOWN_S,
-                 parent=None):
-        super().__init__(parent, width=540)
-        self._conn = conn
-        self._rpm: int | None = None          # readings since the M5
-        self._until = 0.0
-        self._asked = False
-        self._timer = QTimer(self)
-        self._timer.setInterval(200)
-        self._timer.timeout.connect(self._tick)
-        conn.spindle_rpm_changed.connect(self._on_rpm)
-        if running:
-            self._show_running()
-        else:
-            self._start_countdown(wait_s)
-
-    def _show_running(self, still: bool = False) -> None:
-        text = ("The spindle is still reported as running. "
-                if still else "") + (
-            "The spindle must be stopped before a job starts: starting a job "
-            "with the spindle already running can damage the spindle motor "
-            "driver.")
-        msg = lbl(text, sz=15, color=TXT, align=Qt.AlignCenter)
-        msg.setWordWrap(True)
-        self.set_phase(self.build_phase(
-            None, "Spindle is running", [msg],
-            [("Stop spindle", self._stop, True), ("Cancel", self.reject, True)],
-            big_icon_glyph="⚠", icon_color="#3A3A3A",
-        ))
-
-    def _stop(self) -> None:
-        self._conn.send_raw("M5")
-        self._start_countdown(SPINDLE_SPINDOWN_S)
-
-    def _start_countdown(self, seconds: float) -> None:
-        import time
-        self._rpm = None
-        self._asked = False
-        self._until = time.monotonic() + seconds
-        self._count = lbl("", sz=15, color=TXT2, align=Qt.AlignCenter)
-        self._count.setWordWrap(True)
-        self.set_phase(self.build_phase(
-            None, "Stopping the spindle…", [self._count],
-            [("Cancel", self.reject, True)], spinner=True,
-        ))
-        self._tick()
-        self._timer.start()
-
-    def _tick(self) -> None:
-        import math
-        import time
-        left = self._until - time.monotonic()
-        if left > 0:
-            self._count.setText(
-                f"Waiting for it to come to a full stop… {math.ceil(left)} s")
-            # One fresh reading near the end, so the verdict is not stale
-            # (earlier replies may answer polls sent before the M5)
-            if left < 2 and not self._asked:
-                self._asked = True
-                self._rpm = None
-                self._conn.get("currentSpindleRPM")
-            return
-        self._timer.stop()
-        if self._rpm is not None and self._rpm > 0:
-            self._show_running(still=True)      # the M5 did not take
-        else:
-            self._show_ready()
-
-    def _show_ready(self) -> None:
-        msg = lbl("The spindle has stopped. Start the job now?",
-                  sz=15, color=TXT, align=Qt.AlignCenter)
-        msg.setWordWrap(True)
-        self.set_phase(self.build_phase(
-            None, "Spindle stopped", [msg],
-            [("Start", self.accept, True), ("Cancel", self.reject, True)],
-            big_icon_glyph="✓", icon_color=RUN_C,
-        ))
-
-    def _on_rpm(self, rpm: int) -> None:
-        self._rpm = rpm
-
-    def done(self, result) -> None:
-        self._timer.stop()
-        try:
-            self._conn.spindle_rpm_changed.disconnect(self._on_rpm)
-        except (RuntimeError, TypeError):
-            pass
-        super().done(result)
 
 
 class OpeningFileDialog(FlowDialog):

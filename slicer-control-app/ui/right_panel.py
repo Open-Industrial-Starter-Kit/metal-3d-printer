@@ -101,7 +101,7 @@ class RightPanel(QFrame):
         self._lay.addWidget(coords)
 
         # ── Door / lid state ────────────────────────────────────────────────
-        # Directly under the axis rows: the door gates the spindle (see
+        # Directly under the axis rows: the door gates motion (see
         # controls._door_blocked), so it belongs with the read-outs the
         # operator is already watching. Hidden until the machine reports a
         # door sensor at all — same idea as the rotary A row.
@@ -125,9 +125,8 @@ class RightPanel(QFrame):
         self._sep.setStyleSheet(f"background: {BORDER}; border: none;")
         self._lay.addWidget(self._sep)
 
-        # ── Feed rate & spindle speed read-outs ─────────────────────────────
+        # ── Feed rate read-out ──────────────────────────────────────────────
         self._feed_lbl = self._metric_row(self._lay, "feed-rate", "Feed\nRate", "mm/min")
-        self._spindle_lbl = self._metric_row(self._lay, "spindle-speed", "Spindle\nSpeed", "rpm")
 
         self._lay.addStretch()
 
@@ -239,7 +238,6 @@ class RightPanel(QFrame):
         conn.machine_status_changed.connect(self._on_machine_status)
         conn.position_changed.connect(self._update_position)
         conn.feed_rate_changed.connect(lambda v: self._feed_lbl.setText(str(v)))
-        conn.spindle_rpm_changed.connect(lambda v: self._spindle_lbl.setText(str(v)))
         # Work-zero an axis (set the job/work coordinate origin) — these are
         # 'set' messages, not commands.
         self._zero_btns["X"].clicked.connect(lambda: conn.set("setJobX", jobX=0.0))
@@ -307,7 +305,7 @@ class RightPanel(QFrame):
         """Show OPEN / CLOSED for the lid, or hide the row when the machine
         never reported a door sensor (and while offline).
 
-        Amber rather than red for OPEN: it locks the spindle controls out
+        Amber rather than red for OPEN: it locks motion out
         (controls._door_blocked) but it is a caution, not a fault."""
         known = self._door_open is not None and self._connected
         self._door_card.setVisible(known)

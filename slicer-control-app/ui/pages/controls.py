@@ -65,19 +65,6 @@ _A_STEP_VALUES = [1.0, 10.0, 45.0, 90.0]
 # second later.
 _JOG_HOLD_THRESHOLD_MS = 750
 _JOG_KEEPALIVE_MS = 120
-# Spindle target-RPM bounds / default (Android parity).
-# No artificial upper cap on the spindle target (_SPINDLE_MAX_RPM = None); the
-# firmware enforces the real hardware limit. Only a minimum-of-1 guard remains.
-_SPINDLE_MIN_RPM, _SPINDLE_MAX_RPM, _SPINDLE_DEFAULT_RPM = 1, None, 8000
-
-
-def _clamp_rpm(rpm: int) -> int:
-    """Clamp a spindle target to the valid range: at least _SPINDLE_MIN_RPM, and
-    capped at _SPINDLE_MAX_RPM only when a maximum is set (None = no upper cap)."""
-    rpm = max(_SPINDLE_MIN_RPM, int(rpm))
-    if _SPINDLE_MAX_RPM is not None:
-        rpm = min(_SPINDLE_MAX_RPM, rpm)
-    return rpm
 
 
 # Evident disabled look for the action / detect buttons (their icon + text live
@@ -955,225 +942,6 @@ def _section_header(text: str) -> QWidget:
     return w
 
 
-class SpindlePanel(QDialog):
-    """Spindle control popup (Android SpindleControlBar parity): −1000/−100/
-    +100/+1000 buttons around a target-RPM chip, a live measured-RPM readout
-    and an ON/OFF power button. The target RPM (min 1, default 8000, no upper
-    cap — the firmware enforces the hardware limit) is
-    persisted via QSettings; adjusting it while the spindle runs re-sends
-    ``M3 S<rpm>`` so the change applies live.
-
-    With the door open every control here is locked out (see
-    :meth:`set_door_blocked`) — the popup stays up, showing the live measured
-    RPM and why it is inert."""
-
-    def __init__(self, conn, running: bool = False,
-                 door_blocked: bool = False, parent=None):
-        super().__init__(parent)
-        self._conn = conn
-        self._running = running
-        self._door_blocked = bool(door_blocked)
-        self.setModal(True)
-        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-
-        self._prefs = QSettings("InMachines", "MiniCNC2")
-        try:
-            rpm = int(self._prefs.value("controls/spindleTargetRpm",
-                                        _SPINDLE_DEFAULT_RPM))
-        except (TypeError, ValueError):
-            rpm = _SPINDLE_DEFAULT_RPM
-        self._rpm = _clamp_rpm(rpm)
-
-        self._card = rounded_dialog_card(self)
-        self._v = QVBoxLayout(self._card)
-
-        # Title row with a top-right cross close (matching the move-to popup).
-        self._top = QHBoxLayout()
-        self._top.addSpacing(px(28))          # balance the cross so the title stays centred
-        self._top.addWidget(lbl("Spindle Speed", sz=18, bold=True,
-                                align=Qt.AlignCenter), 1)
-        self._close_btn = QPushButton("⊗")
-        self._close_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self._close_btn.clicked.connect(self.reject)
-        self._top.addWidget(self._close_btn)
-        self._v.addLayout(self._top)
-
-        # Target chip flanked by the coarse/fine adjust buttons.
-        self._adjust_row = QHBoxLayout()
-
-        # Styled in _apply_scale rather than through btn(): these have to carry a
-        # :disabled rule (the factory's inline colours survive setEnabled(False),
-        # so a locked-out button would look live).
-        self._adj_btns: list[QPushButton] = []
-
-        def _adj(delta: int) -> QPushButton:
-            b = QPushButton(f"{delta:+d}")
-            b.setCursor(QCursor(Qt.PointingHandCursor))
-            b.clicked.connect(lambda *_: self._adjust_rpm(delta))
-            self._adj_btns.append(b)
-            return b
-
-        self._chip = QFrame()
-        self._chip.setObjectName("rpmChip")
-        self._chip_l = QHBoxLayout(self._chip)
-        self._rpm_lbl = lbl(f"{self._rpm} RPM", sz=15, bold=True,
-                            align=Qt.AlignCenter)
-        self._chip_l.addWidget(self._rpm_lbl)
-
-        self._adjust_row.addWidget(_adj(-1000))
-        self._adjust_row.addWidget(_adj(-100))
-        self._adjust_row.addWidget(self._chip, 1)
-        self._adjust_row.addWidget(_adj(+100))
-        self._adjust_row.addWidget(_adj(+1000))
-        self._v.addLayout(self._adjust_row)
-
-        self._measured_lbl = lbl("0 RPM", sz=13, color=TXT2,
-                                 align=Qt.AlignCenter)
-        self._v.addWidget(self._measured_lbl)
-
-        # Why the controls below are dead. Only shown while the door blocks
-        # them; the card grows by this row's height (see _apply_scale).
-        self._door_note = lbl("⚠  Door open — close it to control the spindle",
-                              sz=12, color=TXT2, align=Qt.AlignCenter)
-        self._v.addWidget(self._door_note)
-
-        self._br = QHBoxLayout()
-        self._br.addStretch()
-        # Circular power button (mobile parity): white when off, green when the
-        # spindle is running, with a power icon over an ON / OFF label.
-        self._power = QToolButton()
-        self._power.setCheckable(True)
-        self._power.setChecked(running)
-        self._power.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-        self._power.setCursor(QCursor(Qt.PointingHandCursor))
-        self._power.clicked.connect(self._toggle_power)
-        self._br.addWidget(self._power)
-        self._br.addStretch()
-        self._v.addLayout(self._br)
-
-        bind(self, self._apply_scale)
-        self._refresh_power()
-        self._apply_door_lock()
-
-    def _apply_scale(self, *_):
-        # The door note is an extra row, so the card is taller while it shows.
-        self.setFixedSize(px(500), px(276 if self._door_blocked else 240))
-        self._card.setStyleSheet(
-            f"#dialogCard {{ background: {WHITE}; border-radius: {px(14)}px; }}")
-        self._v.setContentsMargins(px(28), px(20), px(28), px(24))
-        self._v.setSpacing(px(14))
-        self._close_btn.setFixedSize(px(28), px(28))
-        self._close_btn.setStyleSheet(
-            f"background: transparent; border: none; "
-            f"font-size: {fs(18)}px; color: {TXT2};")
-        self._adjust_row.setSpacing(px(8))
-        for b in self._adj_btns:
-            b.setMinimumHeight(px(34))
-            b.setStyleSheet(f"""
-                QPushButton {{
-                    background: {WHITE}; color: {TXT};
-                    border: 1px solid {BORDER}; border-radius: {px(8)}px;
-                    padding: {px(2)}px {px(10)}px; min-width: {px(48)}px;
-                }}
-                QPushButton:hover    {{ background: #E0E0E0; }}
-                QPushButton:pressed  {{ background: #D0D0D0; }}
-                QPushButton:disabled {{ background: {_DISABLED_BG};
-                                        border: 1px solid {_DISABLED_BORDER};
-                                        color: {_DISABLED_FG}; }}
-            """)
-        self._chip.setFixedHeight(px(34))
-        self._chip.setStyleSheet(
-            f"#rpmChip {{ background: {LIGHT}; border: 1px solid {BORDER}; "
-            f"border-radius: {px(17)}px; }}"
-            f"#rpmChip:disabled {{ background: {_DISABLED_BG}; "
-            f"border: 1px solid {_DISABLED_BORDER}; }}")
-        # lbl() pins its colour inline, so the chip's target RPM has to be dimmed
-        # by hand — and from here, after lbl()'s own rescale styler has run.
-        self._rpm_lbl.setStyleSheet(
-            f"color: {_DISABLED_FG if self._door_blocked else TXT}; "
-            f"background: transparent;")
-        self._chip_l.setContentsMargins(px(12), 0, px(12), 0)
-        self._br.setSpacing(px(16))
-        d = px(64)
-        self._power.setFixedSize(d, d)
-        self._power.setIconSize(QSize(px(20), px(20)))
-        self._power.setStyleSheet(f"""
-            QToolButton {{
-                background: {WHITE}; border: 1px solid {BORDER};
-                border-radius: {d // 2}px; font-size: {fs(9)}px;
-                font-weight: bold; color: {TXT}; padding-top: {px(4)}px;
-            }}
-            QToolButton:hover   {{ background: #F0F0F0; }}
-            QToolButton:checked {{ background: #AFE26E; border: 1px solid #9BD05A; }}
-            QToolButton:checked:hover {{ background: #A2D95E; }}
-            /* After :checked so a door lock-out reads as locked even in the
-               window where the spindle is still coasting down. */
-            QToolButton:disabled {{
-                background: {_DISABLED_BG}; border: 1px solid {_DISABLED_BORDER};
-                color: {_DISABLED_FG};
-            }}
-            QToolButton:checked:disabled {{
-                background: #CFE6A8; border: 1px solid {_DISABLED_BORDER};
-                color: {_DISABLED_FG};
-            }}
-        """)
-        self._refresh_power()
-
-    # ── Door interlock ───────────────────────────────────────────────────────
-
-    def set_door_blocked(self, blocked: bool) -> None:
-        """Lock every control in the popup while the door is open.
-
-        The dialog is modal, so the page's own gating can't reach it — the door
-        opening under an open popup is exactly the case this covers. Only the
-        close cross stays live; the measured-RPM readout keeps updating so the
-        spindle coasting down is still visible."""
-        blocked = bool(blocked)
-        if blocked == self._door_blocked:
-            return
-        self._door_blocked = blocked
-        self._apply_door_lock()
-        self._apply_scale()          # the note row changes the card height
-
-    def _apply_door_lock(self) -> None:
-        for w in (*self._adj_btns, self._chip, self._power):
-            w.setEnabled(not self._door_blocked)
-        self._door_note.setVisible(self._door_blocked)
-
-    # ── Spindle state / commands ─────────────────────────────────────────────
-
-    def _adjust_rpm(self, delta: int) -> None:
-        self._rpm = _clamp_rpm(self._rpm + delta)
-        self._rpm_lbl.setText(f"{self._rpm} RPM")
-        self._prefs.setValue("controls/spindleTargetRpm", self._rpm)
-        if self._running:                       # apply the new target live
-            self._conn.send_raw(f"M3 S{self._rpm}")
-
-    def _refresh_power(self) -> None:
-        """Sync the power button's icon / label / green fill to _running."""
-        self._power.blockSignals(True)
-        self._power.setChecked(self._running)
-        self._power.blockSignals(False)
-        self._power.setText("ON" if self._running else "OFF")
-        self._power.setIcon(icons.icon("power", px(20), TXT))
-
-    def _toggle_power(self, on: bool) -> None:
-        self._running = bool(on)
-        self._refresh_power()
-        self._conn.send_raw(f"M3 S{self._rpm}" if on else "M5")
-
-    def set_measured_rpm(self, rpm: int) -> None:
-        """Live measured-RPM feed (wired to conn.spindle_rpm_changed). Also
-        the source of truth for the running state — the machine can stop the
-        spindle on its own (door pause, alarm, console M5) while the popup is
-        open, and adjusting the target must not silently spin it back up."""
-        self._measured_lbl.setText(f"{rpm} RPM")
-        running = rpm > 0
-        if running != self._running:
-            self._running = running
-            self._refresh_power()
-
-
 # ── Page ──────────────────────────────────────────────────────────────────────
 
 class ControlsPage(QWidget):
@@ -1199,7 +967,6 @@ class ControlsPage(QWidget):
         # The old "where Bed forward left from" record -- the one a restart
         # could leave at the placeholder 0 -- is not used any more.
         self._prefs.remove("controls/rotaryBedParkMy")
-        self._spindle_running = False   # measured RPM > 0
         self._hold_jogs: list[_HoldJog] = []
         self.setStyleSheet(TRANSPARENT)
         root = QVBoxLayout(self)
@@ -1217,16 +984,12 @@ class ControlsPage(QWidget):
         self._action_btns["unlock"]   = TopActionButton("unlock", "Unlock")
         self._action_btns["softreset"] = TopActionButton("reset", "Reset")
         self._tool_length = ToolLengthButton()
-        # Not checkable: the spindle-running state shows in the popup and the
-        # status panel, so the top button must not turn blue when the spindle runs.
-        self._action_btns["spindle"] = TopActionButton("spindle", "Spindle\ncontrol")
         self._action_btns["rotary"]  = TopActionButton("rotary",  "Rotary\nmode",     checkable=True)
 
         top_row.addWidget(self._action_btns["homing"],    2)
         top_row.addWidget(self._action_btns["unlock"],    2)
         top_row.addWidget(self._action_btns["softreset"], 2)
         top_row.addWidget(self._tool_length,              4)
-        top_row.addWidget(self._action_btns["spindle"],   2)
         top_row.addWidget(self._action_btns["rotary"],    2)
         root.addLayout(top_row)
 
@@ -1512,8 +1275,6 @@ class ControlsPage(QWidget):
         self._tool_length._detect_btn.clicked.connect(self._on_tool_length_detect)
         conn.tool_length_changed.connect(
             lambda v: self._tool_length.set_value(f"{v:.1f} mm"))
-        self._action_btns["spindle"].clicked.connect(self._on_spindle)
-        conn.spindle_rpm_changed.connect(self._on_spindle_rpm)
         self._action_btns["rotary"].clicked.connect(self._on_rotary)
 
         # ── Move-to / sensor-detection buttons ─────────────────────────────
@@ -1562,45 +1323,6 @@ class ControlsPage(QWidget):
     def _on_detect_z0(self) -> None:
         from ui.pages.dialogs import ProbeZ0Flow
         ProbeZ0Flow(self._conn, parent=self).exec()
-
-    def _on_spindle(self) -> None:
-        """Open the spindle control popup; the button's checked state follows
-        the measured RPM, not the click (same pattern as the rotary button)."""
-        conn = self._conn
-        panel = SpindlePanel(conn, running=self._spindle_running,
-                             door_blocked=conn.door_blocked(), parent=self)
-        conn.spindle_rpm_changed.connect(panel.set_measured_rpm)
-        # The popup is modal, so _sync_gates can't gate it — feed it the live
-        # door state instead, or a door opened under an open popup would leave
-        # the controls live.
-        def _on_door(*_) -> None:
-            panel.set_door_blocked(conn.door_blocked())
-
-        conn.machine_flags_changed.connect(_on_door)
-        conn.machine_status_changed.connect(_on_door)
-        # Read the live spindle status now (and keep reading via the signal
-        # while the popup is open) so ON/OFF reflects the machine, not a stale
-        # cached value — the reply refreshes the panel through the signal above.
-        conn.get("currentSpindleRPM")
-        panel.exec()
-        for sig, slot in ((conn.spindle_rpm_changed, panel.set_measured_rpm),
-                          (conn.machine_flags_changed, _on_door),
-                          (conn.machine_status_changed, _on_door)):
-            try:
-                sig.disconnect(slot)
-            except (RuntimeError, TypeError):
-                pass
-        self._sync_spindle_btn()
-
-    def _on_spindle_rpm(self, rpm: int) -> None:
-        self._spindle_running = rpm > 0
-        self._sync_spindle_btn()
-
-    def _sync_spindle_btn(self) -> None:
-        b = self._action_btns["spindle"]
-        b.blockSignals(True)
-        b.setChecked(self._spindle_running)
-        b.blockSignals(False)
 
     def _on_rotary(self) -> None:
         from ui.pages.dialogs import RotaryFlow
@@ -2266,15 +1988,6 @@ class ControlsPage(QWidget):
         a["homing"].setEnabled(acting and not rotary)
         a["unlock"].setEnabled(connected and st == "alarm")
         a["softreset"].setEnabled(motion)
-        # Spindle control follows the mobile app: available whenever the machine
-        # is connected and not moving/running.
-        # Plus the door: offering to spin the tool up with the lid open is the
-        # one thing this panel should not do. The firmware would stop it anyway
-        # — a spinning spindle and an open door always pause, whatever
-        # allowMotionWhenDoorOpen says — but that is a pause after the fact, and
-        # the button should not invite it in the first place.
-        a["spindle"].setEnabled(connected and not machine_running
-                                and not door_blocked)
         a["rotary"].setEnabled(acting and not rotary)
 
         # Tool length probing is deactivated in rotary mode

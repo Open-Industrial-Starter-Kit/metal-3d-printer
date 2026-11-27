@@ -1,8 +1,8 @@
 """
 ui/bottom_bar.py
 Bottom file bar. Empty state shows a centered "No open file"; with a file open
-it shows file info (name, measurements, date), feed-rate / spindle-speed
-override controls while running, play/stop, and the estimated-remaining-time
+it shows file info (name, measurements, date), the feed-rate override while
+running, play/stop, and the estimated-remaining-time
 progress — matching "Controls - file open - desktop(-1).svg".
 """
 
@@ -33,16 +33,6 @@ _JOB_CTRL_DISABLED_BG = "#767E8C"
 _JOB_CTRL_DISABLED_FG = "#9DA3AE"
 
 
-#: Lowest spindle speed the override may leave the spindle turning at, in RPM.
-#:
-#: Mirrors SPINDLE_OVERRIDE_MIN_EFFECTIVE_RPM in the firmware's Config.h, which
-#: is what actually enforces it: the firmware refuses the override step and
-#: replies `spindleRpmBelowMinimum`, so the limit holds for every client, not
-#: just this one. The copy here only stops the button FIRST — a limit you meet
-#: by pressing a button that does nothing is indistinguishable from a bug.
-_SPINDLE_OVERRIDE_MIN_RPM = 3000
-
-
 
 class _Planner(QObject):
     """Works out a file's time (job_time.plan_file) off the UI thread: a
@@ -64,8 +54,8 @@ class _OverrideRow(QWidget):
     def __init__(self, title: str, send_action, floor_rpm: int | None = None):
         super().__init__()
         self._send = send_action
-        #: Reported value below which the ▼ buttons stop (None = no floor, the
-        #: feed-rate row). Applies to the spindle row only.
+        #: Reported value below which the ▼ buttons stop. No row sets one now
+        #: (the spindle row did); kept because it is generic and inert at None.
         self._floor = floor_rpm
         self._pct_val = 100        # last override % reported
         self._num_val = 0          # last value reported, parsed (0 = unknown)
@@ -166,8 +156,8 @@ class _OverrideRow(QWidget):
         ``rpm * (pct - n) >= floor * pct`` is the same comparison without the
         rounding.
 
-        Left alone when nothing is turning (the reading is 0 with the spindle
-        off) or when no reading has arrived: the firmware refuses the step
+        Left alone when the reading is 0, or when no reading has arrived: the
+        firmware refuses the step
         either way, and a button disabled on a guess is worse than one that
         reports a limit when pressed.
         """
@@ -180,8 +170,7 @@ class _OverrideRow(QWidget):
                 allowed = rpm * (pct - step) >= self._floor * pct
             btn.setEnabled(allowed)
             btn.setToolTip("" if allowed else
-                           f"The override does not take the spindle below "
-                           f"{self._floor} rpm")
+                           f"The override does not go below {self._floor}")
 
 
 class BottomBar(QFrame):
@@ -389,12 +378,7 @@ class BottomBar(QFrame):
         self._feed_row = _OverrideRow(
             "Feed rate (mm/s)",
             lambda a: self._conn and self._conn.cmd("setFeedRateOverride", action=a))
-        self._spindle_row = _OverrideRow(
-            "Spindle speed (rpm)",
-            lambda a: self._conn and self._conn.cmd("setSpindleOverride", action=a),
-            floor_rpm=_SPINDLE_OVERRIDE_MIN_RPM)
         ov.addWidget(self._feed_row)
-        ov.addWidget(self._spindle_row)
         self._override_host.hide()
         row.addWidget(self._override_host)
 
@@ -500,12 +484,9 @@ class BottomBar(QFrame):
         conn.machine_flags_changed.connect(self._on_flags)
         conn.feed_override_changed.connect(self._feed_row.set_override)
         conn.feed_override_changed.connect(self._on_override)
-        conn.spindle_override_changed.connect(self._spindle_row.set_override)
         conn.procedure_completed.connect(self._on_procedure_completed)
         conn.feed_rate_changed.connect(
             lambda v: self._feed_row.set_value(str(v)))
-        conn.spindle_rpm_changed.connect(
-            lambda v: self._spindle_row.set_value(str(v)))
 
     def _on_play_pause(self, conn) -> None:
         if self._is_paused:
@@ -517,54 +498,7 @@ class BottomBar(QFrame):
             self._begin_pausing()
             conn.cmd("pauseJob")
         else:
-            self._spindle_check_then_start(conn)
-
-    # ── Pre-start check: the spindle must be stopped ─────────────────────────
-    #
-    # Starting a job with the spindle already running (left on from the
-    # spindle controls) has destroyed the spindle motor driver. So Start first
-    # reads the spindle speed fresh from the machine; if it is turning, or
-    # stopped too recently to have coasted down, SpindleRunningDialog stops it
-    # and counts down before the job may start. The firmware should refuse
-    # such a start too (it covers every client); this is the explanation.
-
-    _SPINDLE_READ_WAIT_S = 1.0
-
-    def _spindle_check_then_start(self, conn) -> None:
-        if getattr(self, "_spindle_checking", False):
-            return
-        self._spindle_checking = True
-        got = {}
-
-        def on_rpm(rpm) -> None:
-            got["rpm"] = rpm
-
-        conn.spindle_rpm_changed.connect(on_rpm)
-        conn.get("currentSpindleRPM")
-        t0 = time.monotonic()
-
-        def poll() -> None:
-            if "rpm" not in got and time.monotonic() - t0 < self._SPINDLE_READ_WAIT_S:
-                QTimer.singleShot(50, poll)
-                return
-            try:
-                conn.spindle_rpm_changed.disconnect(on_rpm)
-            except (RuntimeError, TypeError):
-                pass
-            self._spindle_checking = False
-            from ui.pages.dialogs import SpindleRunningDialog, SPINDLE_SPINDOWN_S
-            # No answer in time: fall back on the last polled speed
-            rpm = got.get("rpm", conn.spindle_rpm())
-            coasting = conn.spindle_coast_left(SPINDLE_SPINDOWN_S)
-            if rpm > 0 or coasting > 0:
-                dlg = SpindleRunningDialog(conn, running=rpm > 0,
-                                           wait_s=coasting,
-                                           parent=self.window())
-                if not dlg.exec():
-                    return
             self._preflight_then_start(conn)
-
-        QTimer.singleShot(50, poll)
 
     # ── Pre-start check: does the job fit from the current zero? ─────────────
     #

@@ -276,9 +276,9 @@ class HardwareSettingsDialog(_Sheet):
         # it the firmware ignores the door input entirely — so the row follows
         # the switch above and greys out when there is no housing.
         #
-        # It relaxes one case only: door open with the **spindle off**, where
+        # It relaxes one case only: door open with the tool stopped, where
         # motion (jogs, probes, dry runs) carries on instead of pausing. With
-        # the spindle running an open door always pauses, whatever this says,
+        # the tool running an open door always pauses, whatever this says,
         # so the switch cannot make the machine cut with the lid up.
         allow = conn.flags().get("allowMotionWhenDoorOpen")
         self._door_lbl, self._door_sw = _switch_row(
@@ -440,7 +440,7 @@ class HardwareSettingsDialog(_Sheet):
         flags = self._conn.flags()
         if flags.get("jobRunning") or flags.get("jobPaused"):
             return ("A job is running or paused. Rebooting the controller now "
-                    "would abandon it mid-cut, with the spindle still turning.")
+                    "would abandon it mid-job.")
         if not self._conn.is_serial_connected:
             return ("The machine is not connected over USB. picotool talks to "
                     "the controller over the cable, so a WiFi connection is "
@@ -828,7 +828,6 @@ class DebuggingDialog(_Sheet):
 
     _LABELS = {
         "debuggingBase": "Base",
-        "debuggingSpindle": "Spindle",
         "debuggingStatus": "Status",
         "debuggingMacroBuffer": "Macro buffer",
         "debuggingSDCard": "SD card",
@@ -920,11 +919,6 @@ class MachineInfoDialog(_Sheet):
 
         _info_row("Firmware version", str(info.get("firmwareVersion", "—")))
         _info_row("Machine ID", str(info.get("deviceId", "—")))
-        # Installed spindle variant (compile-time constant, read via getSpindleType).
-        # Captured so the async getSpindleType reply can fill it in live.
-        self._spindle_lbl = _info_row("Spindle type",
-                                      str(info.get("spindleType") or "—"))
-        conn.machine_info_changed.connect(self._on_info_update)
 
         def _hours(v):
             try:
@@ -947,13 +941,8 @@ class MachineInfoDialog(_Sheet):
 
         bind(self, self._apply_scale)
 
-        # Mirror the mobile app: refresh usage counters + spindle type on open.
+        # Mirror the mobile app: refresh the usage counters on open.
         conn.get("getMachineUsage")
-        conn.get("getSpindleType")
-
-    def _on_info_update(self, info: dict) -> None:
-        if "spindleType" in info:
-            self._spindle_lbl.setText(str(info.get("spindleType") or "—"))
 
     def _open_history(self) -> None:
         conn, count, host = self._conn, self._job_count, self.parent()
@@ -1311,8 +1300,7 @@ class AppMenuDrawer(QDialog):
         # Mirror the mobile app: refresh everything when the menu opens.
         for g in ("machineName", "getWifiSettings", "firmwareVersion",
                   "deviceId", "getToolLength", "getToolLengthReferences",
-                  "getHousingSettings", "getMachineUsage", "getProbeHeight",
-                  "getSpindleType"):
+                  "getHousingSettings", "getMachineUsage", "getProbeHeight"):
             conn.get(g)
 
     def _style_name_box(self, x):

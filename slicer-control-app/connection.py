@@ -110,15 +110,6 @@ _MOTION_ERROR_NOTICES = {
     "rotaryYLock": (
         "Y Axis Locked",
         "The Y axis is locked while the rotary axis is connected."),
-    # setSpindleOverride refused: the step would have taken the spindle below
-    # SPINDLE_OVERRIDE_MIN_EFFECTIVE_RPM. The app disables the button before
-    # this can happen, so seeing it means our view of the override or the
-    # programmed speed was stale — or another client pressed it.
-    "spindleRpmBelowMinimum": (
-        "Spindle Override Limit",
-        "The spindle override will not take the spindle below its minimum "
-        "working speed. Below it the spindle loses torque instead of cutting "
-        "slower — lower the speed in the job itself if you need less."),
 }
 
 # Firmware upload rejection → (title, message) popup. The firmware names the
@@ -410,8 +401,7 @@ _SILENT_KEYS = frozenset({
     "machineStatus",
     "machinePositionX", "machinePositionY", "machinePositionZ",
     "jobPositionX",     "jobPositionY",     "jobPositionZ",
-    "currentFeedRate",  "currentSpindleRPM",
-    "feedRateOverride", "spindleOverride",
+    "currentFeedRate",  "feedRateOverride",
     "gcodeFileList", "fileList",
     "openedFileName", "openedGcodeFileName",
     "cpuaPassthroughStatus",
@@ -453,9 +443,7 @@ _REPLY_KEYS = {
     "positions": {"machinePositionX", "machinePositionY", "machinePositionZ",
                   "jobPositionX", "jobPositionY", "jobPositionZ"},
     "currentFeedRate": {"currentFeedRate"},
-    "currentSpindleRPM": {"currentSpindleRPM"},
     "getFeedRateOverride": {"feedRateOverride"},
-    "getSpindleOverride": {"spindleOverride"},
     "getToolLength": {"toolLength", "toolLengthReferenceZ"},
     "jobProgress": {"jobProgress", "currentFileLine", "totalFileLines",
                     "estimatedRemainingSeconds"},
@@ -479,8 +467,8 @@ _REPLY_KEYS = {
 #: RECOGNISED when the pending request is a getter this table does not list —
 #: an unknown request is shown (better a mislabelled line than a missing one),
 #: unless what arrived is visibly one of these.
-_POLLED_GETS = ("status", "positions", "currentFeedRate", "currentSpindleRPM",
-                "getFeedRateOverride", "getSpindleOverride", "getToolLength",
+_POLLED_GETS = ("status", "positions", "currentFeedRate",
+                "getFeedRateOverride", "getToolLength",
                 "jobProgress", "fileList", "openedGcodeFileName")
 _POLLED_REPLY_KEYS = tuple(_REPLY_KEYS[g] for g in _POLLED_GETS)
 
@@ -511,7 +499,7 @@ def _reply_answers(req_text: str, payload: dict) -> bool:
 _FLAG_KEYS = (
     "rotaryAxisConnected", "dryRunEnabled", "dryRunActive", "procedureBusy",
     "jobRunning", "jobPaused", "jobResuming", "housingInstalled",
-    # Door interlock: with the housing installed and the spindle off, whether an
+    # Door interlock: with the housing installed and the tool stopped, whether an
     # open door lets motion carry on. Arrives with housingInstalled from
     # get/setHousingSettings.
     "allowMotionWhenDoorOpen",
@@ -525,7 +513,7 @@ _FLAG_KEYS = (
 
 # Firmware debug-print switches (getDebuggingSettings; each one is set with
 # its own setDebugging<Name> and saved in the machine's EEPROM).
-DEBUGGING_KEYS = ("debuggingBase", "debuggingSpindle", "debuggingStatus",
+DEBUGGING_KEYS = ("debuggingBase", "debuggingStatus",
                   "debuggingMacroBuffer", "debuggingSDCard", "debuggingJson",
                   "debuggingESP32", "debuggingEEPROM", "debuggingJob")
 
@@ -571,7 +559,6 @@ _WS_POLL_CYCLE = (
     {"type": "get", "getType": "status"},
     {"type": "get", "getType": "positions"},
     {"type": "get", "getType": "currentFeedRate"},
-    {"type": "get", "getType": "currentSpindleRPM"},
 )
 
 # Canonical machine-status labels (Android parity): UI logic compares lowercase
@@ -609,9 +596,7 @@ class Connection(QObject):
     file_list_changed(list)           list of {'fileName', 'fileSize', 'fileDate'}
     opened_file_changed(str | None)
     feed_rate_changed(int)            mm/min
-    spindle_rpm_changed(int)          RPM
     feed_override_changed(int)        %
-    spindle_override_changed(int)     %
     serial_state_changed(bool, str)   (connected, message)
     ws_client_count_changed(int)
     log_received(str, str)            (text, css-color)
@@ -626,9 +611,7 @@ class Connection(QObject):
     file_list_changed        = Signal(list)
     opened_file_changed      = Signal(object)   # str | None
     feed_rate_changed        = Signal(int)
-    spindle_rpm_changed      = Signal(int)
     feed_override_changed    = Signal(int)
-    spindle_override_changed = Signal(int)
     serial_state_changed     = Signal(bool, str)
     ws_client_count_changed  = Signal(int)
     log_received             = Signal(str, str)
@@ -750,10 +733,6 @@ class Connection(QObject):
         # Last fileList reply was cut off by the firmware (see _salvage_file_list)
         self._file_list_truncated: bool = False
         self._opened_file: str | None = None
-        # Last reported spindle speed, and when it last dropped to 0 (for the
-        # spin-down wait before a job start — see spindle_coast_left).
-        self._spindle_rpm = 0
-        self._spindle_stopped_at: float | None = None
         self._file_meta: dict[str, dict] = {}     # fileName → full metadata dict
         self._flags: dict = {}                    # latest boolean machine flags
         self._machine_info: dict = {}             # machineName / firmwareVersion / …
@@ -985,7 +964,7 @@ class Connection(QObject):
         Door row shows exactly what is being read.
 
         Deliberately not relaxed by allowMotionWhenDoorOpen either: that only
-        covers motion with the spindle off, and a spinning spindle with the
+        covers motion with the tool stopped, and a running tool with the
         door open always pauses whatever it says."""
         return (bool(self._flags.get("doorOpen", False))
                 or _normalize_machine_status(self._last_status or "") == "Door")
@@ -1152,8 +1131,7 @@ class Connection(QObject):
         "machinePositionZ": 0.0, "machinePositionA": 0.0,
         "jobPositionX": 0.0, "jobPositionY": 0.0,
         "jobPositionZ": 0.0, "jobPositionA": 0.0,
-        "currentFeedRate": 0, "currentSpindleRPM": 0,
-        "feedRateOverride": 100, "spindleOverride": 100,
+        "currentFeedRate": 0, "feedRateOverride": 100,
         # No toolLength: the card shows its placeholder until something is
         # actually measured, offline included — a canned number there reads as
         # a real measurement.
@@ -1381,18 +1359,6 @@ class Connection(QObject):
             return
         self.set("setJobA", jobA=0.0)
         self.log_received.emit(f"[A] A read {ja:g} at launch: set to 0", self.C_INFO)
-
-    def spindle_rpm(self) -> int:
-        """Last spindle speed the machine reported (0 = off)."""
-        return self._spindle_rpm
-
-    def spindle_coast_left(self, spindown_s: float) -> float:
-        """Seconds the spindle may still be coasting: GRBL reports the speed
-        it was told to run, so it reads 0 the moment M5 lands while the motor
-        is still turning. 0 when it stopped at least *spindown_s* ago."""
-        if self._spindle_stopped_at is None:
-            return 0.0
-        return max(0.0, spindown_s - (time.monotonic() - self._spindle_stopped_at))
 
     def get(self, get_type: str, **extra) -> None:
         """A `get` request. *extra* carries the request's own parameters —
@@ -1687,14 +1653,13 @@ class Connection(QObject):
             self._send_ws_silent(obj)
 
     def _reset_overrides(self) -> None:
-        """Return feed/spindle overrides to 100% and re-read them. Mirrors the
+        """Return the feed override to 100% and re-read it. Mirrors the
         Android app, which enforces default overrides on every (re)connect and
         whenever a new file is opened (App.tsx ~9951)."""
-        for c in ("setFeedRateOverride", "setSpindleOverride"):
-            self._send_silent_any({"type": "command", "commandType": c,
-                                   "action": "reset"})
+        self._send_silent_any({"type": "command",
+                               "commandType": "setFeedRateOverride",
+                               "action": "reset"})
         self._send_silent_any({"type": "get", "getType": "getFeedRateOverride"})
-        self._send_silent_any({"type": "get", "getType": "getSpindleOverride"})
 
     def _request_housing_settings(self) -> None:
         """Read the housing / door-interlock settings on every (re)connect.
@@ -1744,13 +1709,12 @@ class Connection(QObject):
 
         if self._serial.is_connected:
             # Serial polling reduced: 2 core queries per 500ms (5/sec) instead of
-            # 4 per 200ms (20/sec), matching mobile app's stability. Defer feed rate,
-            # spindle RPM, and file list queries to infrequent ticks (every 2.5 sec).
+            # 4 per 200ms (20/sec), matching mobile app's stability. Defer the
+            # feed rate and file list queries to infrequent ticks (every 2.5 sec).
             self._send_silent({"type": "get", "getType": "status"})
             self._send_silent({"type": "get", "getType": "positions"})
             if t % 5 == 0:
                 self._send_silent({"type": "get", "getType": "currentFeedRate"})
-                self._send_silent({"type": "get", "getType": "currentSpindleRPM"})
             # jobProgress is poll-only in the firmware (it never pushes), and
             # it drives the job bar / ETA / preview progress coloring. Poll only
             # when a job is actually running (mobile parity); file list / opened
@@ -1763,7 +1727,6 @@ class Connection(QObject):
                 self._send_silent({"type": "get", "getType": "openedGcodeFileName"})
             if t % 10 == 2:
                 self._send_silent({"type": "get", "getType": "getFeedRateOverride"})
-                self._send_silent({"type": "get", "getType": "getSpindleOverride"})
             if t % 25 == 7:
                 self._send_silent({"type": "get", "getType": "getToolLength"})
 
@@ -1924,34 +1887,17 @@ class Connection(QObject):
         if ok and not self._launch_a_zeroed and "jobPositionA" in p:
             self._zero_a_on_launch(p["jobPositionA"])
 
-        # Feed rate / spindle RPM
+        # Feed rate
         if ok and "currentFeedRate" in p:
             try:
                 self.feed_rate_changed.emit(int(p["currentFeedRate"]))
             except (TypeError, ValueError):
                 pass
 
-        if ok and "currentSpindleRPM" in p:
-            try:
-                rpm = int(p["currentSpindleRPM"])
-            except (TypeError, ValueError):
-                rpm = None
-            if rpm is not None:
-                if rpm <= 0 < self._spindle_rpm:
-                    self._spindle_stopped_at = time.monotonic()
-                self._spindle_rpm = rpm
-                self.spindle_rpm_changed.emit(rpm)
-
         # Overrides
         if ok and "feedRateOverride" in p:
             try:
                 self.feed_override_changed.emit(int(p["feedRateOverride"]))
-            except (TypeError, ValueError):
-                pass
-
-        if ok and "spindleOverride" in p:
-            try:
-                self.spindle_override_changed.emit(int(p["spindleOverride"]))
             except (TypeError, ValueError):
                 pass
 
@@ -2023,7 +1969,7 @@ class Connection(QObject):
         info_changed = {}
         for k in ("machineName", "firmwareVersion", "deviceId",
                   "powerOnHours", "runHours", "jobCount",
-                  "probeHeight", "toolLengthReferenceZ", "spindleType"):
+                  "probeHeight", "toolLengthReferenceZ"):
             if k in p and self._machine_info.get(k) != p[k]:
                 self._machine_info[k] = p[k]
                 info_changed[k] = p[k]
