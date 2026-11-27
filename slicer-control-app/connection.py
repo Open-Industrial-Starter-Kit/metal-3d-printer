@@ -1423,11 +1423,13 @@ class Connection(QObject):
             if self._opened_file is not None and (
                     self._flags.get("jobRunning") or self._flags.get("jobPaused")):
                 self._send_silent({"type": "get", "getType": "jobProgress"})
-            # CPU-C's galvo state. The power flag only changes when something
-            # asks it to, but galvoX/galvoY move with every frame during a scan,
-            # so this is worth asking for about once a second rather than once
-            # every two. It rides the dedicated CPU-C link, not the job stream.
-            if t % 5 == 3:
+            # CPU-C's galvo state, at about 2.5 Hz. The power flag only changes
+            # when something asks it to, but galvoX/galvoY move with every frame
+            # during a scan, and a scan is short: at the head's usable 20000 mm/s
+            # a whole layer is over in tens of milliseconds, so a slow poll shows
+            # the mirrors parked at the end and never in motion. It rides the
+            # dedicated CPU-C link, not the job stream.
+            if t % 2 == 1:
                 self.request_galvo_status(silent=True)
             if t % 5 == 1:
                 self._send_silent({"type": "get", "getType": "fileList"})

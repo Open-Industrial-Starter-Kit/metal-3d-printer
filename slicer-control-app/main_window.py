@@ -245,10 +245,8 @@ class MainWindow(QMainWindow):
         # firmware names the cause, so the user is told it rather than being
         # left with a progress bar that stopped for no stated reason.
         self._conn.transfer_error.connect(self._show_notice)
-        # "Job finished" box when a job runs to its end (not when stopped).
-        self._done_dlg = None
-        self._conn.job_finished.connect(self._show_job_done)
-        # every finished job's real time next to the estimates (job_time.py)
+        # A finished job is still logged with its real time next to the
+        # estimates (job_time.py); it just no longer puts a box on screen.
         self._conn.job_finished.connect(job_time.log_run)
 
         # Re-apply the scaled base stylesheet + scroll metrics whenever the
@@ -341,27 +339,6 @@ class MainWindow(QMainWindow):
         dlg.open()
         dlg.raise_()
         dlg.activateWindow()
-
-    def _show_job_done(self, file_name: str, seconds: float) -> None:
-        """Tell the operator a job has run to its end."""
-        from ui.pages.dialogs import InfoDialog
-        if self._done_dlg is not None:
-            self._done_dlg.close()
-        mins, secs = divmod(int(round(seconds)), 60)
-        hours, mins = divmod(mins, 60)
-        took = (f"{hours} h {mins} min" if hours
-                else f"{mins} min {secs} s" if mins else f"{secs} s")
-        name = file_name or "The job"
-        top = QApplication.activeModalWidget() or self
-        dlg = InfoDialog("Job finished", f"{name} is done.\nRun time: {took}",
-                         parent=top, success=True)
-        self._done_dlg = dlg
-        dlg.finished.connect(lambda *_: setattr(self, "_done_dlg", None))
-        dlg.open()
-        dlg.raise_()
-        dlg.activateWindow()
-        # Flash the taskbar entry when the app is behind other windows.
-        QApplication.alert(self)
 
     def _on_menu_gate_status(self, status: str) -> None:
         self._menu_status = str(status).split(":")[0].strip().lower()

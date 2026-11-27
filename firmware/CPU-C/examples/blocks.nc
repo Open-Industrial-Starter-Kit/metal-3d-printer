@@ -6,13 +6,15 @@
 ;
 ; Stage moves here are small and inside the inherited soft limits
 ; (X 0..143, Y -145..0), so this runs without touching those settings.
+; The galvo blocks run at 200 mm/s so the scan can be watched; the head
+; is good to 20000 mm/s and LPBF itself wants 500-3000.
 G21
 G90
 ; ================= layer 1 =================
 M610                      ; --- stage: position the optics
 G0 X20.00 Y-10.00
 M611                      ; --- galvo: scan this layer
-F1200000
+F12000
 G0 X80.00 Y80.00
 M3 S800
 G1 X170.00 Y80.00
@@ -126,7 +128,7 @@ M600 L0 Z0.030            ; layer break: recoat
 M610                      ; --- stage: position the optics
 G0 X30.00 Y-15.00
 M611                      ; --- galvo: scan this layer
-F1200000
+F12000
 G0 X80.00 Y80.00
 M3 S800
 G1 X170.00 Y80.00
