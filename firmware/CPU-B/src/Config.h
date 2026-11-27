@@ -271,13 +271,6 @@ typedef struct {
 #define INPUT_MONITOR_PIN 45
 
 
-// Door/lid sensor logic levels (active-high on OPEN): the input reads LOW when the door
-// is CLOSED and HIGH when the door is OPEN. Configured as INPUT_PULLUP: a closed door holds
-// the pin LOW to GND (default/idle state); opening releases it and the internal pull-up
-// drives it HIGH (the trigger).
-// Debounce (ms): the door input must read OPEN this long before it counts, to reject brief
-// electrical glitches (e.g. spindle inrush) that previously caused spurious pauses on this pin.
-
 //Spindle
 // see enum SpindleType in Constants.h). Exposed read-only through the JSON API
 // (getSpindleType); the calling application takes further actions based on it.

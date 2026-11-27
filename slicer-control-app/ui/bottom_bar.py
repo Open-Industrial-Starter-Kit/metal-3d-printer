@@ -673,8 +673,6 @@ class BottomBar(QFrame):
         while running/held (but not during the resume ramp); stop whenever
         something can be stopped; close only while nothing runs.
 
-        Plus the door: an open lid is what pauses a job in the first place, so
-        Play must not offer to resume straight back into it — nor to start one.
         Stop stays live throughout; you must always be able to end a job."""
         conn = self._conn
         if conn is None:
@@ -696,12 +694,11 @@ class BottomBar(QFrame):
         # lifting.
         pausing = self._pausing and (running or paused)
         has_file = conn.opened_file_name() is not None
-        door_blocked = conn.door_blocked()
         can_start = (connected and has_file and not running and not paused
                      and not busy and st == "idle")
         self._play_btn.setEnabled(
             (can_start or (connected and (running or paused)))
-            and not resuming and not pausing and not door_blocked)
+            and not resuming and not pausing)
         self._stop_btn.setEnabled(
             connected and (running or paused or st in ("run", "hold", "jog")
                            or busy))

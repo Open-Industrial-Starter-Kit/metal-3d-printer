@@ -749,7 +749,7 @@ class _HoldJog(QObject):
         elif et == QEvent.Hide or (et == QEvent.EnabledChange
                                    and not self._btn.isEnabled()):
             # The page was switched, or the gate disabled the pad mid-hold (a
-            # job started, the door opened, the link dropped). Both take the
+            # job started, the link dropped). Both take the
             # press away: a hidden or disabled widget loses the implicit mouse
             # grab, so the release goes somewhere else and never reaches us.
             # Stop and cancel here rather than leaving the machine to the
@@ -909,6 +909,10 @@ class ControlsPage(QWidget):
 
         move_grid.addWidget(_btn("goto_xy0",   "target", "Go to XY₀"),        1, 0)
         move_grid.addWidget(_btn("type_coord", None,     "Type coordinates"), 1, 1)
+        # Galvo power (CPU-C's K6/K7 relays, +/-15 V to the scan head). It is a
+        # toggle rather than a momentary action: the head stays powered across
+        # a whole build, and the state is shown in the right panel.
+        move_grid.addWidget(_btn("galvo", None, "Galvo power", checkable=True), 1, 2)
         move_grid.setColumnStretch(7, 1)
 
         jog_lay.addLayout(move_grid)
@@ -1098,6 +1102,9 @@ class ControlsPage(QWidget):
         b = self._bottom_btns
         b["goto_xy0"].clicked.connect(self._on_goto_xy0)
         b["type_coord"].clicked.connect(self._on_type_coordinates)
+        b["galvo"].clicked.connect(self._on_galvo)
+        conn.galvo_power_changed.connect(self._on_galvo_power)
+        conn.request_galvo_status(silent=True)
 
         # Reflect machine flags back into the toggles (dry run)
         conn.machine_flags_changed.connect(self._on_machine_flags)
@@ -1129,6 +1136,30 @@ class ControlsPage(QWidget):
 
     # ── State feedback ────────────────────────────────────────────────────────
 
+    def _on_galvo(self) -> None:
+        """Toggle CPU-C's galvo power.
+
+        The button's checked state follows what CPU-C reports, not the click --
+        the same pattern the other machine-state toggles use, so a refused or
+        lost command cannot leave the button claiming a powered head.
+        """
+        conn = self._conn
+        if conn is None:
+            return
+        conn.set_galvo_power(not bool(conn.galvo_power))
+        self._sync_galvo_btn()
+
+    def _on_galvo_power(self, _state) -> None:
+        self._sync_galvo_btn()
+
+    def _sync_galvo_btn(self) -> None:
+        b = self._bottom_btns.get("galvo")
+        if b is None or self._conn is None:
+            return
+        b.blockSignals(True)
+        b.setChecked(bool(self._conn.galvo_power))
+        b.blockSignals(False)
+
     def _on_goto_xy0(self) -> None:
         conn = self._conn
         if conn is not None:
@@ -1154,7 +1185,6 @@ class ControlsPage(QWidget):
         busy = bool(flags.get("procedureBusy", False))
         job_running = bool(flags.get("jobRunning", False))
         job_paused = bool(flags.get("jobPaused", False))
-        door_blocked = conn.door_blocked()
         # Running state = a motion this page must not interrupt, or an active /
         # paused job. Using both status and flags avoids brief stale windows
         # where status has not updated yet but the firmware already reports
@@ -1190,6 +1220,9 @@ class ControlsPage(QWidget):
         b = self._bottom_btns
         b["goto_xy0"].setEnabled(acting)
         b["type_coord"].setEnabled(acting)
+        # Galvo power only needs the link: it drives relays on CPU-C and does
+        # not move the gantry, so a running job is no reason to refuse it.
+        b["galvo"].setEnabled(connected)
 
         # Toolbar actions.
         a = self._action_btns

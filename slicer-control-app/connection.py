@@ -380,7 +380,7 @@ _SILENT_KEYS = frozenset({
     "machineName", "firmwareVersion", "deviceId",
     "powerOnHours", "runHours", "jobCount",
     "openedGcodeFileTotalLines", "fcl", "eof", "probeHeight",
-    "housingInstalled", "allowMotionWhenDoorOpen", "doorOpen", "jobHistory",
+    "jobHistory",
 })
 
 # ── Which reply answers which request ────────────────────────────────────────
@@ -413,7 +413,6 @@ _REPLY_KEYS = {
     "fileList": {"fileList", "gcodeFileList"},
     "gcodeFileList": {"fileList", "gcodeFileList"},
     "openedGcodeFileName": {"openedFileName", "openedGcodeFileName"},
-    "getHousingSettings": {"housingInstalled", "allowMotionWhenDoorOpen"},
     "machineName": {"machineName"},
     "deviceId": {"deviceId"},
     "firmwareVersion": {"firmwareVersion"},
@@ -460,16 +459,7 @@ def _reply_answers(req_text: str, payload: dict) -> bool:
 # Boolean machine-state flags surfaced via machine_flags_changed
 _FLAG_KEYS = (
     "dryRunEnabled", "dryRunActive", "procedureBusy",
-    "jobRunning", "jobPaused", "jobResuming", "housingInstalled",
-    # Door interlock: with the housing installed and the tool stopped, whether an
-    # open door lets motion carry on. Arrives with housingInstalled from
-    # get/setHousingSettings.
-    "allowMotionWhenDoorOpen",
-    # Live door/lid sensor, carried on every `status` poll. The raw pin state:
-    # true whenever the door is open, whether or not a housing is installed —
-    # the firmware only *acts* on it when one is, so callers pair it with
-    # housingInstalled themselves.
-    "doorOpen",
+    "jobRunning", "jobPaused", "jobResuming",
     "homedSincePowerOn",
 )
 
@@ -588,6 +578,9 @@ class Connection(QObject):
     #: reports itself through serial_state_changed; this is the other way the
     #: UI learns a "link" exists, and the gates watch both.
     link_changed              = Signal(bool)
+    #: CPU-C's galvo power relays (K6/K7, the +/-15 V to the scan head) came up
+    #: or went down. True/False, or None while CPU-C has not answered yet.
+    galvo_power_changed       = Signal(object)
     # A job ran to its end: (fileName, run seconds). Not emitted for a job the
     # app stopped, an alarm, or a dropped connection — see _watch_job.
     job_finished              = Signal(str, float)
@@ -617,6 +610,8 @@ class Connection(QObject):
         # Local "homing in progress" flag: while set, the status is reported as
         # "home" regardless of what the (queued) firmware replies say.
         self._homing: bool = False
+        #: Last galvoPower CPU-C reported; None until it answers.
+        self._galvo_power: bool | None = None
 
         # Snapshot for duplicate suppression
         self._last_status: str | None = None
@@ -708,6 +703,34 @@ class Connection(QObject):
     def is_serial_connected(self) -> bool:
         return self._serial.is_connected
 
+    def cpuc(self, obj: dict) -> None:
+        """Send a message to CPU-C through CPU-B's passthrough.
+
+        CPU-B forwards any line carrying target "cpuc" verbatim over the
+        2 Mbaud link and stays out of it; the reply comes back on the same
+        stream tagged "from":"cpuc" (see _route)."""
+        self.send({"target": "cpuc", **obj})
+
+    def set_galvo_power(self, on: bool) -> None:
+        """Drive CPU-C's galvo power relays."""
+        self.cpuc({"type": "command", "commandType": "setGalvoPower",
+                   "value": bool(on)})
+        self.request_galvo_status()
+
+    def request_galvo_status(self, silent: bool = False) -> None:
+        """Ask CPU-C for its status. The periodic poll passes silent=True so a
+        reading taken every couple of seconds does not fill the console."""
+        msg = {"target": "cpuc", "type": "get", "getType": "getStatus"}
+        if silent:
+            self._send_silent(msg)
+        else:
+            self.send(msg)
+
+    @property
+    def galvo_power(self) -> bool | None:
+        """Last galvo power state CPU-C reported, or None if it has not."""
+        return self._galvo_power
+
     @property
     def is_offline_link(self) -> bool:
         """True while the developer offline mode is simulating a connection.
@@ -777,27 +800,6 @@ class Connection(QObject):
         """Ask the controller for its `$$` listing. Each `$N=value` line of the
         reply is stored and emitted as grbl_setting_received."""
         self.send_raw("$$")
-
-    def door_blocked(self) -> bool:
-        """True when the door/lid is open, so anything that spins the tool or
-        moves the machine must not be offered.
-
-        Either signal is enough: `doorOpen` — the live sensor carried on every
-        `status` poll — or the machine state itself being `Door`.
-
-        This does NOT also require `housingInstalled`. The firmware only acts
-        on the door when a housing is registered, but that is a stored setting,
-        and a machine reporting its lid open should not be offered a start or a
-        spin-up because a settings flag says otherwise. The consequence to know
-        about: the sensor pin is INPUT_PULLUP with HIGH = open, so a machine
-        with no door switch wired reads permanently open. The right panel's
-        Door row shows exactly what is being read.
-
-        Deliberately not relaxed by allowMotionWhenDoorOpen either: that only
-        covers motion with the tool stopped, and a running tool with the
-        door open always pauses whatever it says."""
-        return (bool(self._flags.get("doorOpen", False))
-                or _normalize_machine_status(self._last_status or "") == "Door")
 
     def machine_info(self) -> dict:
         """Latest machine identity/info fields."""
@@ -940,7 +942,6 @@ class Connection(QObject):
         "dryRunEnabled": False,
         "dryRunActive": False, "procedureBusy": False,
         "jobRunning": False, "jobPaused": False, "jobResuming": False,
-        "housingInstalled": True, "doorOpen": False,
         "homedSincePowerOn": True,
     }
 
@@ -1369,16 +1370,6 @@ class Connection(QObject):
                                "action": "reset"})
         self._send_silent_any({"type": "get", "getType": "getFeedRateOverride"})
 
-    def _request_housing_settings(self) -> None:
-        """Read the housing / door-interlock settings on every (re)connect.
-
-        `doorOpen` rides on every status poll, but `housingInstalled` is only
-        ever sent in a getHousingSettings reply — and _reset_machine_state()
-        drops the flag cache on each new link. Without this the interlock stays
-        unknown (so nothing gates on the door) until the user happens to open
-        the Hardware-settings sheet, which is what asks for it otherwise."""
-        self._send_silent_any({"type": "get", "getType": "getHousingSettings"})
-
     def _set_opened_file(self, name: str | None) -> None:
         """Track the opened file and run the Android-parity side effects on a
         change: the height map is bound to the opened file, so it is cleared
@@ -1420,6 +1411,10 @@ class Connection(QObject):
             if self._opened_file is not None and (
                     self._flags.get("jobRunning") or self._flags.get("jobPaused")):
                 self._send_silent({"type": "get", "getType": "jobProgress"})
+            # CPU-C's galvo power, slowly: it only changes when something
+            # asks it to, and the link is shared with the job stream.
+            if t % 10 == 6:
+                self.request_galvo_status(silent=True)
             if t % 5 == 1:
                 self._send_silent({"type": "get", "getType": "fileList"})
                 self._send_silent({"type": "get", "getType": "openedGcodeFileName"})
@@ -1477,6 +1472,15 @@ class Connection(QObject):
         """(code, monotonic time) of the last ``ALARM:N`` seen, or None."""
         return self._last_alarm
 
+    def _route_cpuc(self, p: dict) -> None:
+        """A reply from CPU-C (galvo / laser). Only the galvo power state is
+        tracked here; everything else is logged and dropped."""
+        if "galvoPower" in p:
+            state = bool(p["galvoPower"])
+            if state != self._galvo_power:
+                self._galvo_power = state
+                self.galvo_power_changed.emit(state)
+
     def _route(self, line: str) -> None:
         rx_label = "[RX]"
         rx_color = self.C_RX
@@ -1490,6 +1494,15 @@ class Connection(QObject):
         except json.JSONDecodeError:
             # A file list cut off by the firmware's 8 KB reply limit.
             p = _salvage_file_list(line)
+
+        # CPU-C's replies ride the same stream, tagged by CPU-B's mirror. They
+        # must not fall through to the parsing below: CPU-C answers
+        # getFirmwareVersion too, and its version would land in the machine
+        # info as if it were CPU-B's.
+        if isinstance(p, dict) and p.get("from") == "cpuc":
+            self._route_cpuc(p)
+            self.log_received.emit(f"[CPU-C] {line}", rx_color)
+            return
         if p is None:
             # A `$N=value` line from a `$$` listing: remember it, then log it
             # like any other raw reply below.
@@ -1859,6 +1872,11 @@ class Connection(QObject):
         self._last_status = None
         # GRBL settings belong to the machine just left; re-read on demand.
         self._grbl_settings = {}
+        # The galvo state belonged to that link too. Back to "not known yet"
+        # rather than a stale ON, which would read as a powered scan head.
+        if self._galvo_power is not None:
+            self._galvo_power = None
+            self.galvo_power_changed.emit(None)
         # Also the tool length: it is emitted on a delta too, so a machine
         # reporting the same length as the last one would never re-emit and
         # the card would sit on its placeholder for good.
@@ -1885,7 +1903,6 @@ class Connection(QObject):
             self._send_silent({"type": "get", "getType": "machineName"})
             # Enforce default overrides on every (re)connect (Android parity).
             self._reset_overrides()
-            self._request_housing_settings()
         self._sync_poll_timer()
         self.serial_state_changed.emit(connected, msg)
         color = self.C_INFO

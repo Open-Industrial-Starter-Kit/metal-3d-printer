@@ -6,7 +6,7 @@ Organisation mirrors the Android App.tsx menu exactly:
   • Machine name (filled name box + edit button)
   • Connectivity (link status)
   • Machine connection (shows the machine ID; Switch re-runs discovery)
-  • Hardware settings  -> sub-sheet (housing, door interlock, probe ref Z,
+  • Hardware settings  -> sub-sheet (probe height,
     probe height, steps-per-mm calculator)
   • Machine info       -> sub-sheet (sensors, firmware, usage, job history)
   • Firmware debugging -> sub-sheet (one switch per firmware debug option)
@@ -183,12 +183,7 @@ def _style_line_edit(le: QLineEdit) -> None:
 # ── Hardware-settings sub-sheet ───────────────────────────────────────────────
 
 class HardwareSettingsDialog(_Sheet):
-    """Sub-sheet: housing + door interlock + probe height.
-
-    Housing, probe-Z and probe-height mirror the mobile Hardware-settings
-    sheet. The door interlock has no mobile counterpart yet — it is the
-    firmware's `allowMotionWhenDoorOpen`, carried on the same
-    get/setHousingSettings pair as `housingInstalled`.
+    """Sub-sheet: probe height and the steps-per-mm calculator.
 
     It used to carry two desktop-only switches, Sound and Notifications, which
     are gone. They were the only writers of `soundEnabled` and
@@ -206,29 +201,6 @@ class HardwareSettingsDialog(_Sheet):
         self.add_close_header("Hardware settings")
 
         connected = conn.is_serial_connected or conn.is_offline_link
-
-        housing = conn.flags().get("housingInstalled")
-        self._housing_lbl, self._housing_sw = _switch_row(
-            self._lay, "Housing" if housing is None else
-            ("Housing installed" if housing else "No housing"),
-            checked=bool(housing), enabled=housing is not None,
-            icon_name="housing")
-        self._housing_sw.toggled.connect(self._toggle_housing)
-
-        # Door interlock. Only meaningful with the housing installed — without
-        # it the firmware ignores the door input entirely — so the row follows
-        # the switch above and greys out when there is no housing.
-        #
-        # It relaxes one case only: door open with the tool stopped, where
-        # motion (jogs, probes, dry runs) carries on instead of pausing. With
-        # the tool running an open door always pauses, whatever this says,
-        # so the switch cannot make the machine cut with the lid up.
-        allow = conn.flags().get("allowMotionWhenDoorOpen")
-        self._door_lbl, self._door_sw = _switch_row(
-            self._lay, "Allow motion when door open",
-            checked=bool(allow),
-            enabled=bool(housing) and allow is not None)
-        self._door_sw.toggled.connect(self._toggle_door_motion)
 
         self._probe_h = _row_button(self._probe_height_text(), "Edit",
                                     icon_name="settings")
@@ -259,7 +231,6 @@ class HardwareSettingsDialog(_Sheet):
 
         conn.machine_flags_changed.connect(self._on_flags)
         conn.machine_info_changed.connect(self._on_info)
-        conn.get("getHousingSettings")
         conn.get("getProbeHeight")
 
     def done(self, r):
@@ -274,20 +245,6 @@ class HardwareSettingsDialog(_Sheet):
         super().done(r)
 
     def _on_flags(self, flags: dict) -> None:
-        if "housingInstalled" in flags:
-            h = flags["housingInstalled"]
-            self._housing_sw.blockSignals(True)
-            self._housing_sw.setChecked(bool(h))
-            self._housing_sw.setEnabled(True)
-            self._housing_sw.blockSignals(False)
-            self._housing_lbl.setText(
-                "Housing installed" if h else "No housing")
-            # No housing, no door interlock to relax.
-            self._door_sw.setEnabled(bool(h))
-        if "allowMotionWhenDoorOpen" in flags:
-            self._door_sw.blockSignals(True)
-            self._door_sw.setChecked(bool(flags["allowMotionWhenDoorOpen"]))
-            self._door_sw.blockSignals(False)
         if "jobRunning" in flags or "jobPaused" in flags:
             self._sync_uf2()
 
@@ -301,16 +258,6 @@ class HardwareSettingsDialog(_Sheet):
             return f"Probe Height ({float(v):g} mm)"
         except (TypeError, ValueError):
             return "Probe Height"
-
-    def _toggle_housing(self, on: bool) -> None:
-        self._conn.set("setHousingSettings", housingInstalled=bool(on))
-        self._housing_lbl.setText("Housing installed" if on else "No housing")
-        # Follow immediately rather than waiting for the flag to echo back, so
-        # the row cannot sit enabled over a machine that has no housing.
-        self._door_sw.setEnabled(bool(on))
-
-    def _toggle_door_motion(self, on: bool) -> None:
-        self._conn.set("setHousingSettings", allowMotionWhenDoorOpen=bool(on))
 
     def _edit_probe_height(self) -> None:
         from ui.pages.dialogs import TextInputDialog
@@ -1183,7 +1130,7 @@ class AppMenuDrawer(QDialog):
         # Mirror the mobile app: refresh everything when the menu opens.
         for g in ("machineName", "firmwareVersion",
                   "deviceId",
-                  "getHousingSettings", "getMachineUsage", "getProbeHeight"):
+                  "getMachineUsage", "getProbeHeight"):
             conn.get(g)
 
     def _style_name_box(self, x):
