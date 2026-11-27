@@ -140,6 +140,24 @@ static void api_fail(api_source_t src, const char *error)
     api_send(src, body);
 }
 
+// Diagnostic variant: reports back what was actually received, so a parse failure can be
+// told apart from a transport problem (lost or corrupted bytes on the CPU-B link).
+static void api_fail_echo(api_source_t src, const char *error, const char *line)
+{
+    char safe[110];
+    size_t n = 0;
+    for (const char *q = line; *q && n < sizeof(safe) - 1; q++)
+        if (*q != '"' && *q != '\\' && (unsigned char)*q >= 0x20)
+            safe[n++] = *q;
+    safe[n] = '\0';
+
+    char body[240];
+    snprintf(body, sizeof(body),
+             "\"result\":\"failure\",\"error\":\"%s\",\"gotLen\":%u,\"got\":\"%s\"",
+             error, (unsigned)strlen(line), safe);
+    api_send(src, body);
+}
+
 // ---------------------------------------------------------------------------------------
 // Command handling
 // ---------------------------------------------------------------------------------------
@@ -287,7 +305,7 @@ static void dispatch(api_source_t src, const char *json)
 {
     char type[32];
     if (!json_get_string(json, "type", type, sizeof(type))) {
-        api_fail(src, "unknownJsonType");
+        api_fail_echo(src, "unknownJsonType", json);
         return;
     }
 
@@ -303,7 +321,7 @@ static void dispatch(api_source_t src, const char *json)
     if      (strcmp(type, "get") == 0)     handle_get(src, json);
     else if (strcmp(type, "set") == 0)     handle_set(src, json);
     else if (strcmp(type, "command") == 0) handle_command(src, json);
-    else                                   api_fail(src, "unknownJsonType");
+    else                                   api_fail_echo(src, "unknownJsonType", json);
 }
 
 // ---------------------------------------------------------------------------------------

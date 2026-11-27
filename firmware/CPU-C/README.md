@@ -215,6 +215,17 @@ firmware before the laser is ever fired in anger.
 | `missingJsonKey` | a required key, usually `value`, was absent |
 | `valueOutOfRange` | a numeric value fell outside what the hardware allows |
 
+An `unknownJsonType` failure additionally reports what CPU-C actually received, which
+separates a syntax problem from a transport one at a glance:
+
+```json
+{"from":"cpuc","result":"failure","error":"unknownJsonType","gotLen":12,"got":{garbage}}
+```
+
+`gotLen` is the length of the assembled line and `got` is its text with quotes, backslashes
+and control characters stripped. If the text is a truncated or corrupted version of what was
+sent, the problem is the link rather than the command.
+
 A reply may also carry a non-fatal `"warning"` alongside `"result":"success"`:
 
 | Warning | Meaning |
