@@ -498,74 +498,7 @@ class BottomBar(QFrame):
             self._begin_pausing()
             conn.cmd("pauseJob")
         else:
-            self._preflight_then_start(conn)
-
-    # ── Pre-start check: does the job fit from the current zero? ─────────────
-    #
-    # A job whose extents fall outside the machine's travel from where the
-    # work zero is set is refused by the firmware's soft-limit check during the
-    # job -- cutter in the material. Everything that decides it is known now,
-    # so it is checked here, before startJob. See ui/job_fit.py.
-    #
-    # The two inputs that may need fetching (the firmware's bounds reply and
-    # the $13x travel) are asked for together and waited on briefly. A check
-    # that cannot be made -- no extents, settings not readable -- does not
-    # block the start: it would only be a check that stops working jobs.
-
-    _PREFLIGHT_WAIT_S = 2.5
-
-    def _preflight_then_start(self, conn) -> None:
-        if getattr(self, "_preflighting", False):
-            return
-        self._preflighting = True
-        from ui import job_fit
-        state = {"reply": None}
-
-        def on_bounds(p) -> None:
-            state["reply"] = dict(p)
-
-        conn.opened_file_bounds_received.connect(on_bounds)
-        conn.get("getOpenedFileBounds")
-        if job_fit.machine_ranges(conn.grbl_settings()) is None:
-            conn.request_grbl_settings()
-        t0 = time.monotonic()
-
-        def poll() -> None:
-            have = (state["reply"] is not None and
-                    job_fit.machine_ranges(conn.grbl_settings()) is not None)
-            if not have and time.monotonic() - t0 < self._PREFLIGHT_WAIT_S:
-                QTimer.singleShot(100, poll)
-                return
-            try:
-                conn.opened_file_bounds_received.disconnect(on_bounds)
-            except (RuntimeError, TypeError):
-                pass
-            self._preflighting = False
-            self._finish_preflight(conn, state["reply"])
-
-        QTimer.singleShot(100, poll)
-
-    def _finish_preflight(self, conn, reply) -> None:
-        from ui import job_fit
-        name = conn.opened_file_name()
-        # the local copy has all three axes; the firmware reply only X and Y
-        ext = job_fit.extents_from_reply(reply)
-        ext.update(job_fit.extents_from_file(conn.cached_file_path(name) if name else None))
-        ranges = job_fit.machine_ranges(conn.grbl_settings())
-        problems = (job_fit.check(ext, conn.current_position(), ranges)
-                    if ext and ranges else [])
-        if problems:
-            from ui.pages.dialogs import ConfirmDialog
-            dlg = ConfirmDialog(
-                "Job does not fit",
-                "From where the work zero is set now, this job would go past "
-                "the machine's travel, and the machine would stop in the "
-                "middle of the cut:\n\n" + "\n\n".join(problems),
-                parent=self.window(), yes_label="Start anyway", no_label="Cancel")
-            if not dlg.exec():
-                return
-        start_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        conn.cmd("startJob", startTime=start_time)
+            conn.cmd("startJob", startTime=time.strftime("%Y-%m-%d %H:%M:%S"))
 
     def _on_stop(self, conn) -> None:
         self._clear_resuming()

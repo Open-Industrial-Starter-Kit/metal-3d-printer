@@ -640,6 +640,40 @@ class ZPad(QWidget):
         self._info.set_lines([f"Z {step_z}"], speed)
 
 
+class BPad(QWidget):
+    """B-axis jog column (up / info / down), mirroring ZPad.
+
+    No top-limit button: that one is Z homing, and B (the blade recoater) has
+    no equivalent. Tap-only in practice -- the firmware has no B-axis jog, so
+    the buttons pass a hold_enabled_fn returning False and stay discrete steps.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        grid = QGridLayout(self)
+        self._grid = grid
+
+        self._btn_up = JogDirButton("up", "B", size=72)
+        self._btn_down = JogDirButton("down", "B", size=72, label_first=True)
+
+        self._info = _InfoBox(["B 10"], w=96, h=88)
+
+        grid.addWidget(self._btn_up,   0, 0, Qt.AlignCenter)
+        grid.addWidget(self._info,     1, 0, Qt.AlignCenter)
+        grid.addWidget(self._btn_down, 2, 0, Qt.AlignCenter)
+        grid.setRowStretch(3, 1)
+
+        bind(self, self._apply_scale)
+
+    def _apply_scale(self, *_):
+        self._grid.setSpacing(px(6))
+        self._grid.setContentsMargins(px(2), px(2), px(2), px(2))
+
+    def set_info(self, step_b: str, speed: str) -> None:
+        self._info.set_lines([f"B {step_b}"], speed)
+
+
 class _HoldJog(QObject):
     """Tap-vs-hold dispatcher for one jog button (firmware README 5.31.1/5.31.2).
 
@@ -796,12 +830,6 @@ def _section_header(text: str) -> QWidget:
 # ── Page ──────────────────────────────────────────────────────────────────────
 
 class ControlsPage(QWidget):
-    #: A facing program is ready to go to the machine: (G-code text, file name).
-    #: The page does not write or send it -- MainWindow stages it in the CAM
-    #: export folder and puts it through the same upload queue a CAM export
-    #: uses, so it gets the same collision prompt, progress row and cleanup.
-    facing_job_ready = Signal(str, str)
-
     def __init__(self):
         super().__init__()
         self._conn = None
@@ -846,10 +874,12 @@ class ControlsPage(QWidget):
         self._jog_inner = jog_inner
         self._jog_pad = JogPad()
         self._z_pad   = ZPad()
+        self._b_pad   = BPad()
         self._jog_indent = QSpacerItem(px(56), 0, QSizePolicy.Fixed, QSizePolicy.Minimum)
         jog_inner.addItem(self._jog_indent)   # indent the jog block to the right
         jog_inner.addWidget(self._jog_pad, 0, Qt.AlignTop)
         jog_inner.addWidget(self._z_pad,   0, Qt.AlignTop)
+        jog_inner.addWidget(self._b_pad,   0, Qt.AlignTop)
         jog_inner.addStretch()
         jog_lay.addLayout(jog_inner)
         jog_lay.addStretch(1)          # push bottom rows to foot of panel
@@ -895,29 +925,6 @@ class ControlsPage(QWidget):
 
         jog_lay.addLayout(move_grid)
 
-        # Dry-run toggle: top-right of the control section, to the right of the Z
-        # move-up button. Inserted before the trailing stretch of the jog row
-        # (items: indent, jog pad, Z pad, ►dry-run◄, stretch), top-aligned so it
-        # sits level with the Z ▲ button.
-        # Facing goes under it, which puts the buttons in this corner into a
-        # block with Facing below the dry-run toggle.
-        dry_col = QVBoxLayout()
-        self._dry_col = dry_col
-        dry_col.setContentsMargins(0, 0, 0, 0)
-        dry_col.addWidget(_btn("dry_run", "dry-run", "Dry run", checkable=True))
-        dry_col.addWidget(_btn("facing", "facing", "Facing"))
-        dry_col.addStretch(1)
-        jog_inner.insertLayout(3, dry_col)
-        # Frame: traces the opened file's bounding box so the operator can
-        # preview the area the job occupies on the stock. Sits to the right of
-        # the dry-run toggle.
-        frame_col = QVBoxLayout()
-        self._frame_col = frame_col
-        frame_col.setContentsMargins(0, 0, 0, 0)
-        frame_col.addWidget(_btn("frame", "frame", "Frame"))
-        frame_col.addStretch(1)
-        jog_inner.insertLayout(4, frame_col)
-
         main_row.addWidget(self._jog_panel, stretch=3)
 
         # Right: step/speed settings panel
@@ -955,6 +962,9 @@ class ControlsPage(QWidget):
         self._step_z = StepSizeRow("Z", default=5, values=_Z_STEP_VALUES,
                                    cmin=0.01, cmax=50.0, min_seg_w=30)
         sl.addWidget(self._step_z)
+        self._step_b = StepSizeRow("B", default=5, values=_Z_STEP_VALUES,
+                                   cmin=0.01, cmax=100.0)
+        sl.addWidget(self._step_b)
         sl.addWidget(_section_header("Speed (mm/s)"))
         self._speed_z = SpeedRow(default=1)
         sl.addWidget(self._speed_z)
@@ -978,8 +988,6 @@ class ControlsPage(QWidget):
         self._jog_lay.setContentsMargins(px(16), px(16), px(16), px(16))
         self._jog_lay.setSpacing(px(12))
         self._jog_inner.setSpacing(px(28))
-        self._dry_col.setSpacing(px(6))       # as between the move-to buttons
-        self._frame_col.setSpacing(px(6))     # as between the move-to buttons
         self._jog_indent.changeSize(px(56), 0, QSizePolicy.Fixed, QSizePolicy.Minimum)
         self._jog_inner.invalidate()
 
@@ -1049,6 +1057,10 @@ class ControlsPage(QWidget):
             _move("moveZ", z=round(self._step_z.value() * sign, 4),
                   feed=self._speed_z.feed_mmmin())
 
+        def _jog_b(sign: int) -> None:
+            _move("moveB", b=round(self._step_b.value() * sign, 4),
+                  feed=self._speed_z.feed_mmmin())
+
         def _jog_diag(sx: int, sy: int) -> None:
             _move("moveXYZ", x=round(self._step_x.value() * sx, 4),
                   y=round(self._step_y.value() * sy, 4), z=0.0,
@@ -1065,6 +1077,7 @@ class ControlsPage(QWidget):
         z_feed = self._speed_z.feed_mmmin
         jp = self._jog_pad
         zp = self._z_pad
+        bp = self._b_pad
 
         self._hold_jogs = [
             _HoldJog(jp._btn_n, conn, {"y": +_Y}, xy_feed, lambda: _jog_y(+_Y)),
@@ -1083,6 +1096,12 @@ class ControlsPage(QWidget):
                      lambda: _jog_diag(-1, -_Y)),
             _HoldJog(zp._btn_up,   conn, {"z": +1}, z_feed, lambda: _jog_z(+1)),
             _HoldJog(zp._btn_down, conn, {"z": -1}, z_feed, lambda: _jog_z(-1)),
+            # B is tap-only: the firmware has no B-axis jog, so a hold must not
+            # start one. Same shape the A axis used.
+            _HoldJog(bp._btn_up,   conn, {}, z_feed, lambda: _jog_b(+1),
+                     hold_enabled_fn=lambda: False),
+            _HoldJog(bp._btn_down, conn, {}, z_feed, lambda: _jog_b(-1),
+                     hold_enabled_fn=lambda: False),
         ]
         zp._btn_ztop.clicked.connect(lambda: conn.cmd("grblHomingZ"))
 
@@ -1092,16 +1111,13 @@ class ControlsPage(QWidget):
         b = self._bottom_btns
         b["goto_xy0"].clicked.connect(self._on_goto_xy0)
         b["type_coord"].clicked.connect(self._on_type_coordinates)
-        b["dry_run"].toggled.connect(self._on_dry_run_toggle)
-        b["frame"].clicked.connect(self._on_frame)
-        b["facing"].clicked.connect(self._on_facing)
 
         # Reflect machine flags back into the toggles (dry run)
         conn.machine_flags_changed.connect(self._on_machine_flags)
 
         # Info boxes follow the selected step sizes / speed. Step rows notify
         # through value_changed so a custom "…" step refreshes them too.
-        for row in (self._step_x, self._step_y, self._step_z):
+        for row in (self._step_x, self._step_y, self._step_z, self._step_b):
             row.value_changed.connect(self._refresh_info_boxes)
         for grp in (self._speed_xy._group, self._speed_z._group):
             grp.idClicked.connect(lambda _i: self._refresh_info_boxes())
@@ -1126,158 +1142,16 @@ class ControlsPage(QWidget):
 
     # ── State feedback ────────────────────────────────────────────────────────
 
-    _FRAME_START_TIMEOUT_MS = 5000
-
-    #: How long a Frame may take to visibly start before it is assumed refused,
-    #: and how recent an ALARM:N line must be to be blamed on this frame (s).
-    _FRAME_ALARM_WINDOW_S = 5.0
-
-    def _on_frame(self) -> None:
-        conn = self._conn
-        if conn is None:
-            return
-        if getattr(self, "_frame_checking", False):
-            return
-        self._frame_soft_limit_check()
-
-    # ── Frame: soft limits first ─────────────────────────────────────────────
-    #
-    # The firmware's frameJob traces the job's X/Y outline with real moves, and
-    # an outline that pokes past the travel was only found out when the
-    # controller stopped at the soft limit mid-trace (see _frame_watch). The
-    # job's X/Y extent and the work zero are known before that, so they are
-    # checked first, the way the Start check does (job_fit), and a frame that
-    # would pass the soft limit is not sent. Z is not checked: frameJob picks
-    # its own height. If the extent or the travel cannot be read in time, the
-    # frame goes ahead as before and _frame_watch still explains an alarm.
-    def _frame_soft_limit_check(self) -> None:
-        conn = self._conn
-        import time
-        from ui import job_fit
-        self._frame_checking = True
-        state = {"reply": None}
-
-        def on_bounds(p) -> None:
-            state["reply"] = dict(p)
-
-        conn.opened_file_bounds_received.connect(on_bounds)
-        conn.get("getOpenedFileBounds")
-        if job_fit.machine_ranges(conn.grbl_settings()) is None:
-            conn.request_grbl_settings()
-        t0 = time.monotonic()
-
-        def poll() -> None:
-            have = (state["reply"] is not None and
-                    job_fit.machine_ranges(conn.grbl_settings()) is not None)
-            if not have and time.monotonic() - t0 < self._FS_BOUNDS_WAIT_S:
-                QTimer.singleShot(100, poll)
-                return
-            try:
-                conn.opened_file_bounds_received.disconnect(on_bounds)
-            except (RuntimeError, TypeError):
-                pass
-            self._frame_checking = False
-            name = conn.opened_file_name()
-            ext = job_fit.extents_from_reply(state["reply"])
-            ext.update(job_fit.extents_from_file(
-                conn.cached_file_path(name) if name else None))
-            ext = {a: ext[a] for a in ("X", "Y") if a in ext}
-            ranges = job_fit.machine_ranges(conn.grbl_settings())
-            if ext and ranges is not None and self._pos_known:
-                problems = job_fit.check(ext, conn.current_position(), ranges)
-                if problems:
-                    conn.motion_error.emit(
-                        "Frame Would Pass the Soft Limit",
-                        "From where the work zero is set now, the job's "
-                        "outline goes past the machine's travel, so the frame "
-                        "would stop at the soft limit. Nothing was moved:\n\n"
-                        + "\n\n".join(problems))
-                    return
-            self._frame_send()
-
-        QTimer.singleShot(100, poll)
-
-    def _frame_send(self) -> None:
-        conn = self._conn
-        if conn is None or not (conn.is_serial_connected or conn.is_offline_link):
-            return
-        # Watch the frame for an alarm -- see _frame_watch.
-        self._framing = True
-        self._frame_moved = False
-        QTimer.singleShot(self._FRAME_START_TIMEOUT_MS, self._frame_watch_timeout)
-        conn.cmd("frameJob")
-
-    # ── Frame stopped by an alarm ────────────────────────────────────────────
-    #
-    # Framing traces the job outline with real moves, so an outline that pokes
-    # past the machine's travel is stopped by the controller mid-trace and the
-    # machine drops into Alarm. When the controller names the cause as a soft
-    # limit (ALARM:2) the connection already shows "Soft Limit Triggered"
-    # (connection._note_grbl_limit). Any OTHER alarm during a frame used to
-    # leave the machine silently locked; this says what happened and what to
-    # check. The frame is over once the machine is back at Idle after moving.
-    def _frame_watch(self) -> None:
-        if not getattr(self, "_framing", False) or self._conn is None:
-            return
-        st = self._machine_status
-        if st in ("run", "jog", "home", "hold"):
-            self._frame_moved = True
-            return
-        if st == "alarm":
-            self._framing = False
-            import time
-            last = self._conn.last_alarm
-            recent = last is not None and time.monotonic() - last[1] < self._FRAME_ALARM_WINDOW_S
-            if recent and last[0] == 2:
-                return          # soft limit: already announced by the connection
-            code = f" (ALARM:{last[0]})" if recent else ""
-            self._conn.motion_error.emit(
-                "Frame Stopped",
-                f"The machine went into alarm while framing{code}. This usually "
-                "means the frame would cross the machine's travel limits (soft "
-                "limit). Check the work zero and that the job fits inside the "
-                "machine, then unlock it before continuing.")
-        elif st == "idle" and self._frame_moved:
-            self._framing = False
-
-    def _frame_watch_timeout(self) -> None:
-        # never seen to start: refused (a JSON refusal has its own notice) or
-        # too short to catch -- either way, stop watching
-        if getattr(self, "_framing", False) and not getattr(self, "_frame_moved", False):
-            self._framing = False
-
     def _on_goto_xy0(self) -> None:
         conn = self._conn
         if conn is not None:
             conn.cmd("returnJobXY0Macro")
 
-    def _on_facing(self) -> None:
-        """Open the facing setup and pass the finished program upward.
-
-        Nothing is sent from here: the dialog hands over the G-code text and a
-        name, and the signal carries both to MainWindow, which owns the staging
-        folder and the transfer queue.
-        """
-        from ui.pages.facing_dialog import FacingDialog
-        dlg = FacingDialog(self._conn, parent=self)
-        dlg.job_ready.connect(self.facing_job_ready)
-        dlg.exec()
-
-    def _on_dry_run_toggle(self, on: bool) -> None:
-        if on != self._conn.flags().get("dryRunEnabled", False):
-            self._conn.set("setDryRun", dryRunEnabled=bool(on))
-
     def _on_machine_flags(self, flags: dict) -> None:
-        if "dryRunEnabled" in flags:
-            b = self._bottom_btns["dry_run"]
-            b.blockSignals(True)
-            b.setChecked(flags["dryRunEnabled"])
-            b.blockSignals(False)
         self._sync_gates()
     def _on_status_for_gates(self, status: str) -> None:
         self._machine_status = str(status).split(":")[0].strip().lower()
         self._sync_gates()
-        self._frame_watch()
 
     def _sync_gates(self) -> None:
         """Enable/disable the page according to the machine state (Android
@@ -1294,7 +1168,6 @@ class ControlsPage(QWidget):
         job_running = bool(flags.get("jobRunning", False))
         job_paused = bool(flags.get("jobPaused", False))
         door_blocked = conn.door_blocked()
-        has_file = conn.opened_file_name() is not None
         # Running state = a motion this page must not interrupt, or an active /
         # paused job. Using both status and flags avoids brief stale windows
         # where status has not updated yet but the firmware already reports
@@ -1321,8 +1194,8 @@ class ControlsPage(QWidget):
         acting = motion
 
         # Jog pads, step/speed pills
-        for w in (self._jog_pad, self._z_pad,
-                  self._step_x, self._step_y, self._step_z,
+        for w in (self._jog_pad, self._z_pad, self._b_pad,
+                  self._step_x, self._step_y, self._step_z, self._step_b,
                   self._speed_xy, self._speed_z):
             w.setEnabled(motion)
 
@@ -1330,12 +1203,6 @@ class ControlsPage(QWidget):
         b = self._bottom_btns
         b["goto_xy0"].setEnabled(acting)
         b["type_coord"].setEnabled(acting)
-        b["dry_run"].setEnabled(acting)
-        # Facing generates a program and uploads it. No open file needed;
-        # nothing should go up the link mid-job.
-        b["facing"].setEnabled(acting)
-        # Frame needs a file open and can't run while a job/macro is active.
-        b["frame"].setEnabled(acting and has_file)
 
         # Toolbar actions.
         a = self._action_btns
@@ -1386,6 +1253,7 @@ class ControlsPage(QWidget):
         self._jog_pad.set_info(_fmt(self._step_x.value()),
                                _fmt(self._step_y.value()), sp)
         self._z_pad.set_info(_fmt(self._step_z.value()), spz)
+        self._b_pad.set_info(_fmt(self._step_b.value()), spz)
 
     def _on_type_coordinates(self) -> None:
         """Open the move-to dialog (machine/job coordinate entry). The dialog

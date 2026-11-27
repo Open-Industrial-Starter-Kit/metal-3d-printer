@@ -4983,6 +4983,52 @@ void handleJsonCommand(){
 
   break;
 
+  case MOVE_B_COMMAND:
+
+  if(isJobRunning || isJobPaused){
+
+    if(jsonSettings.enableJsonResponse){
+      clearResponseJsonBuffer();
+      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
+      responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_JOB_RUNNING_STR;
+      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+      sendJsonResponse();
+    }
+
+  }else if(receivedJsonBuffer[JSON_KEY_MOVE_B_STR].isNull() || receivedJsonBuffer[JSON_KEY_FEED_RATE_STR].isNull()){
+
+    if(jsonSettings.enableJsonResponse){
+      clearResponseJsonBuffer();
+      responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_FAILURE_STR;
+      responseJsonBuffer[JSON_KEY_ERROR_STR] = JSON_VALUE_ERROR_MISSING_JSON_KEY_STR;
+      serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+      sendJsonResponse();
+    }
+
+  }else{
+
+    {
+      char moveCmd[MACRO_LINE_BUFFER_CHARS];
+      snprintf(moveCmd, sizeof(moveCmd), "B%.4f", receivedJsonBuffer[JSON_KEY_MOVE_B_STR].as<float>());
+
+      // Like A, the B axis has no soft limits to reject it, and this
+      // command has always answered success; the result is not consulted.
+      scheduleWorkMove(
+        moveCmd, receivedJsonBuffer[JSON_KEY_FEED_RATE_STR].as<float>(),
+        receivedJsonBuffer[JSON_KEY_MOVE_RELATIVE_STR] | false);
+
+      if(jsonSettings.enableJsonResponse){
+        clearResponseJsonBuffer();
+        responseJsonBuffer[JSON_KEY_RESULT_STR] = JSON_VALUE_RESULT_SUCCESS_STR;
+        serializeJson(responseJsonBuffer, jsonResponseCharBuffer, JSON_BUFFER_SIZE);
+        sendJsonResponse();
+      }
+    }
+
+  }
+
+  break;
+
   case JOG_COMMAND:
 
   if(isJobRunning || isJobPaused){

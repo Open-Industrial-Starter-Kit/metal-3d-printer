@@ -128,7 +128,6 @@ class MainWindow(QMainWindow):
         self._console_page  = ConsolePage()
         self._cam_page      = CamPage()
         self._cam_page.gcode_exported.connect(self._on_cam_export)
-        self._controls_page.facing_job_ready.connect(self._on_facing_job)
 
         for page in [self._file_page, self._controls_page, self._cam_page,
                      self._preview_page, self._console_page]:
@@ -389,36 +388,6 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(idx)
 
     # ── Facing job → machine hand-off ────────────────────────────────────────
-
-    def _on_facing_job(self, gcode: str, name: str) -> None:
-        """Stage a generated facing program and send it like a CAM export.
-
-        The facing dialog (ui/pages/facing_dialog.py) produces G-code, not a
-        file: the staging folder and the transfer queue both live here, and
-        routing the result through _on_cam_export means a facing job gets
-        everything a CAM export already gets -- the "no machine / transfer
-        busy" explanation, the name-collision prompt, the progress row on the
-        Files page, and the staged copy being deleted once the machine has it.
-
-        It is staged in the CAM export root for that last point specifically:
-        _discard_staged_export only ever unlinks inside that folder, so a
-        facing file written anywhere else would be uploaded and then left
-        behind for ever.
-        """
-        if not gcode:
-            return
-        root = self._cam_page.export_root()
-        path = os.path.join(root, os.path.basename(name))
-        try:
-            with open(path, "w") as fh:
-                fh.write(gcode)
-        except OSError as e:
-            QMessageBox.warning(
-                self, "Facing",
-                f"The facing program could not be written to disk, so there is "
-                f"nothing to send.\n\n{path}\n\n{e}")
-            return
-        self._on_cam_export([path], "machine")
 
     # ── CAM export → machine hand-off ────────────────────────────────────────
 

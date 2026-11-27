@@ -1,6 +1,6 @@
 """
 ui/top_bar.py
-Top navigation bar with hamburger menu, app title, and INMACHINES logo.
+Top navigation bar with hamburger menu, app title, and the vendor logo.
 """
 
 import os
@@ -37,7 +37,7 @@ class TopBar(QFrame):
         # Plain QLabel styled directly (not via lbl/setFont): the global
         # "* { font-size: 14px }" stylesheet overrides setFont(), so the title
         # size must be set in the widget's own stylesheet to take effect.
-        self._title = QLabel("Piccola CNC")
+        self._title = QLabel("OISK Metal 3D Printer")
         self._row.addWidget(self._title)
         self._dot = QLabel("●")   # grey until connected
         self._row.addWidget(self._dot)
@@ -90,7 +90,7 @@ class TopBar(QFrame):
 
     def set_title(self, text: str) -> None:
         """Show the machine name (from the API) as the app title."""
-        self._title.setText(text or "Piccola CNC")
+        self._title.setText(text or "OISK Metal 3D Printer")
 
     def set_connected(self, connected: bool) -> None:
         """Green dot when a transport is connected, grey otherwise."""

@@ -109,6 +109,8 @@ JsonValueCommandType JsonUtil::getJsonCommandType(JsonDocument json) {
             return MOVE_MACHINE_XYZ_COMMAND;
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_MOVE_A_COMMAND_STR) == 0)
             return MOVE_A_COMMAND;
+        else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_MOVE_B_COMMAND_STR) == 0)
+            return MOVE_B_COMMAND;
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_JOG_COMMAND_STR) == 0)
             return JOG_COMMAND;
         else if(strcmp(jsonObject[JSON_KEY_COMMAND_TYPE_STR], JSON_VALUE_JOG_CANCEL_COMMAND_STR) == 0)

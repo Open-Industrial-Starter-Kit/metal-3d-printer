@@ -220,8 +220,7 @@ def _macro_soft_limit_notice(command: str,
                 f"The job needed {axis} at {target:g}, but {axis} cannot go "
                 f"{way} from the current zero — it is at the {end}. The move "
                 f"was not run.\n\n"
-                f"Before running it again, {fix}. The check before Start "
-                f"now tells you this in advance.")
+                f"Before running it again, {fix}.")
         return "End of Travel", (
             f"{axis} cannot go {way}: it is already at the {end}, so the move "
             f"to {axis} {target:g} was not run.\n\n"

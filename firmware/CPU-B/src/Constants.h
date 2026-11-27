@@ -232,6 +232,7 @@ enum JsonValueCommandType {
   MOVE_MACHINE_Z_COMMAND,
   MOVE_MACHINE_XYZ_COMMAND,
   MOVE_A_COMMAND,
+  MOVE_B_COMMAND,
   JOG_COMMAND,
   JOG_CANCEL_COMMAND,
   RESUME_JOB,
@@ -276,6 +277,7 @@ enum JsonValueCommandType {
 #define JSON_VALUE_MOVE_MACHINE_Z_COMMAND_STR "moveMachineZ"
 #define JSON_VALUE_MOVE_MACHINE_XYZ_COMMAND_STR "moveMachineXYZ"
 #define JSON_VALUE_MOVE_A_COMMAND_STR "moveA"
+#define JSON_VALUE_MOVE_B_COMMAND_STR "moveB"
 #define JSON_VALUE_JOG_COMMAND_STR "jog"
 #define JSON_VALUE_JOG_CANCEL_COMMAND_STR "jogCancel"
 #define JSON_KEY_MOVE_X_STR "x"
@@ -283,6 +285,7 @@ enum JsonValueCommandType {
 #define JSON_KEY_MOVE_Y_STR "y"
 #define JSON_KEY_MOVE_Z_STR "z"
 #define JSON_KEY_MOVE_A_STR "a"
+#define JSON_KEY_MOVE_B_STR "b"
 #define JSON_KEY_FEED_RATE_STR "feedRate"
 #define JSON_VALUE_PAUSE_JOB_STR "pauseJob"
 #define JSON_VALUE_RESUME_JOB_STR "resumeJob"

@@ -41,15 +41,11 @@ class RightPanel(QFrame):
         self.status_title.setAlignment(Qt.AlignCenter)
         self._status_lay.addWidget(self.status_title)
 
-        # Secondary mode chips (muted, under the state badge) — hidden until
-        # the matching machine flag is reported.
+        # Secondary mode chips (muted, under the state badge). Nothing uses
+        # them now that dry run is gone; the row is kept because the status
+        # column's spacing is laid out around it.
         self._chips_lay = QHBoxLayout()
         self._chips_lay.setAlignment(Qt.AlignCenter)
-        self._chip_dry = QLabel("DRY RUN")
-        for chip in (self._chip_dry,):
-            chip.setAlignment(Qt.AlignCenter)
-            chip.hide()
-            self._chips_lay.addWidget(chip)
         self._status_lay.addLayout(self._chips_lay)
 
         self._lay.addWidget(self.status_frame)
@@ -146,7 +142,7 @@ class RightPanel(QFrame):
         self._status_lay.setContentsMargins(px(8), px(8), px(8), px(8))
         self.status_title.setFont(font(18, bold=True))
         self._chips_lay.setSpacing(px(4))
-        for chip in (self._chip_dry,):
+        for chip in ():
             chip.setFont(font(9, bold=True))
             chip.setStyleSheet(
                 f"background: rgba(255, 255, 255, 0.55); color: {TXT2}; "
@@ -280,11 +276,9 @@ class RightPanel(QFrame):
         self.set_status(base or "idle")
 
     def _on_flags(self, flags: dict) -> None:
-        """Toggle the DRY RUN chip and the door row."""
-        dry = bool(flags.get("dryRunEnabled", False) or flags.get("dryRunActive", False))
+        """Toggle the door row."""
         self._job_running = bool(flags.get("jobRunning", self._job_running))
         self._job_paused = bool(flags.get("jobPaused", self._job_paused))
-        self._chip_dry.setVisible(dry)
         # doorOpen rides on every status poll; housingInstalled only arrives
         # from getHousingSettings (asked for on connect).
         if "doorOpen" in flags:
