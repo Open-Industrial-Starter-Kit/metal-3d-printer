@@ -1,20 +1,7 @@
-# NOTE: the CAM tab embeds two browser CAM tools in a QWebEngineView, so the
-# full PySide6 metapackage is REQUIRED — QtWebEngine ships in PySide6-Addons.
-# Swapping this for PySide6-Essentials to save space silently breaks that tab.
+# The full PySide6 metapackage, not PySide6-Essentials: the 3-D views pull in
+# QtWebEngine, which ships in PySide6-Addons.
 PySide6>=6.5.0
 pyserial>=3.5
-websockets>=12.0
-zeroconf>=0.128.0          # optional: mDNS discovery for WS clients
-
-# ── BLE advertising (WiFi-discovery side-channel) ─────────────────────────────
-# The machine scans for a BLE advertisement named "minicnc_<ip>" to learn where
-# to open the WebSocket. Each OS needs its own peripheral/advertising backend;
-# all are optional — without them the app still works over USB serial.
-pyobjc-framework-CoreBluetooth>=9.0 ; sys_platform == "darwin"
-pyobjc-framework-libdispatch>=9.0   ; sys_platform == "darwin"
-dbus-fast>=2.0                      ; sys_platform == "linux"
-winrt-Windows.Devices.Bluetooth.Advertisement>=2.0 ; sys_platform == "win32"
-winrt-Windows.Storage.Streams>=2.0                  ; sys_platform == "win32"
 
 # ── Surface reconstruction for 3-D scans (recon/) ─────────────────────────────
 # The .ply viewer can rebuild a surface from an open point cloud. Open3D carries

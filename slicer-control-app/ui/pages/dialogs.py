@@ -617,7 +617,7 @@ class OpeningFileDialog(FlowDialog):
         self._links = [
             (conn.opened_file_changed, self._on_opened),
             (conn.serial_state_changed, self._on_link_changed),
-            (conn.ws_connected_changed, self._on_link_changed),
+            (conn.link_changed, self._on_link_changed),
             (preview.read_progress, self._on_progress),
             (preview.read_finished, self._on_read_done),
         ]
@@ -644,7 +644,7 @@ class OpeningFileDialog(FlowDialog):
         self._finish()
 
     def _on_link_changed(self, *_) -> None:
-        if not (self._conn.is_serial_connected or self._conn.is_ws_active):
+        if not (self._conn.is_serial_connected or self._conn.is_offline_link):
             self._finish()
 
     def reject(self) -> None:

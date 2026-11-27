@@ -4,9 +4,8 @@ Hamburger (sandwich) app menu — a 1:1 port of the mobile app's menu sheet.
 
 Organisation mirrors the Android App.tsx menu exactly:
   • Machine name (filled name box + edit button)
-  • Connectivity (Wi-Fi status + hotspot toggles)
+  • Connectivity (link status)
   • Machine connection (shows the machine ID; Switch re-runs discovery)
-  • WLAN settings / Hotspot settings (SSID + password editors)
   • Hardware settings  -> sub-sheet (housing, door interlock, probe ref Z,
     probe height, steps-per-mm calculator)
   • Machine info       -> sub-sheet (sensors, firmware, usage, job history)
@@ -168,73 +167,17 @@ class _Sheet(QDialog):
                       g.center().y() - self.height() // 2)
 
 
-# ── WLAN / hotspot settings popup ─────────────────────────────────────────────
-
-class WifiSettingsDialog(_Sheet):
-    """SSID + password editor with show/hide, for client WLAN or hotspot AP."""
-
-    def __init__(self, title: str, ssid: str, password: str, parent=None):
-        super().__init__(parent, width=420)
-        self.add_header(title)
-
-        self._lay.addWidget(lbl("SSID", sz=12, color=TXT2))
-        self._ssid = QLineEdit(ssid)
-        self._style_input(self._ssid)
-        self._lay.addWidget(self._ssid)
-
-        self._lay.addWidget(lbl("Password", sz=12, color=TXT2))
-        pw_row = QHBoxLayout()
-        self._pw = QLineEdit(password)
-        self._pw.setEchoMode(QLineEdit.Password)
-        self._style_input(self._pw)
-        pw_row.addWidget(self._pw, 1)
-        self._eye = QPushButton("👁")
-        self._eye.setCheckable(True)
-        self._eye.setCursor(QCursor(Qt.PointingHandCursor))
-        self._eye.toggled.connect(lambda on: self._pw.setEchoMode(
-            QLineEdit.Normal if on else QLineEdit.Password))
-        pw_row.addWidget(self._eye)
-        self._lay.addLayout(pw_row)
-
-        btns = QHBoxLayout()
-        btns.addStretch()
-        self._save = QPushButton("save")
-        self._save.setCursor(QCursor(Qt.PointingHandCursor))
-        self._save.clicked.connect(self.accept)
-        btns.addWidget(self._save)
-        btns.addStretch()
-        self._lay.addLayout(btns)
-
-        bind(self, self._apply_scale)
-
-    def _apply_scale(self, *_):
-        super()._apply_scale()
-        self._eye.setFixedSize(px(40), px(40))
-        self._eye.setStyleSheet(f"""
-            QPushButton {{ background: {LIGHT}; border: 1px solid {BORDER};
-                           border-radius: {px(8)}px; font-size: {fs(15)}px; }}
-            QPushButton:checked {{ background: {PANEL}; }}
-        """)
-        self._save.setFixedSize(px(110), px(42))
-        self._save.setStyleSheet(f"""
-            QPushButton {{ background: {NAVY}; border: none; border-radius: {px(10)}px;
-                           color: white; font-size: {fs(14)}px; }}
-            QPushButton:hover {{ background: #2A3A5F; }}
-        """)
-
-    @staticmethod
-    def _style_input(le: QLineEdit) -> None:
-        def _style(x):
-            x.setFixedHeight(px(40))
-            x.setStyleSheet(
-                f"background: {LIGHT}; border: 1px solid {BORDER}; "
-                f"border-radius: {px(8)}px; padding: {px(4)}px {px(10)}px; "
-                f"font-size: {fs(14)}px; color: {TXT};"
-            )
-        autoscale(le, _style)
-
-    def values(self) -> tuple:
-        return self._ssid.text().strip(), self._pw.text().strip()
+def _style_line_edit(le: QLineEdit) -> None:
+    """House style for a QLineEdit. It lived on the WLAN settings sheet as a
+    static method until that sheet was removed; it was never WiFi-specific."""
+    def _style(x):
+        x.setFixedHeight(px(40))
+        x.setStyleSheet(
+            f"background: {LIGHT}; border: 1px solid {BORDER}; "
+            f"border-radius: {px(8)}px; padding: {px(4)}px {px(10)}px; "
+            f"font-size: {fs(14)}px; color: {TXT};"
+        )
+    autoscale(le, _style)
 
 
 # ── Hardware-settings sub-sheet ───────────────────────────────────────────────
@@ -262,7 +205,7 @@ class HardwareSettingsDialog(_Sheet):
         self._conn = conn
         self.add_close_header("Hardware settings")
 
-        connected = conn.is_serial_connected or conn.is_ws_active
+        connected = conn.is_serial_connected or conn.is_offline_link
 
         housing = conn.flags().get("housingInstalled")
         self._housing_lbl, self._housing_sw = _switch_row(
@@ -306,7 +249,7 @@ class HardwareSettingsDialog(_Sheet):
         self._lay.addWidget(self._steps)
 
         # Controller UF2 mode. Gated on the USB link, not on `connected`: over
-        # WiFi the machine is not on this computer's USB at all, so picotool
+        # the machine may not be on this computer's USB at all, so picotool
         # cannot see it however well the app is talking to it — and a button
         # that answers "no device found" to a connected machine is worse than
         # one that is plainly unavailable. Also refused while a job is running
@@ -443,7 +386,7 @@ class HardwareSettingsDialog(_Sheet):
                     "would abandon it mid-job.")
         if not self._conn.is_serial_connected:
             return ("The machine is not connected over USB. picotool talks to "
-                    "the controller over the cable, so a WiFi connection is "
+                    "the controller over the cable, so a cableless connection is "
                     "not enough.")
         return ""
 
@@ -580,13 +523,13 @@ class StepsPerMmDialog(_Sheet):
         self._lay.addWidget(lbl("Commanded distance (mm)", sz=12, color=TXT2))
         self._commanded = QLineEdit()
         self._commanded.setPlaceholderText("e.g. 100")
-        WifiSettingsDialog._style_input(self._commanded)
+        _style_line_edit(self._commanded)
         self._lay.addWidget(self._commanded)
 
         self._lay.addWidget(lbl("Measured distance (mm)", sz=12, color=TXT2))
         self._measured = QLineEdit()
         self._measured.setPlaceholderText("What the machine actually moved")
-        WifiSettingsDialog._style_input(self._measured)
+        _style_line_edit(self._measured)
         self._lay.addWidget(self._measured)
 
         hint = lbl("Any distance works, but the longer the distance, the more "
@@ -693,7 +636,7 @@ class StepsPerMmDialog(_Sheet):
     def _blocked_reason(self) -> str:
         """Why saving is unavailable right now, or "" when it is allowed."""
         conn = self._conn
-        if not (conn.is_serial_connected or conn.is_ws_active):
+        if not (conn.is_serial_connected or conn.is_offline_link):
             return "The machine is not connected."
         flags = conn.flags()
         if flags.get("jobRunning") or flags.get("jobPaused"):
@@ -832,7 +775,7 @@ class DebuggingDialog(_Sheet):
         "debuggingMacroBuffer": "Macro buffer",
         "debuggingSDCard": "SD card",
         "debuggingJson": "JSON",
-        "debuggingESP32": "ESP32 (WiFi)",
+        "debuggingESP32": "ESP32",
         "debuggingEEPROM": "EEPROM",
         "debuggingJob": "Job",
     }
@@ -877,7 +820,7 @@ class DebuggingDialog(_Sheet):
         super().done(r)
 
     def _on_settings(self, settings: dict) -> None:
-        connected = self._conn.is_serial_connected or self._conn.is_ws_active
+        connected = self._conn.is_serial_connected or self._conn.is_offline_link
         for key, sw in self._switches.items():
             if key in settings:
                 sw.blockSignals(True)
@@ -1184,9 +1127,8 @@ class AppMenuDrawer(QDialog):
         v = QVBoxLayout(body)
         self._v = v
 
-        connected = conn.is_serial_connected or conn.is_ws_active
+        connected = conn.is_serial_connected or conn.is_offline_link
         info = conn.machine_info()
-        wifi = conn.wifi_settings()
 
         # ── Machine name ────────────────────────────────────────────────────
         v.addWidget(_section_title("Machine name"))
@@ -1209,27 +1151,20 @@ class AppMenuDrawer(QDialog):
 
         # ── Connectivity ────────────────────────────────────────────────────
         v.addWidget(_section_title("Connectivity"))
-        self._wifi_lbl, _wifi_sw = _switch_row(
+        self._link_lbl, _link_sw = _switch_row(
             v, "Connected" if connected else "Disconnected",
             checked=connected, enabled=False)
-        hot = wifi.get("hotspotEnabled")
-        self._hot_lbl, self._hot_sw = _switch_row(
-            v, "Hotspot" if hot is None else
-            ("Hotspot on" if hot else "Hotspot off"),
-            checked=bool(hot), enabled=hot is not None)
-        self._hot_sw.toggled.connect(self._toggle_hotspot)
         v.addWidget(hline())
 
-        # ── Machine connection (shows the ID; Switch re-runs WiFi discovery) ─
-        # Disabled over serial: serial is preferred and always wins, so there
-        # is nothing to switch between.
+        # ── Machine connection ──────────────────────────────────────────────
+        # USB serial is the only transport, so there is nothing to switch
+        # between. The row stays as the way back out of the developer offline
+        # mode, to searching for real hardware.
         v.addWidget(_section_title("Machine connection"))
-        # Offline (dev) mode has no machine to switch between — the row becomes
-        # the way back out of it, to searching for real hardware.
         self._conn_row = _row_button(self._machine_conn_text(),
-                                     "Connect" if conn.is_offline else "Switch",
+                                     "Connect" if conn.is_offline else "--",
                                      icon_name="sync")
-        self._conn_row.setEnabled(not conn.is_serial_connected)
+        self._conn_row.setEnabled(conn.is_offline)
         self._conn_row.clicked.connect(self._switch_machine)
         v.addWidget(self._conn_row)
         # Offline (dev) only: the simulated machine's rotary axis cable, so
@@ -1244,28 +1179,9 @@ class AppMenuDrawer(QDialog):
             self._rotary_sw.toggled.connect(conn.set_offline_rotary)
         v.addWidget(hline())
 
-        # ── WLAN settings ───────────────────────────────────────────────────
-        v.addWidget(_section_title("WLAN settings"))
-        self._wlan_row = _row_button(wifi.get("clientWifiSSID", "--") or "--",
-                                     "Change", icon_name="settings")
-        self._wlan_row.setEnabled(connected)
-        self._wlan_row.clicked.connect(self._open_wlan)
-        v.addWidget(self._wlan_row)
-        v.addWidget(hline())
-
-        # ── Hotspot settings ────────────────────────────────────────────────
-        v.addWidget(_section_title("Hotspot settings"))
-        self._ap_row = _row_button(wifi.get("apWifiSSID", "--") or "--",
-                                   "Change", icon_name="settings")
-        self._ap_row.setEnabled(connected)
-        self._ap_row.clicked.connect(self._open_hotspot)
-        v.addWidget(self._ap_row)
-        v.addWidget(hline())
-
         # ── CAM graphics ────────────────────────────────────────────────────
-        # Off only after Kiri:Moto failed to start and the user accepted
-        # compatibility graphics (gpu_mode.py). This is the way back to the GPU
-        # once a driver update or another PC makes it usable again.
+        # The way back to the GPU after compatibility graphics was accepted
+        # (gpu_mode.py), once a driver update or another PC makes it usable.
         import gpu_mode
         v.addWidget(_section_title("Graphics"))
         _, self._gpu_sw = _switch_row(
@@ -1294,11 +1210,10 @@ class AppMenuDrawer(QDialog):
         bind(self, self._apply_scale)
 
         # Live updates while the menu is open
-        conn.wifi_settings_changed.connect(self._on_wifi)
         conn.machine_info_changed.connect(self._on_info)
 
         # Mirror the mobile app: refresh everything when the menu opens.
-        for g in ("machineName", "getWifiSettings", "firmwareVersion",
+        for g in ("machineName", "firmwareVersion",
                   "deviceId", "getToolLength", "getToolLengthReferences",
                   "getHousingSettings", "getMachineUsage", "getProbeHeight"):
             conn.get(g)
@@ -1348,8 +1263,7 @@ class AppMenuDrawer(QDialog):
         # NOT guaranteed for dialogs, so disconnect here (once).
         if not getattr(self, "_disconnected", False):
             self._disconnected = True
-            for sig, slot in ((self._conn.wifi_settings_changed, self._on_wifi),
-                              (self._conn.machine_info_changed, self._on_info)):
+            for sig, slot in ((self._conn.machine_info_changed, self._on_info),):
                 try:
                     sig.disconnect(slot)
                 except (RuntimeError, TypeError):
@@ -1360,26 +1274,12 @@ class AppMenuDrawer(QDialog):
 
     def _machine_conn_text(self) -> str:
         if self._conn.is_offline:
-            n = self._conn.discovered_machine_count
-            # Offline holds a multi-machine field back rather than throwing a
-            # picker over the session, so say what is waiting.
-            return f"Offline (dev) — {n} found" if n else "Offline (dev)"
+            return "Offline (dev)"
         info = self._conn.machine_info()
         did = str(info.get("deviceId", "") or "").strip()
         if did and did != "--":
             return f"ID: {did}"
         return info.get("machineName", "--") or "--"
-
-    def _on_wifi(self, wifi: dict) -> None:
-        self._wlan_row._value_lbl.setText(wifi.get("clientWifiSSID", "--") or "--")
-        self._ap_row._value_lbl.setText(wifi.get("apWifiSSID", "--") or "--")
-        hot = wifi.get("hotspotEnabled")
-        if hot is not None:
-            self._hot_sw.blockSignals(True)
-            self._hot_sw.setChecked(bool(hot))
-            self._hot_sw.setEnabled(True)
-            self._hot_sw.blockSignals(False)
-            self._hot_lbl.setText("Hotspot on" if hot else "Hotspot off")
 
     def _on_info(self, info: dict) -> None:
         self._name_lbl.setText(info.get("machineName", "--") or "--")
@@ -1408,10 +1308,8 @@ class AppMenuDrawer(QDialog):
         self.accept()                     # mobile parity: close the menu first
         if conn.is_offline:
             # Leave the simulation and go back to the search splash; a machine
-            # that is already attached is picked up by the rescan this starts.
+            # already on the cable is picked up by serial auto-connect.
             conn.exit_offline_mode()
-            return
-        conn.rescan_machines()            # re-scan + always show the picker
 
     def _toggle_gpu(self, on: bool) -> None:
         """Save the choice; it takes effect on restart (Chromium reads it once)."""
@@ -1442,55 +1340,6 @@ class AppMenuDrawer(QDialog):
             gpu_mode.request_restart()
             if host is not None:
                 host.window().close()
-
-    def _toggle_hotspot(self, on: bool) -> None:
-        self._conn.set("setHotspotSettings", hotspotEnabled=bool(on))
-        self._conn.get("getWifiSettings")
-
-    def _open_wlan(self) -> None:
-        conn = self._conn
-        wifi = conn.wifi_settings()
-        host = self._host()
-        self.accept()
-        dlg = WifiSettingsDialog("WLAN settings",
-                                 wifi.get("clientWifiSSID", "") or "",
-                                 wifi.get("clientWifiPassword", "") or "",
-                                 parent=host)
-
-        def _apply():
-            ssid, pw = dlg.values()
-            if not ssid or not pw:
-                return
-            # Mobile parity: preserve the stored AP values in the same call.
-            conn.set("setWifiSettings",
-                     apWifiSSID=wifi.get("apWifiSSID", "") or "",
-                     apWifiPassword=wifi.get("apWifiPassword", "") or "",
-                     clientWifiSSID=ssid, clientWifiPassword=pw)
-            conn.get("getWifiSettings")
-
-        dlg.accepted.connect(_apply)
-        dlg.show()
-
-    def _open_hotspot(self) -> None:
-        conn = self._conn
-        wifi = conn.wifi_settings()
-        host = self._host()
-        self.accept()
-        dlg = WifiSettingsDialog("Hotspot settings",
-                                 wifi.get("apWifiSSID", "") or "",
-                                 wifi.get("apWifiPassword", "") or "",
-                                 parent=host)
-
-        def _apply():
-            ssid, pw = dlg.values()
-            if not ssid or not pw:
-                return
-            conn.set("setHotspotSettings",
-                     apWifiSSID=ssid, apWifiPassword=pw)
-            conn.get("getWifiSettings")
-
-        dlg.accepted.connect(_apply)
-        dlg.show()
 
     def _open_hardware(self) -> None:
         conn, host = self._conn, self._host()

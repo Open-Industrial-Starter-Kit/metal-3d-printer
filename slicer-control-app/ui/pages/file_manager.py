@@ -1267,7 +1267,7 @@ class FileManagerPage(QWidget):
         conn.machine_status_changed.connect(self._on_status_for_gates)
         conn.machine_flags_changed.connect(lambda *_: self._sync_gates())
         conn.serial_state_changed.connect(lambda *_: self._sync_gates())
-        conn.ws_connected_changed.connect(lambda *_: self._sync_gates())
+        conn.link_changed.connect(lambda *_: self._sync_gates())
         # Transfers gate the upload / clear-cache buttons too — including
         # downloads started elsewhere (live preview cache sync).
         conn.transfer_progress.connect(lambda *_: self._sync_gates())
@@ -1315,7 +1315,7 @@ class FileManagerPage(QWidget):
         locked = self._machine_locked()
         conn = self._conn
         connected = bool(conn and (conn.is_serial_connected
-                                   or conn.is_ws_active))
+                                   or conn.is_offline_link))
         transferring = bool(conn and (conn.is_transfer_active
                                       or conn.is_downloading))
         moving = self._machine_moving()

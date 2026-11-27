@@ -157,7 +157,7 @@ def main():
         mgr.set_scale(compute_scale(avail.width(), avail.height()))
 
     # Single-instance guard: a second launch would fight over the serial port
-    # and the WebSocket server port, so refuse to start one.
+    # so refuse to start one.
     lock = QLockFile(QDir.tempPath() + "/piccola-cnc-desktop.lock")
     lock.setStaleLockTime(0)          # never treat a live lock as stale
     if not lock.tryLock(100):

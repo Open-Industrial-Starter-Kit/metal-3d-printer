@@ -210,7 +210,7 @@ class _ParseTask(QThread):
     Why off it: `parse_gcode` plus the vertex-array build is linear in file
     size and runs to completion before returning — 3.3 s for a 33 MB file on a
     fast machine. Everything that keeps the machine link alive lives on the GUI
-    thread (`connection._poll`, the websocketPing that answers the firmware's
+    thread (`connection._poll`, the status poll that answers the firmware's
     5 s watchdog), so a parse long enough to matter dropped the connection.
     Nothing about the toolpath needs the GUI thread, so it does not use it.
 
@@ -2099,10 +2099,9 @@ class LivePreviewPage(QWidget):
         # Offline (dev) mode is entered long after wiring, and it never reports
         # an opened file — so refresh the empty state when the link flips, or
         # the cache picker would never appear.
-        conn.ws_connected_changed.connect(self._on_link_changed)
+        conn.link_changed.connect(self._on_link_changed)
         # Pick up a file that's already open + cached at wire time.
         self._on_opened_file(conn.opened_file_name())
-        self._update_height_map_gate()
 
     def _on_link_changed(self, *_) -> None:
         if self._loaded_file is None:
@@ -2112,7 +2111,6 @@ class LivePreviewPage(QWidget):
     def showEvent(self, e) -> None:
         super().showEvent(e)
         self._reposition_overlays()
-        self._update_height_map_gate()
         # Re-sync to the machine's opened file each time the page is shown, so an
         # already-open, already-cached file previews automatically even when it
         # was opened/cached while another page was visible. Positive-only: only

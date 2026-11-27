@@ -29,7 +29,8 @@
 >   `cam_server.py`, the CAM docs and the vendor-fetch tooling are gone with it.
 > - **The laser distance sensor**, which this machine does not have.
 > - **Spindle control**, which this machine does not have.
-> - **WiFi**, leaving USB serial as the only transport.
+> - **WiFi**, leaving USB serial as the only transport: the WebSocket server, the BLE
+>   discovery beacon, the multi-machine chooser and the WLAN/hotspot settings sheets.
 >
 > Each was a separate commit, so `git log -- slicer-control-app` shows exactly what went and why,
 > and any one of them can be read back in isolation.
@@ -37,8 +38,10 @@
 > ### Still inherited and still wrong for this machine
 >
 > The milling-specific flows that were not in scope above are still here and still describe a
-> mill: tool length probing, Z0 and XY0 probing, height maps, facing, and Rotary Mode. The
-> README text below documents all of it, for the Piccola machine.
+> mill: Z0 and tool-length probing, Facing, and Rotary Mode. Facing still emits M3/S/M5 into the
+> G-code it generates, which is why the spindle removal left it alone -- half-editing it would
+> produce wrong G-code rather than no G-code. The README text below documents all of it, for the
+> Piccola machine.
 >
 > Original project README follows.
 

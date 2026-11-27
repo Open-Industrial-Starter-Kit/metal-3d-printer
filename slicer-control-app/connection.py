@@ -24,42 +24,14 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from app_config import SerialConfig
 from serial_worker import SerialWorker
-from ws_server import WsServer
-from ble_advertiser import BleAdvertiser
-
-WS_PORT = 8765
-
-# How long to wait for additional WiFi machines to announce themselves before
-# resolving the selection (mobile-app parity). 0 machines → keep waiting;
-# 1 → auto-connect; 2+ → show the chooser. A newly-seen machine restarts the
-# window so a slow announcer is not missed.
-MACHINE_DISCOVERY_WINDOW_MS = 5000
-
-# While a WiFi machine is connected but not yet *selected* (the discovery window
-# above, and the whole time the chooser sits open), the firmware sees no traffic
-# from us and force-closes the link on its own app-level ping watchdog
-# (WEBSOCKET_API_PING_TIMEOUT_MS, 5 s in firmware) — then reconnects, which churns
-# the machine list and bounces the splash. So we heartbeat every candidate with
-# {"type":"websocketPing"} on this interval until one is selected (after which the
-# 200 ms _poll keeps the link alive). Must stay well under the firmware's 5 s
-# watchdog. 1:1 with the Android app's HEARTBEAT_INTERVAL_MS / !wsConnected
-# heartbeat (App.tsx ~9764).
-WS_KEEPALIVE_INTERVAL_MS = 1000
 
 # After the last upload chunk the firmware copies the temporary file to its
 # final name and hashes it (finalizeTransferredFile) in one blocking loop, and
-# only then acks the chunk. It reads nothing from USB or WiFi meanwhile — a
+# only then acks the chunk. It reads nothing from USB meanwhile — a
 # 9 MB file takes long enough that resuming the poll after the usual 5 s chunk
 # wait filled the serial buffer and the write timeouts dropped the link. So the
 # last chunk gets this much longer wait, with the link kept quiet throughout.
 TRANSFER_FINALIZE_TIMEOUT_S = 300.0
-
-# Serial is the preferred transport: give it a brief head-start at launch so a
-# cabled machine connects directly and the WiFi multi-machine discovery never
-# engages. WiFi fallback (BLE beacon + WS discovery) only switches on if serial
-# hasn't connected by the time this elapses. A cabled CPUB answers the 2 Mbaud
-# serialPing in well under this window (the probe is 0.25 s per port).
-SERIAL_HEADSTART_MS = 2500
 
 # A bare {"result":"failure","error":"fileNotFound"/"noFileOpened"} is the
 # firmware's normal answer to the openedGcodeFileName / jobProgress polls while
@@ -413,8 +385,6 @@ _SILENT_KEYS = frozenset({
     "machineName", "firmwareVersion", "deviceId",
     "powerOnHours", "runHours", "jobCount",
     "openedGcodeFileTotalLines", "fcl", "eof", "probeHeight",
-    "clientWifiSSID", "clientWifiPassword",
-    "apWifiSSID", "apWifiPassword", "hotspotEnabled",
     "housingInstalled", "allowMotionWhenDoorOpen", "doorOpen", "jobHistory",
     "toolLengthReferenceZ",
 })
@@ -454,7 +424,6 @@ _REPLY_KEYS = {
     "machineName": {"machineName"},
     "deviceId": {"deviceId"},
     "firmwareVersion": {"firmwareVersion"},
-    "getWifiSettings": {"clientWifiSSID", "apWifiSSID", "hotspotEnabled"},
     "getProbeHeight": {"probeHeight"},
     "getJobHistory": {"jobHistory"},
     "getOpenedFileBounds": {"fileMinXmm", "fileMaxXmm", "fileMinYmm",
@@ -517,10 +486,6 @@ DEBUGGING_KEYS = ("debuggingBase", "debuggingStatus",
                   "debuggingMacroBuffer", "debuggingSDCard", "debuggingJson",
                   "debuggingESP32", "debuggingEEPROM", "debuggingJob")
 
-# WiFi / hotspot settings keys (parsed from getWifiSettings responses)
-_WIFI_KEYS = ("clientWifiSSID", "clientWifiPassword",
-              "apWifiSSID", "apWifiPassword", "hotspotEnabled")
-
 # ── Machine geometry ─────────────────────────────────────────────────────────
 #: Usable bed, mm (firmware Config.h MAX_WORK_DIMENSION_XY_MM, grbl $130/$131).
 WORK_AREA_MM = (150.0, 150.0)
@@ -554,12 +519,6 @@ _HOMING_COMMANDS = frozenset({
 })
 # Safety cap so a missing homingCompleted can't leave the badge stuck on HOMING.
 HOMING_MAX_MS = 180_000
-
-_WS_POLL_CYCLE = (
-    {"type": "get", "getType": "status"},
-    {"type": "get", "getType": "positions"},
-    {"type": "get", "getType": "currentFeedRate"},
-)
 
 # Canonical machine-status labels (Android parity): UI logic compares lowercase
 # tokens like 'idle'/'run'/'hold' after trim+lower. We normalize incoming
@@ -598,7 +557,6 @@ class Connection(QObject):
     feed_rate_changed(int)            mm/min
     feed_override_changed(int)        %
     serial_state_changed(bool, str)   (connected, message)
-    ws_client_count_changed(int)
     log_received(str, str)            (text, css-color)
     transfer_started()
     transfer_progress(int)            lines sent so far
@@ -613,7 +571,6 @@ class Connection(QObject):
     feed_rate_changed        = Signal(int)
     feed_override_changed    = Signal(int)
     serial_state_changed     = Signal(bool, str)
-    ws_client_count_changed  = Signal(int)
     log_received             = Signal(str, str)
     transfer_started         = Signal()            # upload thread launched
     transfer_finalizing      = Signal()            # all sent, machine processing
@@ -629,7 +586,6 @@ class Connection(QObject):
     download_progress        = Signal(str, int)    # (fileName, percent)
     download_done            = Signal(str, str)    # (fileName, local path | "" on failure)
     debugging_settings_received = Signal(dict)   # debugging* → bool, every getDebuggingSettings reply
-    wifi_settings_changed    = Signal(dict)        # clientWifiSSID / apWifiSSID / hotspotEnabled / …
     job_history_received     = Signal(dict)        # raw getJobHistory payload
     #: raw getOpenedFileBounds payload — where the toolpath sits in job
     #: coordinates, which `fileList` cannot say (it carries sizes only).
@@ -637,12 +593,10 @@ class Connection(QObject):
     file_hash_received       = Signal(str, str)    # (fileName, sha256 lowercase hex)
     motion_error             = Signal(str, str)    # (title, message) — user-facing notice
     transfer_error           = Signal(str, str)    # (title, message) — upload was rejected
-    # Multi-machine WiFi discovery / selection (mobile-app parity)
-    machine_chooser_requested = Signal(list)   # 2+ machines: show chooser (list of dicts)
-    machine_list_changed      = Signal(list)   # chooser contents changed live
-    machine_selected          = Signal(dict)   # a machine became the active one
-    machine_chooser_dismissed = Signal()       # chooser should close (no selection)
-    ws_connected_changed      = Signal(bool)   # a WiFi machine is selected / released
+    #: The simulated developer-offline link came up or went down. Serial
+    #: reports itself through serial_state_changed; this is the other way the
+    #: UI learns a "link" exists, and the gates watch both.
+    link_changed              = Signal(bool)
     # A job ran to its end: (fileName, run seconds). Not emitted for a job the
     # app stopped, an alarm, or a dropped connection — see _watch_job.
     job_finished              = Signal(str, float)
@@ -653,8 +607,6 @@ class Connection(QObject):
     C_INFO = "#888888"
     C_WARN = "#dcdcaa"
     C_ERR  = "#f44747"
-    C_WS_TX = "#c586c0"
-    C_WS_RX = "#9cdcfe"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -664,57 +616,12 @@ class Connection(QObject):
         self._serial.connection_changed.connect(self._on_serial_state)
         self._serial.probe_status.connect(self._on_probe_status)
 
-        self._ws = WsServer()
-        self._ws.log_signal.connect(self._on_ws_log)
-        self._ws.state_changed.connect(self._on_ws_state)
-        self._ws.client_count_changed.connect(self._on_ws_clients)
-        self._ws.client_connected.connect(self._on_ws_client_connected)
-        self._ws.client_disconnected.connect(self._on_ws_client_disconnected)
-        self._ws.message_received.connect(self._on_ws_line)
-
-        # BLE advertiser — the WiFi-discovery side-channel (machine scans for it).
-        self._ble = BleAdvertiser(self)
-        self._ble.status.connect(lambda m: self.log_received.emit(m, self.C_INFO))
-
         self._serial_connected: bool = False
-        self._ws_client_count: int = 0
-
-        # ── Multi-machine WiFi discovery / selection (mobile-app parity) ──────
-        # clientId → {clientId, name, deviceId, firmware}
-        self._machines: dict[str, dict] = {}
-        self._selected_client: str | None = None
-        self._selected_device_id: str | None = None
-        # "idle" | "searching" | "choosing" | "connected"
-        self._selection_phase: str = "idle"
-        self._discovery_timer: QTimer | None = None
-        # Stable deviceIds already seen this discovery round. The window is only
-        # *extended* when a genuinely-new deviceId appears — reconnections of an
-        # already-seen machine must NOT keep pushing the deadline out, or the 5 s
-        # window never elapses under reconnect churn (mobile-app parity). Cleared
-        # at the start of every round (server stop, serial takeover, rescan, or
-        # when every machine has dropped).
-        self._seen_device_ids: set[str] = set()
-        # When True, the next discovery resolve shows the chooser even for a
-        # single machine (set by a manual "Switch machine" rescan, so the user
-        # always gets to pick; cleared once the chooser opens / a machine is
-        # selected). Automatic startup discovery leaves this False and a lone
-        # machine auto-connects (mobile-app parity).
-        self._force_chooser: bool = False
-        # Last discovery field logged, for the offline-hold log suppression in
-        # _resolve_discovery.
-        self._last_discovery_ids: str = ""
 
         # Developer offline mode (no hardware): when True the real transports
         # are torn down and a canned idle-machine status drives the UI. send()
         # and the poll are gated on a real transport, so nothing transmits.
         self._offline: bool = False
-
-        # WiFi fallback is gated behind a serial head-start (see start() /
-        # SERIAL_HEADSTART_MS). False until either the head-start elapses with no
-        # cable or serial drops; while False the BLE beacon stays off and incoming
-        # WS machines are refused, so a cabled machine connects directly without
-        # ever entering WiFi discovery / the multi-machine chooser.
-        self._wifi_enabled: bool = False
 
         # Local "homing in progress" flag: while set, the status is reported as
         # "home" regardless of what the (queued) firmware replies say.
@@ -737,7 +644,6 @@ class Connection(QObject):
         self._flags: dict = {}                    # latest boolean machine flags
         self._machine_info: dict = {}             # machineName / firmwareVersion / …
         self._grbl_settings: dict[int, float] = {} # $N → value, from `$$`
-        self._wifi: dict = {}                     # WiFi / hotspot settings
         self._tool_length: float | None = None
         self._job_progress: dict = {"percent": 0, "currentLine": 0,
                                     "totalLines": 0, "etaSeconds": 0}
@@ -789,7 +695,6 @@ class Connection(QObject):
         self._poll_timer.setInterval(500)
         self._poll_timer.timeout.connect(self._poll)
         self._poll_tick = 0
-        self._ws_poll_tick = 0
 
         # Safety timeout that clears the homing flag if no homingCompleted ever
         # arrives, so the badge can't get stuck on HOMING.
@@ -797,22 +702,6 @@ class Connection(QObject):
         self._homing_timeout.setSingleShot(True)
         self._homing_timeout.setInterval(HOMING_MAX_MS)
         self._homing_timeout.timeout.connect(self._end_homing)
-
-        # Discovery self-heal (1.5 s, mobile parity): re-arms the discovery
-        # window if WiFi machines are attached but no window is pending, so a
-        # missed event / race can never leave the splash stuck forever. Started
-        # in start() so headless tests that drive the handlers directly stay
-        # deterministic.
-        self._heal_timer = QTimer(self)
-        self._heal_timer.setInterval(1500)
-        self._heal_timer.timeout.connect(self._discovery_self_heal)
-
-        # Serial head-start (see SERIAL_HEADSTART_MS): one-shot; on expiry it
-        # turns on the WiFi fallback unless serial has already connected.
-        self._serial_headstart_timer = QTimer(self)
-        self._serial_headstart_timer.setSingleShot(True)
-        self._serial_headstart_timer.setInterval(SERIAL_HEADSTART_MS)
-        self._serial_headstart_timer.timeout.connect(self._on_serial_headstart_elapsed)
 
         # "Job done" detection. The firmware sends no completion message for a
         # job, so the end is read off the jobRunning flag: true -> false, with
@@ -823,14 +712,6 @@ class Connection(QObject):
         self._job_end_timer.setInterval(JOB_END_SETTLE_MS)
         self._job_end_timer.timeout.connect(self._confirm_job_end)
 
-        # WiFi keepalive (see WS_KEEPALIVE_INTERVAL_MS): pings every attached-but-
-        # unselected machine so the firmware watchdog can't force-close it mid-
-        # discovery / while the chooser is open. Started in start(), stopped in
-        # stop(); the tick itself no-ops once a machine is selected.
-        self._ws_keepalive_timer = QTimer(self)
-        self._ws_keepalive_timer.setInterval(WS_KEEPALIVE_INTERVAL_MS)
-        self._ws_keepalive_timer.timeout.connect(self._ws_keepalive_tick)
-
     # ── Public API ────────────────────────────────────────────────────────
 
     @property
@@ -838,10 +719,13 @@ class Connection(QObject):
         return self._serial.is_connected
 
     @property
-    def is_ws_active(self) -> bool:
-        """True when a WiFi machine has been selected and is the active link,
-        or while the developer offline mode is simulating a connection."""
-        return self._offline or self._selected_client is not None
+    def is_offline_link(self) -> bool:
+        """True while the developer offline mode is simulating a connection.
+
+        This is what `is_ws_active` used to be. The WiFi transport is gone, but
+        offline mode still needs a way to tell the gates a "link" is up, and
+        every caller already asked `is_serial_connected or is_ws_active`."""
+        return self._offline
 
     @property
     def is_offline(self) -> bool:
@@ -853,13 +737,6 @@ class Connection(QObject):
         """True when the machine's last file list was cut off at the firmware's
         8 KB reply limit, so files after the last one listed are missing."""
         return self._file_list_truncated
-
-    @property
-    def discovered_machine_count(self) -> int:
-        """How many distinct machines (deduped by deviceId) have announced
-        themselves and are waiting to be picked. Lets the app menu say what is
-        available while offline mode is holding a multi-machine field open."""
-        return len(self._build_choices())
 
     @property
     def last_transfer_ok(self) -> bool:
@@ -883,43 +760,6 @@ class Connection(QObject):
         """True while a file download (machine → desktop) is in progress —
         including the ones the live preview starts to sync its cache."""
         return self._download_name is not None
-
-    def select_machine(self, client_id: str) -> None:
-        """Choose *client_id* as the active WiFi machine (called by the chooser)."""
-        self._select_machine(client_id)
-
-    def rescan_machines(self, force_chooser: bool = True) -> None:
-        """Manually re-run WiFi machine discovery (mobile 'Switch machine').
-
-        Releases the active selection (without dropping any socket, so attached
-        machines stay available), asks every connected machine to re-announce
-        its identity, and reopens the discovery window. With *force_chooser* the
-        picker is shown even for a single machine, so the user can always choose
-        which machine to connect to. No-op while serial is connected — serial is
-        the preferred transport and always wins."""
-        if self._serial.is_connected:
-            return
-        self._force_chooser = force_chooser
-        # Forget the active selection so the picker (not a silent reconnect)
-        # wins, but keep the sockets open so machines stay available.
-        had_selection = self._selected_client is not None
-        self._selected_client = None
-        self._selected_device_id = None
-        self._selection_phase = "searching"
-        self._seen_device_ids.clear()   # fresh round
-        self._sync_poll_timer()
-        if had_selection:
-            self.ws_connected_changed.emit(False)
-        # Re-scanning → resume advertising so far-off machines can rediscover us
-        # (it was stopped when a machine was selected).
-        self._enable_wifi_fallback()
-        # Nudge every attached machine to re-identify so the chooser repopulates.
-        for cid in list(self._machines.keys()):
-            for gt in ("machineName", "deviceId", "firmwareVersion"):
-                self._ws.send_to_client(cid, json.dumps(
-                    {"type": "get", "getType": gt}, separators=(",", ":")))
-        self.log_received.emit("[WS] Re-scanning for machines…", self.C_INFO)
-        self._arm_discovery()
 
     def current_job_position(self) -> dict:
         """Latest job (work-coordinate) position: keys jx, jy, jz."""
@@ -972,10 +812,6 @@ class Connection(QObject):
     def machine_info(self) -> dict:
         """Latest machine identity/info fields."""
         return dict(self._machine_info)
-
-    def wifi_settings(self) -> dict:
-        """Latest WiFi/hotspot settings (clientWifiSSID, apWifiSSID, …)."""
-        return dict(self._wifi)
 
     def tool_length(self) -> float | None:
         return self._tool_length
@@ -1055,8 +891,8 @@ class Connection(QObject):
         until eof. Emits download_progress / download_done.
 
         A chunk reply can go missing — a request dropped while the serial link
-        pauses, or a WebSocket send the firmware could not complete (it then
-        sends nothing and rewinds). The firmware expects the client to ask
+        pauses, or one the firmware could not complete (it then sends nothing
+        and rewinds). The firmware expects the client to ask
         again, so a late chunk is re-requested (_download_timeout) rather than
         failing the whole download."""
         if self._download_name is not None:
@@ -1093,29 +929,11 @@ class Connection(QObject):
             self._download_failed(aborted=True)
 
     def start(self) -> None:
-        """Start serial auto-connect and the WS server.
-
-        Serial is the preferred transport, so the WiFi fallback (BLE beacon + WS
-        discovery) is held back for a short head-start: a cabled machine answers
-        the 2 Mbaud serialPing and connects directly without any multi-machine
-        check. WiFi only switches on if serial hasn't won by SERIAL_HEADSTART_MS
-        (see _on_serial_headstart_elapsed) or once a serial link later drops."""
-        self._wifi_enabled = False
+        """Start serial auto-connect. USB serial is the only transport."""
         self._serial.start_auto_connect()
-        self._ws.start(port=WS_PORT, mdns_name="")
-        # Do NOT advertise over BLE yet — that beacon is what invites a machine to
-        # dial in over WiFi. Give serial first crack; enable WiFi only if needed.
-        self._serial_headstart_timer.start()
-        self._heal_timer.start()
-        self._ws_keepalive_timer.start()
 
     def stop(self) -> None:
         """Graceful shutdown."""
-        self._ws_keepalive_timer.stop()
-        self._serial_headstart_timer.stop()
-        self._heal_timer.stop()
-        self._ble.stop()
-        self._ws.stop()
         self._serial.disconnect()
 
     # One canned "connected, idle" machine used by the developer offline mode.
@@ -1146,14 +964,12 @@ class Connection(QObject):
         """Developer offline mode (no hardware): simulate a connected, idle
         machine so the whole UI can be exercised.
 
-        The real transports are deliberately left RUNNING. Offline mode used to
-        call stop(), which killed serial auto-connect, the WS server and the BLE
-        beacon — so a machine plugged in afterwards could never be found and the
-        mode was a one-way trip. Keeping them up costs nothing (no machine is
-        selected, so the poll stays off and send()/_poll/_send_silent are gated
-        on a real transport — nothing is transmitted and the console stays
-        quiet) and it means hardware that appears later still discovers us and
-        takes over, see _leave_offline_for_real_link().
+        Serial auto-connect is deliberately left RUNNING. Offline mode used to
+        call stop(), so a machine plugged in afterwards could never be found and
+        the mode was a one-way trip. Keeping it up costs nothing (send(), _poll
+        and _send_silent are all gated on a real transport, so nothing is
+        transmitted and the console stays quiet) and it means hardware that
+        appears later still takes over, see _leave_offline_for_real_link().
 
         Seeding one idle status populates every panel and satisfies the initial
         homing flow (homedSincePowerOn)."""
@@ -1162,10 +978,10 @@ class Connection(QObject):
         self._offline = True
         self._poll_timer.stop()           # nothing real to poll yet
         # Populate the UI from the canned status first (flags, position, info),
-        # then announce the WiFi link as up so the splash fades and the gates
-        # open with the machine state already in place.
+        # then announce the link as up so the splash fades and the gates open
+        # with the machine state already in place.
         self._route(json.dumps(self._OFFLINE_STATUS))
-        self.ws_connected_changed.emit(True)
+        self.link_changed.emit(True)
         self.log_received.emit(
             "[Offline] Simulated machine — still searching for real hardware…",
             self.C_INFO)
@@ -1230,27 +1046,22 @@ class Connection(QObject):
     def exit_offline_mode(self) -> None:
         """Leave the developer offline mode by hand and go back to searching.
 
-        Drops the simulated snapshot, reports the link as down (which brings the
-        search splash back) and re-opens a discovery round. The transports were
-        never stopped by enter_offline_mode(), so there is nothing to restart —
-        only the WiFi beacon has to be re-armed if it had been switched off."""
+        Drops the simulated snapshot and reports the link as down, which brings
+        the search splash back. Serial auto-connect was never stopped by
+        enter_offline_mode(), so there is nothing to restart."""
         if not self._offline:
             return
         self._clear_offline_snapshot()
-        self.ws_connected_changed.emit(False)
+        self.link_changed.emit(False)
         self.log_received.emit(
             "[Offline] Left offline mode — searching for a machine…",
             self.C_INFO)
-        # Re-announce ourselves and re-open the discovery window. No-op while
-        # serial is connected, which cannot happen here (a live serial link
-        # would already have pulled us out via _leave_offline_for_real_link).
-        self.rescan_machines(force_chooser=False)
 
     def _leave_offline_for_real_link(self) -> None:
         """Real hardware connected while offline mode was running — drop the
         simulation and let the machine drive the UI.
 
-        No ws_connected_changed is emitted here: the caller announces the real
+        No link_changed is emitted here: the caller announces the real
         link itself (_select_machine emits it, serial reports through
         serial_state_changed), so the splash never flashes back in between."""
         if not self._offline:
@@ -1269,31 +1080,12 @@ class Connection(QObject):
         self.machine_info_changed.emit({})
         self._reset_machine_state()
 
-    def _on_serial_headstart_elapsed(self) -> None:
-        """Serial head-start expired with no cable connection — switch on the
-        WiFi fallback so a machine can discover us over BLE/WS."""
-        if self._serial.is_connected:
-            return
-        self._enable_wifi_fallback()
-
-    def _enable_wifi_fallback(self) -> None:
-        """Turn on the WiFi transport: advertise over BLE so the machine can find
-        us and dial the WS server, and let WS clients in. No-op while serial is
-        connected (serial always wins)."""
-        if self._serial.is_connected:
-            return
-        self._wifi_enabled = True
-        self._ble.start(_local_ip())
-
     def send(self, obj: dict) -> None:
-        """Send a JSON command on the best available transport (serial preferred)."""
+        """Send a JSON command over serial, or into the offline simulation."""
         msg = json.dumps(obj, separators=(",", ":"))
         if self._serial.is_connected:
             self._serial.send_priority(msg)
             self.log_received.emit(f"[TX] {msg}", self.C_TX)
-        elif self._selected_client is not None:
-            self._ws_send(msg)
-            self.log_received.emit(f"[WS→TX] {msg}", self.C_WS_TX)
         else:
             if self._offline:
                 self._offline_command(obj)
@@ -1375,16 +1167,12 @@ class Connection(QObject):
                "feedRate": feed_rate, **axes}
         if self._serial.is_connected:
             self._serial.send_priority(json.dumps(msg, separators=(",", ":")))
-        else:
-            self._send_ws_silent(msg)
 
     def jog_cancel(self) -> None:
         """Stop a continuous jog immediately (GRBL 0x85). Safe when idle."""
         msg = {"type": "command", "commandType": "jogCancel"}
         if self._serial.is_connected:
             self._serial.send_priority(json.dumps(msg, separators=(",", ":")))
-        else:
-            self._send_ws_silent(msg)
 
     def request_file_hash(self, filename: str) -> None:
         """Ask the firmware for a .nc file's stored SHA-256; the reply arrives
@@ -1422,9 +1210,6 @@ class Connection(QObject):
         if self._serial.is_connected:
             self._serial.send_priority(text)
             self.log_received.emit(f"[TX] {text}", self.C_TX)
-        elif self._selected_client is not None:
-            self._ws_send(text)
-            self.log_received.emit(f"[WS→TX] {text}", self.C_WS_TX)
         else:
             return
         self._pending_user_reqs.append((time.monotonic(), text))
@@ -1646,11 +1431,9 @@ class Connection(QObject):
             self._serial.send(msg)
 
     def _send_silent_any(self, obj: dict) -> None:
-        """Silent send on whichever transport is active (serial preferred)."""
-        if self._serial.is_connected:
-            self._send_silent(obj)
-        else:
-            self._send_ws_silent(obj)
+        """Silent send. Kept as its own name for the call sites that predate
+        serial being the only transport."""
+        self._send_silent(obj)
 
     def _reset_overrides(self) -> None:
         """Return the feed override to 100% and re-read it. Mirrors the
@@ -1689,16 +1472,6 @@ class Connection(QObject):
                 self._last_override_reset_file = name
         self.opened_file_changed.emit(name)
 
-    def _send_ws_silent(self, obj: dict) -> None:
-        if self._selected_client is not None:
-            self._ws.send_to_client(
-                self._selected_client, json.dumps(obj, separators=(",", ":")))
-
-    def _ws_send(self, msg: str) -> None:
-        """Send a raw text payload to the selected WiFi machine only."""
-        if self._selected_client is not None:
-            self._ws.send_to_client(self._selected_client, msg)
-
     # ── Polling ───────────────────────────────────────────────────────────
 
     def _poll(self) -> None:
@@ -1729,33 +1502,6 @@ class Connection(QObject):
                 self._send_silent({"type": "get", "getType": "getFeedRateOverride"})
             if t % 25 == 7:
                 self._send_silent({"type": "get", "getType": "getToolLength"})
-
-        elif self._selected_client is not None:
-            wt = self._ws_poll_tick
-            self._ws_poll_tick += 1
-            self._send_ws_silent(_WS_POLL_CYCLE[wt % len(_WS_POLL_CYCLE)])
-            # Defer non-critical polls to infrequent ticks.
-            if wt % 5 == 4 and self._opened_file is not None:
-                self._send_ws_silent({"type": "get", "getType": "jobProgress"})
-            if wt % 10 == 2:
-                self._send_ws_silent({"type": "get", "getType": "fileList"})
-            elif wt % 10 == 3:
-                self._send_ws_silent({"type": "get", "getType": "openedGcodeFileName"})
-            elif wt % 25 == 7:
-                self._send_ws_silent({"type": "get", "getType": "getToolLength"})
-
-    def _ws_keepalive_tick(self) -> None:
-        """Heartbeat every attached-but-unselected WiFi machine so the firmware's
-        app-level ping watchdog (WEBSOCKET_API_PING_TIMEOUT_MS, 5 s) doesn't force-
-        close it during the discovery window or while the chooser is open — which
-        would churn the machine list and bounce the splash. Once a machine is
-        selected the 200 ms _poll keeps that link alive, so this stands down (it
-        also no-ops while serial is connected, since WS clients are refused then).
-        1:1 with the Android app's !wsConnected heartbeat (App.tsx ~9764)."""
-        if self._selected_client is not None or self._ws_client_count == 0:
-            return
-        self._ws.send_to_all(json.dumps(
-            {"type": "websocketPing"}, separators=(",", ":")))
 
     # ── Incoming routing ──────────────────────────────────────────────────
 
@@ -1808,9 +1554,9 @@ class Connection(QObject):
         """(code, monotonic time) of the last ``ALARM:N`` seen, or None."""
         return self._last_alarm
 
-    def _route(self, line: str, from_ws: bool = False) -> None:
-        rx_label = "[WS←RX]" if from_ws else "[RX]"
-        rx_color = self.C_WS_RX if from_ws else self.C_RX
+    def _route(self, line: str) -> None:
+        rx_label = "[RX]"
+        rx_color = self.C_RX
 
         # Unblock transfer
         if self._transfer_active and '"result":"success"' in line:
@@ -1975,15 +1721,6 @@ class Connection(QObject):
                 info_changed[k] = p[k]
         if info_changed:
             self.machine_info_changed.emit(dict(self._machine_info))
-
-        # WiFi / hotspot settings
-        wifi_changed = False
-        for k in _WIFI_KEYS:
-            if k in p and self._wifi.get(k) != p[k]:
-                self._wifi[k] = p[k]
-                wifi_changed = True
-        if wifi_changed:
-            self.wifi_settings_changed.emit(dict(self._wifi))
 
         # Firmware debugging switches. Emitted on every reply, not on change:
         # a set is only answered with a bare success, so the re-read after it
@@ -2159,15 +1896,7 @@ class Connection(QObject):
     # ── Transport callbacks ───────────────────────────────────────────────
 
     def _on_serial_line(self, line: str) -> None:
-        self._route(line, from_ws=False)
-
-    def _on_ws_line(self, client_id: str, line: str) -> None:
-        # Always learn identity (machineName / deviceId / firmware) even before a
-        # machine is selected — that is how discovery populates the chooser.
-        self._learn_identity(client_id, line)
-        # Only the selected machine's traffic drives the UI.
-        if self._accept_ws_message(client_id):
-            self._route(line, from_ws=True)
+        self._route(line)
 
     def _watch_job(self, changed: dict) -> None:
         """Follow a job from jobRunning=true to its end (job_finished).
@@ -2249,386 +1978,21 @@ class Connection(QObject):
             # Enforce default overrides on every (re)connect (Android parity).
             self._reset_overrides()
             self._request_housing_settings()
-            # Serial is the preferred transport — cancel the head-start, turn the
-            # WiFi fallback back off, stop the BLE discovery beacon, and tear down
-            # any in-flight WiFi discovery / selection.
-            self._serial_headstart_timer.stop()
-            self._wifi_enabled = False
-            self._ble.stop()
-            self._cancel_ws_discovery_for_serial()
-        else:
-            # Serial gone: switch on the WiFi fallback (BLE beacon + WS clients)
-            # immediately so the machine can find us over WiFi.
-            self._enable_wifi_fallback()
         self._sync_poll_timer()
         self.serial_state_changed.emit(connected, msg)
         color = self.C_INFO
         self.log_received.emit(f"[Serial] {msg}", color)
 
     def _on_probe_status(self, msg: str) -> None:
-        if self._selected_client is None:
-            self.log_received.emit(f"[Discovery] {msg}", self.C_INFO)
-
-    def _on_ws_log(self, text: str, color: str) -> None:
-        self.log_received.emit(text, color)
-
-    def _on_ws_state(self, running: bool) -> None:
-        if not running:
-            # Server stopped → drop every machine and any active selection.
-            self._pending_user_reqs.clear()
-            self._machines.clear()
-            self._seen_device_ids.clear()
-            self._cancel_discovery_timer()
-            if self._selected_client is not None:
-                self._selected_client = None
-                self.ws_connected_changed.emit(False)
-            if self._selection_phase == "choosing":
-                self.machine_chooser_dismissed.emit()
-            self._selection_phase = "idle"
-            self._force_chooser = False
-            self._sync_poll_timer()
-            self._on_ws_clients(0)
-
-    def _on_ws_clients(self, count: int) -> None:
-        # Raw connection count, for the status line only. The handshake and
-        # identity queries now happen per-client in _on_ws_client_connected, and
-        # the poll timer follows selection (see _sync_poll_timer).
-        self._ws_client_count = count
-        self.ws_client_count_changed.emit(count)
-
-    # ── Multi-machine WiFi discovery / selection ──────────────────────────
-
-    def _on_ws_client_connected(self, client_id: str) -> None:
-        """A WiFi machine opened a connection. Serial wins if present; otherwise
-        register the machine, identify it, and (re)arm the discovery window."""
-        # Refuse WiFi while serial is connected OR while the WiFi fallback is still
-        # gated behind the serial head-start (see start() / SERIAL_HEADSTART_MS).
-        # The latter keeps a cabled machine from ever entering WiFi discovery / the
-        # multi-machine chooser — without the beacon we shouldn't get here anyway,
-        # but a machine that dials from a prior session's advertised IP would.
-        if self._serial.is_connected or not self._wifi_enabled:
-            self._ws.close_client(client_id)
-            return
-        self._machines[client_id] = {
-            "clientId": client_id, "name": None,
-            "deviceId": None, "firmware": None,
-        }
-        # Ask it to reply in JSON, then identify itself.
-        self._ws.send_to_client(client_id, json.dumps(
-            {"type": "set", "setType": "setJsonSettings", "jsonResponse": True},
-            separators=(",", ":")))
-        for gt in ("machineName", "deviceId", "firmwareVersion"):
-            self._ws.send_to_client(client_id, json.dumps(
-                {"type": "get", "getType": gt}, separators=(",", ":")))
-
-        if self._selection_phase in ("idle", "searching"):
-            self._selection_phase = "searching"
-            # Arm the window only if it isn't already counting down. Do NOT reset
-            # it here — the deadline is pushed out solely when a genuinely-new
-            # deviceId is identified (see _learn_identity), so reconnect churn
-            # can't keep the window (and the splash) open forever (mobile parity).
-            self._arm_discovery_if_idle()
-        elif self._selection_phase == "choosing":
-            # A new machine appeared while the chooser is open — refresh it.
-            self.machine_list_changed.emit(self._build_choices())
-        # phase == "connected": registered for deviceId reconnect-matching only.
-
-    def _on_ws_client_disconnected(self, client_id: str) -> None:
-        was_selected = client_id == self._selected_client
-        self._machines.pop(client_id, None)
-        if not self._machines:
-            # Every machine has dropped → the round is over. Forget the seen
-            # deviceIds so a fresh round re-extends the window for each one as it
-            # reappears (mobile parity); a transient single-machine drop keeps
-            # them because the field isn't empty.
-            self._seen_device_ids.clear()
-        if self._selection_phase == "choosing":
-            choices = self._build_choices()
-            if not choices:
-                # Everyone vanished while the chooser is open → close it. Do NOT
-                # auto-select a lone survivor here: the chooser is up precisely so
-                # the user picks, and auto-selecting made it flicker shut (e.g.
-                # when one machine dialled twice and a transient socket dropped).
-                self._selection_phase = "idle"
-                self._force_chooser = False
-                self.machine_chooser_dismissed.emit()
-            else:
-                self.machine_list_changed.emit(choices)
-        if was_selected:
-            self._reset_ws_selection()
-
-    def _arm_discovery(self) -> None:
-        """(Re)start the discovery window; _resolve_discovery fires at the end.
-
-        Always *resets* the countdown — call this only when a genuinely-new
-        machine widens the field (a new deviceId), never for mere reconnect
-        churn (use _arm_discovery_if_idle for socket (re)connects)."""
-        if self._discovery_timer is None:
-            self._discovery_timer = QTimer(self)
-            self._discovery_timer.setSingleShot(True)
-            self._discovery_timer.timeout.connect(self._resolve_discovery)
-        self._discovery_timer.start(MACHINE_DISCOVERY_WINDOW_MS)
-
-    def _arm_discovery_if_idle(self) -> None:
-        """Start the discovery window only if it isn't already counting down.
-
-        A reconnecting machine must not keep pushing the deadline out, so a
-        socket (re)connect arms the window but never resets a running one
-        (mobile-app parity)."""
-        if self._discovery_timer is None or not self._discovery_timer.isActive():
-            self._arm_discovery()
-
-    def _discovery_self_heal(self) -> None:
-        """Safety net (mobile parity): if WiFi machines are attached but the
-        discovery window isn't pending — e.g. a missed event / race left it
-        unarmed — re-arm it so the splash can never get stuck forever. Never
-        disturbs an open chooser ('choosing') or an active link (serial or an
-        already-selected machine)."""
-        if self._serial.is_connected or self._selected_client is not None:
-            return
-        if (self._selection_phase in ("idle", "searching") and self._machines
-                and (self._discovery_timer is None
-                     or not self._discovery_timer.isActive())):
-            self._selection_phase = "searching"
-            self._arm_discovery()
-
-    def _cancel_discovery_timer(self) -> None:
-        if self._discovery_timer is not None:
-            self._discovery_timer.stop()
-
-    def _resolve_discovery(self) -> None:
-        """End of the discovery window: 0 → wait, 1 → auto-connect, 2+ → chooser.
-
-        Only ever runs from the "searching" phase (the discovery timer). Once the
-        chooser is open ("choosing") nothing re-resolves — that would risk
-        auto-selecting out from under an open chooser."""
-        if self._selection_phase != "searching":
-            return
-        choices = self._build_choices()
-        ids = ", ".join((c.get("deviceId") or c["clientId"]) for c in choices)
-        # While offline holds a multi-machine field open the window re-resolves
-        # every few seconds; log it only when the field actually changes, so the
-        # console isn't flooded with the same line.
-        if not (self._offline and ids == self._last_discovery_ids):
-            self.log_received.emit(
-                f"[Discovery] Window elapsed: {len(choices)} machine(s) [{ids}]",
-                self.C_INFO)
-        self._last_discovery_ids = ids
-        if not choices:
-            # Nothing yet — keep waiting (and keep _force_chooser armed so the
-            # picker still appears once a machine finally announces).
-            self._selection_phase = "idle" if not self._machines else "searching"
-            return
-        if len(choices) == 1 and not self._force_chooser:
-            self._select_machine(choices[0]["clientId"])
-        elif self._offline and not self._force_chooser:
-            # Several machines answered while the developer offline mode is
-            # running. A lone machine is unambiguous and takes over silently
-            # (above), but throwing a modal picker over a session the user
-            # deliberately put into offline mode is not something they asked
-            # for — and picking one here would yank them out of it mid-task.
-            # Hold the round open instead: the machines stay registered and
-            # keep being refreshed, and the user connects when ready via the
-            # app menu (Machine connection → Connect), whose exit_offline_mode()
-            # re-runs discovery and shows the picker for real.
-            self._selection_phase = "searching"
-        else:
-            self._selection_phase = "choosing"
-            self._force_chooser = False
-            self.machine_chooser_requested.emit(choices)
-
-    def _dedupe_machines(self) -> list:
-        """Machines collapsed by deviceId (latest connection wins); machines that
-        have not reported a deviceId yet are kept individually."""
-        by_device: dict[str, dict] = {}
-        no_id: list = []
-        for m in self._machines.values():
-            did = m.get("deviceId")
-            if did:
-                prev = by_device.get(did)
-                if prev is None or int(m["clientId"]) > int(prev["clientId"]):
-                    by_device[did] = m
-            else:
-                no_id.append(m)
-        out = list(by_device.values()) + no_id
-        out.sort(key=lambda m: int(m["clientId"]))
-        return out
-
-    def _build_choices(self) -> list:
-        """Deduped machine list with a human label on each entry."""
-        out = []
-        for i, m in enumerate(self._dedupe_machines()):
-            label = m.get("name") or m.get("deviceId") or f"Machine {i + 1}"
-            out.append({**m, "label": label})
-        return out
-
-    def _select_machine(self, client_id: str) -> None:
-        m = self._machines.get(client_id)
-        if m is None:
-            return
-        # A machine dialled in while the developer offline mode was simulating
-        # one — drop the simulation; the ws_connected_changed(True) at the end
-        # of this method is what announces the real link.
-        self._leave_offline_for_real_link()
-        # Fresh link → forget any prior machine snapshot so status/flags
-        # re-emit as changes (see _reset_machine_state).
-        self._reset_machine_state()
-        self._selected_client = client_id
-        self._selected_device_id = m.get("deviceId") or self._selected_device_id
-        self._selection_phase = "connected"
-        self._force_chooser = False
-        self._cancel_discovery_timer()
-        # Drive only the chosen machine — close every other connection.
-        for cid in list(self._machines.keys()):
-            if cid != client_id:
-                self._ws.close_client(cid)
-                self._machines.pop(cid, None)
-        self._sync_poll_timer()
-        # The connect-time identity replies arrived during discovery and were
-        # not routed, so _machine_info is still empty. Seed it from what we
-        # learned (instant top-bar title) and re-query now that routing is live
-        # (authoritative — mirrors what serial does on connect).
-        self._seed_machine_info(m)
-        for gt in ("machineName", "firmwareVersion", "deviceId"):
-            self._send_ws_silent({"type": "get", "getType": gt})
-        # WiFi machine connected → stop advertising our IP over BLE; the beacon
-        # is only a discovery side-channel and isn't needed once connected. It
-        # restarts on selection loss / rescan so a machine can rediscover us.
-        self._ble.stop()
-        # Enforce default overrides on every (re)connect (Android parity).
-        self._last_override_reset_file = None
-        self._reset_overrides()
-        self._request_housing_settings()
-        self.machine_selected.emit(dict(m))
-        self.ws_connected_changed.emit(True)
-        label = m.get("name") or m.get("deviceId") or f"machine {client_id}"
-        self.log_received.emit(f"[WS] Connected to {label}", self.C_INFO)
-
-    def _seed_machine_info(self, m: dict) -> None:
-        """Push a selected machine's discovered identity into _machine_info."""
-        seed = {}
-        if m.get("name"):
-            seed["machineName"] = m["name"]
-        if m.get("firmware"):
-            seed["firmwareVersion"] = m["firmware"]
-        if m.get("deviceId"):
-            seed["deviceId"] = m["deviceId"]
-        changed = {k: v for k, v in seed.items() if self._machine_info.get(k) != v}
-        if changed:
-            self._machine_info.update(changed)
-            self.machine_info_changed.emit(dict(self._machine_info))
-
-    def _reset_ws_selection(self) -> None:
-        """The selected machine went away. Release it but remember its deviceId
-        so the same machine auto-reconnects without prompting."""
-        self._reset_machine_state()
-        self._selected_client = None
-        self._selection_phase = "searching" if self._machines else "idle"
-        self._seen_device_ids.clear()   # back to a fresh search round
-        self._sync_poll_timer()
-        self.ws_connected_changed.emit(False)
-        # No longer connected → resume advertising so the machine can find us
-        # again (no-op if serial has since taken over).
-        self._enable_wifi_fallback()
-        if self._machines:
-            self._arm_discovery()
-
-    def _cancel_ws_discovery_for_serial(self) -> None:
-        """Serial just connected (preferred) — tear down WiFi discovery, close
-        every WS machine connection, and forget the remembered deviceId."""
-        self._cancel_discovery_timer()
-        had_selection = self._selected_client is not None
-        was_choosing = self._selection_phase == "choosing"
-        for cid in list(self._machines.keys()):
-            self._ws.close_client(cid)
-        self._machines.clear()
-        self._seen_device_ids.clear()
-        self._selected_client = None
-        self._selected_device_id = None
-        self._selection_phase = "idle"
-        self._force_chooser = False
-        if had_selection:
-            self.ws_connected_changed.emit(False)
-        if was_choosing:
-            self.machine_chooser_dismissed.emit()
+        self.log_received.emit(f"[Discovery] {msg}", self.C_INFO)
 
     def _sync_poll_timer(self) -> None:
-        """Run the poll timer iff a transport is active (serial or selected WS)."""
-        active = self._serial.is_connected or self._selected_client is not None
+        """Run the poll timer iff serial is connected."""
+        active = self._serial.is_connected
         if active and not self._poll_timer.isActive():
             self._poll_timer.start()
         elif not active and self._poll_timer.isActive():
             self._poll_timer.stop()
-
-    def _learn_identity(self, client_id: str, line: str) -> None:
-        """Parse identity fields from a machine's reply during discovery."""
-        m = self._machines.get(client_id)
-        if m is None:
-            return
-        try:
-            p = json.loads(line)
-        except json.JSONDecodeError:
-            return
-        if not isinstance(p, dict):
-            return
-        changed = new_device = False
-        if isinstance(p.get("machineName"), str) and p["machineName"] != m.get("name"):
-            m["name"] = p["machineName"]; changed = True
-        if (isinstance(p.get("firmwareVersion"), str)
-                and p["firmwareVersion"] != m.get("firmware")):
-            m["firmware"] = p["firmwareVersion"]; changed = True
-        did = p.get("deviceId")
-        if isinstance(did, str) and did and did != m.get("deviceId"):
-            m["deviceId"] = did; changed = new_device = True
-        if not changed:
-            return
-        if new_device:
-            # Diagnostic: surfaces every machine that announces a stable deviceId,
-            # with the phase it arrived in — so the Console shows whether 2 WiFi
-            # machines really both reach discovery (distinct deviceIds) or only one.
-            self.log_received.emit(
-                f"[Discovery] Identified '{m.get('name') or '?'}' "
-                f"deviceId={did} (client {client_id}, phase {self._selection_phase})",
-                self.C_INFO)
-        # Fast reconnect: a machine matching the last-selected deviceId reappeared
-        # after a drop → re-select it immediately, no waiting / prompting. Only
-        # while searching — never while a chooser is open, or it would close the
-        # chooser out from under the user.
-        if (new_device and self._selected_client is None
-                and self._selection_phase == "searching"
-                and self._selected_device_id is not None
-                and m.get("deviceId") == self._selected_device_id):
-            self._select_machine(client_id)
-            return
-        # The first time we see a stable deviceId this round, a genuinely-new
-        # machine has widened the field → extend the window so slow announcers
-        # aren't missed. Reconnections of an already-seen machine (a new clientId
-        # re-reporting a known deviceId) must NOT extend it, or the window never
-        # elapses under reconnect churn — the reported "no chooser, never
-        # connects" bug (mobile-app parity).
-        if (new_device and self._selection_phase == "searching"
-                and did not in self._seen_device_ids):
-            self._seen_device_ids.add(did)
-            self._arm_discovery()
-        if self._selection_phase in ("searching", "choosing"):
-            self.machine_list_changed.emit(self._build_choices())
-
-    def _accept_ws_message(self, client_id: str) -> bool:
-        """Whether a message from *client_id* should drive the UI."""
-        if self._serial.is_connected:
-            return False
-        if self._selection_phase != "connected" or self._selected_client is None:
-            return False
-        if client_id == self._selected_client:
-            return True
-        # A different clientId is talking. If it is the same physical machine
-        # (deviceId match) it has reconnected → adopt the new clientId.
-        m = self._machines.get(client_id)
-        did = m.get("deviceId") if m else None
-        if did and self._selected_device_id and did == self._selected_device_id:
-            self._selected_client = client_id
-            return True
-        return False
 
     # ── File transfer ─────────────────────────────────────────────────────
 
@@ -2636,8 +2000,6 @@ class Connection(QObject):
         msg = json.dumps(obj, separators=(",", ":"))
         if self._serial.is_connected:
             self._serial.send(msg)
-        elif self._selected_client is not None:
-            self._ws.send_to_client(self._selected_client, msg)
 
     def _transfer_worker(self, lines: list, filename: str, file_date: str) -> None:
         import time

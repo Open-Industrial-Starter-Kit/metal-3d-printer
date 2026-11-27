@@ -479,7 +479,7 @@ class BottomBar(QFrame):
         conn.file_list_changed.connect(self._on_file_list)
         conn.machine_status_changed.connect(self._on_machine_status)
         conn.serial_state_changed.connect(lambda *_: self._sync_gates())
-        conn.ws_connected_changed.connect(lambda *_: self._sync_gates())
+        conn.link_changed.connect(lambda *_: self._sync_gates())
         conn.job_progress_changed.connect(self._on_job_progress)
         conn.machine_flags_changed.connect(self._on_flags)
         conn.feed_override_changed.connect(self._feed_row.set_override)
@@ -746,7 +746,7 @@ class BottomBar(QFrame):
         conn = self._conn
         if conn is None:
             return
-        connected = conn.is_serial_connected or conn.is_ws_active
+        connected = conn.is_serial_connected or conn.is_offline_link
         flags = conn.flags()
         st = self._status_base
         busy = bool(flags.get("procedureBusy", False))

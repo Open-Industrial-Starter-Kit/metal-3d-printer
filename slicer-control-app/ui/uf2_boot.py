@@ -48,11 +48,6 @@ without `-f` picotool only talks to boards already in BOOTSEL and reports that
 it found none. It is optional: when it is missing the only honest thing to do
 is say so and say where to get it, which is what `install_hint()` is for.
 
-WiFi
-----
-Over a WebSocket link the machine is not on this computer's USB at all, so
-picotool cannot see it however well the app is connected. That is a gate on the
-button (see `ui/app_menu.py`), not something to discover from a confusing error.
 """
 
 from __future__ import annotations
@@ -206,8 +201,8 @@ def _failure_text(exit_code: int, text: str, low: str, plat: str):
         extra = ("\n\nOn Windows the reset interface needs its WinUSB driver — "
                  "Zadig can bind it." if plat == "win32" else "")
         return False, ("picotool could not reach the controller over USB.\n\n"
-                       "Check that the machine is connected by cable (not only "
-                       "over WiFi) and powered on." + extra
+                       "Check that the machine is connected by cable and "
+                       "powered on." + extra
                        + ("\n\npicotool said: " + text if text else ""))
 
     if "permission" in low or "access" in low or "libusb" in low:

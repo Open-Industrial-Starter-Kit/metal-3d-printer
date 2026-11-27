@@ -3,8 +3,8 @@ ui/splash.py
 Full-screen connection splash, reproducing the design's Home.svg 1:1: a white
 screen with the bold "Welcome to OISK Metal 3D Printer" title, a "Searching for connection"
 subtitle, and a continuously rotating recycling spinner. Shown whenever no
-machine is connected; fades out (450 ms, like the mobile app) once a serial /
-WiFi transport comes up.
+machine is connected; fades out (450 ms, like the mobile app) once the serial
+transport comes up.
 
 The title is rendered live as bold text (so the brand name is editable); the
 subtitle and spinner are the exact vectorised paths extracted from the design

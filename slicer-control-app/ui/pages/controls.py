@@ -271,16 +271,16 @@ class ToolLengthButton(QFrame):
         self._lay.addLayout(self._center)
         self._lay.addStretch()          # …and keep the detect button hard right
 
-        # Detect sub-button (wifi icon + label)
+        # Detect sub-button (sensor icon + label)
         self._detect_btn = QPushButton()
         self._detect_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._db = QVBoxLayout(self._detect_btn)
         self._db.setAlignment(Qt.AlignCenter)
-        self._wifi = QLabel()
-        self._wifi.setAlignment(Qt.AlignCenter)
-        self._wifi.setStyleSheet(TRANSPARENT_NO_BORDER)
-        self._wifi.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self._db.addWidget(self._wifi)
+        self._detect_icon = QLabel()
+        self._detect_icon.setAlignment(Qt.AlignCenter)
+        self._detect_icon.setStyleSheet(TRANSPARENT_NO_BORDER)
+        self._detect_icon.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._db.addWidget(self._detect_icon)
         self._dl = QLabel("Detect")
         self._dl.setAlignment(Qt.AlignCenter)
         self._dl.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -328,7 +328,7 @@ class ToolLengthButton(QFrame):
         """)
         self._db.setContentsMargins(px(6), px(4), px(6), px(4))
         self._db.setSpacing(px(2))
-        self._wifi.setPixmap(icons.pixmap("detect-sensor", px(26), fg))
+        self._detect_icon.setPixmap(icons.pixmap("detect-sensor", px(26), fg))
         self._dl.setStyleSheet(
             f"background: transparent; border: none; font-size: {fs(12)}px; color: {fg};"
         )
@@ -1305,7 +1305,7 @@ class ControlsPage(QWidget):
         # ── Run-state gating (Android button-mask parity, App.tsx ~2799) ──
         conn.machine_status_changed.connect(self._on_status_for_gates)
         conn.serial_state_changed.connect(lambda *_: self._sync_gates())
-        conn.ws_connected_changed.connect(lambda *_: self._sync_gates())
+        conn.link_changed.connect(lambda *_: self._sync_gates())
         conn.opened_file_changed.connect(lambda *_: self._sync_gates())
         self._sync_gates()
 
@@ -1408,7 +1408,7 @@ class ControlsPage(QWidget):
 
     def _frame_send(self) -> None:
         conn = self._conn
-        if conn is None or not (conn.is_serial_connected or conn.is_ws_active):
+        if conn is None or not (conn.is_serial_connected or conn.is_offline_link):
             return
         # Watch the frame for an alarm -- see _frame_watch.
         self._framing = True
@@ -1664,7 +1664,7 @@ class ControlsPage(QWidget):
         conn = self._conn
         if fs is None or conn is None:
             return
-        if not (conn.is_serial_connected or conn.is_ws_active):
+        if not (conn.is_serial_connected or conn.is_offline_link):
             self._frame_stock_end()
             return
         st = self._machine_status
@@ -1918,7 +1918,7 @@ class ControlsPage(QWidget):
         conn = self._conn
         if conn is None:
             return
-        connected = conn.is_serial_connected or conn.is_ws_active
+        connected = conn.is_serial_connected or conn.is_offline_link
         flags = conn.flags()
         st = self._machine_status
         busy = bool(flags.get("procedureBusy", False))

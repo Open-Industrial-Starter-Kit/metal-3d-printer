@@ -107,8 +107,6 @@ datas = [
 # Optional backends imported lazily / conditionally — list them so the frozen
 # build keeps working even though the import-graph scanner may miss them.
 hiddenimports = [
-    "zeroconf",
-    "websockets",
     "serial",
     "serial.tools.list_ports",
     # Imported for its side effect in main.py (sets AA_ShareOpenGLContexts) and
@@ -265,21 +263,6 @@ else:
                 # Without this the whole UI is drawn at 1x and upscaled — a
                 # blurry app on every Mac made in the last decade.
                 "NSHighResolutionCapable": True,
-                # macOS KILLS a bundled app that touches CoreBluetooth with no
-                # reason string — not an error dialog, a TCC kill at launch.
-                # connection.py starts the BLE advertiser as the app comes up
-                # (it is how the machine discovers this computer over WiFi), so
-                # this key is load-bearing, not paperwork. Running from source
-                # never hits it: that inherits the terminal's permissions.
-                "NSBluetoothAlwaysUsageDescription":
-                    "Piccola CNC advertises this computer over Bluetooth so the "
-                    "machine can find it and connect over WiFi.",
-                # Same shape of problem for the local network: the app serves
-                # the CAM tools on loopback and answers the machine's WebSocket,
-                # and macOS asks the user before allowing it.
-                "NSLocalNetworkUsageDescription":
-                    "Piccola CNC connects to the machine over your local network.",
-                "NSBonjourServices": ["_minicnc._tcp", "_http._tcp"],
                 # The app has no document types and is not a background agent.
                 "LSBackgroundOnly": False,
             },

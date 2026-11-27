@@ -1,7 +1,7 @@
 """
 main_window.py
 MainWindow: assembles all UI components into the application shell and wires
-them to the central Connection (serial + WebSocket) hub.
+them to the central Connection hub.
 """
 
 import job_time
@@ -27,7 +27,6 @@ from ui.pages.file_manager import FileManagerPage
 from ui.pages.live_preview import LivePreviewPage
 from ui.pages.console import ConsolePage
 from ui.pages.cam import CamPage
-from ui.machine_chooser import MachineChooserDialog
 from connection import Connection
 from ui.tooltips import TRANSPARENT
 
@@ -187,7 +186,7 @@ class MainWindow(QMainWindow):
 
         # ── Connection hub ────────────────────────────────────────────────────
         self._serial_ok = False
-        self._ws_ok = False
+        self._offline_ok = False
         self._conn = Connection(self)
 
         # Wire all pages / panels to the live connection
@@ -213,17 +212,9 @@ class MainWindow(QMainWindow):
         # Serial state → update status bar text
         self._conn.serial_state_changed.connect(self._on_serial_state)
 
-        # WS client count → status text only (informational while searching)
-        self._conn.ws_client_count_changed.connect(self._on_ws_clients)
-
-        # A WiFi machine being selected (or released) is what actually counts as
-        # "connected" for the splash / status dot — not the raw socket count.
-        self._machine_chooser: MachineChooserDialog | None = None
-        self._conn.ws_connected_changed.connect(self._on_ws_connected)
-        self._conn.machine_selected.connect(self._on_machine_selected)
-        self._conn.machine_chooser_requested.connect(self._on_machine_chooser_requested)
-        self._conn.machine_list_changed.connect(self._on_machine_list_changed)
-        self._conn.machine_chooser_dismissed.connect(self._close_machine_chooser)
+        # The developer offline mode's simulated link, which also counts as
+        # "connected" for the splash and the status dot.
+        self._conn.link_changed.connect(self._on_link_changed)
 
         # File open/close → show bottom bar or status bar
         self._conn.opened_file_changed.connect(self._on_file_changed)
@@ -414,7 +405,7 @@ class MainWindow(QMainWindow):
 
     def _toggle_sidebar(self):
         # The hamburger opens the app menu (mobile-app parity): machine name,
-        # connectivity, WLAN/hotspot settings, preferences, machine info.
+        # connectivity, preferences, machine info.
         if not self._menu_available():
             return
         from ui.app_menu import AppMenuDrawer
@@ -581,51 +572,18 @@ class MainWindow(QMainWindow):
 
     def _on_serial_state(self, connected: bool, msg: str) -> None:
         self._serial_ok = connected
-        # Re-read the WiFi side from the connection rather than trusting the
-        # cached flag: a serial takeover drops any WS selection, and it also
-        # ends the developer offline mode — whose faked "WiFi up" would
-        # otherwise linger and keep the app looking connected after the cable
-        # is pulled.
-        self._ws_ok = self._conn.is_ws_active
+        # Re-read the offline side from the connection rather than trusting the
+        # cached flag: a serial takeover ends the developer offline mode, whose
+        # simulated link would otherwise linger and keep the app looking
+        # connected after the cable is pulled.
+        self._offline_ok = self._conn.is_offline_link
         if connected:
             self._status_bar.update_text(f"Serial connected: {msg}")
         self._update_connection()
 
-    def _on_ws_clients(self, count: int) -> None:
-        # Raw socket count is informational only (a machine is "connected" once
-        # selected — see _on_ws_connected). Reflect discovery progress in text.
-        if count > 0 and not self._conn.is_serial_connected and not self._ws_ok:
-            self._status_bar.update_text(
-                f"WiFi: {count} machine(s) found — selecting…")
-
-    def _on_ws_connected(self, connected: bool) -> None:
-        self._ws_ok = connected
+    def _on_link_changed(self, connected: bool) -> None:
+        self._offline_ok = connected
         self._update_connection()
-
-    def _on_machine_selected(self, machine: dict) -> None:
-        if not self._conn.is_serial_connected:
-            label = machine.get("name") or machine.get("deviceId") or "machine"
-            self._status_bar.update_text(f"WiFi: connected to {label}")
-
-    def _on_machine_chooser_requested(self, choices: list) -> None:
-        if self._machine_chooser is not None:
-            self._machine_chooser.update_choices(choices)
-            return
-        dlg = MachineChooserDialog(self._conn, choices, parent=self)
-        self._machine_chooser = dlg
-        dlg.finished.connect(self._on_chooser_finished)
-        dlg.show()
-
-    def _on_machine_list_changed(self, choices: list) -> None:
-        if self._machine_chooser is not None:
-            self._machine_chooser.update_choices(choices)
-
-    def _close_machine_chooser(self) -> None:
-        if self._machine_chooser is not None:
-            self._machine_chooser.close()
-
-    def _on_chooser_finished(self, _result: int) -> None:
-        self._machine_chooser = None
 
     # ── Initial homing flow ─────────────────────────────────────────────────
 
@@ -674,7 +632,7 @@ class MainWindow(QMainWindow):
         machine_flags_changed delta, so a reconnect to a machine in the same
         state still evaluates correctly (mobile-app parity: HomingModal shows
         while wsConnected && rotaryAxisStatusKnown && !homingDone)."""
-        connected = self._serial_ok or self._ws_ok
+        connected = self._serial_ok or self._offline_ok
         flags = self._conn.flags()
         # rotary status is "known" once the machine has reported it at least
         # once this session (the flag key is present in the snapshot).
@@ -709,7 +667,7 @@ class MainWindow(QMainWindow):
 
     def _update_connection(self) -> None:
         """Reflect overall transport connectivity in the dot, status badge, and bar."""
-        connected = self._serial_ok or self._ws_ok
+        connected = self._serial_ok or self._offline_ok
         self._top_bar.set_connected(connected)
         self._right_panel.set_connected(connected)
         if connected:
