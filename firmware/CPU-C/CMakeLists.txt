@@ -35,9 +35,9 @@ pico_enable_stdio_uart(galvo_test 0)
 
 
 
-        target_link_libraries(galvo_test pico_stdlib hardware_pio)
+        target_link_libraries(galvo_test pico_stdlib hardware_pio hardware_uart)
 
 pico_generate_pio_header(galvo_test ${CMAKE_CURRENT_LIST_DIR}/xy2_100.pio)
-target_link_libraries(galvo_test pico_stdlib hardware_pio)
+target_link_libraries(galvo_test pico_stdlib hardware_pio hardware_uart)
 
 pico_add_extra_outputs(galvo_test)

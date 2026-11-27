@@ -11,9 +11,14 @@ void SerialManager::init() {
     
     Serial1.setFIFOSize(SERIAL_BUFFER_SIZE);
 
-    // Serial2 drove an external WiFi module on GP8/GP9. On this board those pins
-    // are the RS-422 transceiver GM490_DI/GM490_DO, so the port is left alone.
-    
+    // Serial2 drove an external WiFi module on GP8/GP9. On this board it is the link to
+    // CPU-C on GP4/GP5, so the pins are moved off the GP8/GP9 defaults BEFORE begin():
+    // those are the RS-422 transceiver GM490_DI/GM490_DO and driving them would put two
+    // drivers on one net.
+    Serial2.setTX(CPUC_UART_TX_PIN);
+    Serial2.setRX(CPUC_UART_RX_PIN);
+    Serial2.setFIFOSize(SERIAL_BUFFER_SIZE);
+
 }
 
 /*
@@ -62,9 +67,29 @@ bool SerialManager::connectCPUA(){
 
 
 
+bool SerialManager::connectCPUC(){
+
+    CPUCSerial.begin(CPUC_BAUD_RATE);
+    connectionStartTime = millis();
+
+    while (!CPUCSerial) {
+
+        if ((millis() - connectionStartTime) > SERIAL_CONNECTION_TIMEOUT)
+            return false; // Timeout occurred
+
+        delay(1);
+
+    }
+
+    return true;
+}
+
+
 void SerialManager::disconnectUSB() {USBSerial.end();}
 
 void SerialManager::disconnectCPUA() {CPUASerial.end();}
+
+void SerialManager::disconnectCPUC() {CPUCSerial.end();}
 
 
 
@@ -221,3 +246,68 @@ int SerialManager::availableFromCPUA() {
 }
 
 
+size_t SerialManager::CPUCSerialWrite(byte _byte) {
+
+    return CPUCSerial.write(_byte);
+
+}
+
+size_t SerialManager::CPUCSerialWrite(const char _char) {
+
+    return CPUCSerial.write(_char);
+
+}
+
+size_t SerialManager::CPUCSerialPrint(const char* _char) {
+
+    return CPUCSerial.print(_char);
+
+}
+
+size_t SerialManager::CPUCSerialPrintln(const char* _char) {
+
+    return CPUCSerial.print(_char) + CPUCSerial.println();
+
+}
+
+size_t SerialManager::CPUCSerialPrint(int _int) {
+
+    return CPUCSerial.print(_int);
+
+}
+
+size_t SerialManager::CPUCSerialPrintln(int _int) {
+
+    return CPUCSerial.print(_int) + CPUCSerial.println();
+
+}
+
+size_t SerialManager::CPUCSerialPrint(float _float) {
+
+    return CPUCSerial.print(_float);
+
+}
+
+size_t SerialManager::CPUCSerialPrintln(float _float) {
+
+    return CPUCSerial.print(_float) + CPUCSerial.println();
+
+}
+
+size_t SerialManager::CPUCSerialPrintln() {
+
+    return CPUCSerial.println();
+
+}
+
+int SerialManager::readFromCPUC() {
+
+    return CPUCSerial.read();
+
+}
+
+int SerialManager::availableFromCPUC() {
+
+    return CPUCSerial.available();
+
+}

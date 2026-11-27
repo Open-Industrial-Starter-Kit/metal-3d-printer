@@ -108,6 +108,7 @@ const unsigned char GRBL_JOG_CANCEL = 0x85;
 //Misc
 #define FROM_CPUA "CPUA: " //this is the string that will be prefixed to all the messages coming from CPUA, so we can easily identify them in the USB serial monitor
 #define FROM_CPUB "CPUB: " //this is the string that will be prefixed to all the messages coming from CPUB, so we can easily identify them in the USB serial monitor
+#define FROM_CPUC "CPUC: " //this is the string that will be prefixed to all the messages coming from CPUC, so we can easily identify them in the USB serial monitor
 
 //Possible machine states, they will be used to keep track of the machine status by parsing the status reports coming from GRBL
 enum MachineState {

@@ -212,6 +212,8 @@ unsigned long downloadFileTotalLines = 0;
 
 byte bufferByteUSB = 0;
 byte bufferByteCPUA = 0;
+byte bufferByteCPUC = 0;
+char bufferCharCPUC = NULL_CHAR;
 int syncActionIndex = 0;
 int bufferMacroLineIndex = 0;
 
@@ -557,6 +559,18 @@ void setup() {
       serialManager.USBSerialPrintln("CPU A Serial connection failed"); 
     }
 
+
+  if(serialManager.connectCPUC())
+    if (debuggingSettings.debuggingBase) {
+      serialManager.USBSerialPrint(FROM_CPUB);
+      serialManager.USBSerialPrintln("CPU C Serial connected");
+    }
+  else
+    if (debuggingSettings.debuggingBase) {
+      serialManager.USBSerialPrint(FROM_CPUB);
+      serialManager.USBSerialPrintln("CPU C Serial connection failed");
+    }
+
   //Buffers
   resetUSBLine();
   resetCPUALine();
@@ -629,6 +643,7 @@ void loop() {
   readFromUSB();
   handleRGBLed();
   readFromCPUA();
+  readFromCPUC();
   handleAutoHoming();
   handlePauseFeedDrop();
   handleResumeFeedRamp();
@@ -888,6 +903,34 @@ void readFromUSB() {
   }
 
   } 
+
+}
+
+// Drains the CPU-C link and mirrors it to USB.
+//
+// Transport only: every byte is forwarded verbatim, with no framing or parsing, because the
+// CPU-B <-> CPU-C protocol is not decided yet. CPU-A's reader is the model to follow once it
+// is -- that one parses grbl's responses and drives the job state machine.
+void readFromCPUC(){
+
+  while(serialManager.availableFromCPUC() > 0){
+
+    int readCPUC = serialManager.readFromCPUC();
+
+    if (readCPUC == -1)
+      break;
+
+    bufferByteCPUC = (byte)readCPUC;
+    bufferCharCPUC = (char)bufferByteCPUC;
+
+    if (debuggingSettings.debuggingBase) {
+      serialManager.USBSerialPrint(FROM_CPUC);
+      serialManager.USBSerialPrintln(bufferByteCPUC);
+    }
+
+    serialManager.USBSerialWrite(bufferByteCPUC);
+
+  }
 
 }
 

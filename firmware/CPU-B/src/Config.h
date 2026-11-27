@@ -65,6 +65,18 @@ typedef struct {
 #define SERIAL_BUFFER_SIZE 5000
 #define USB_BAUD_RATE 2000000
 #define CPUA_BAUD_RATE 115200
+#define CPUC_BAUD_RATE 115200
+
+// CPU-C link: UART1 on GP4 (TX) and GP5 (RX), reaching CPU-C's GP1 (RX) and GP0 (TX)
+// through the 10R series resistors R90/R91.
+// Serial2 defaults to GP8/GP9 on the Arduino-Pico core, and on this board those are the
+// RS-422 transceiver lines GM490_DI/GM490_DO -- driving them would put two drivers on one
+// net -- so the pins MUST be set before begin().
+// NOTE: the schematic marks GP36/GP37 (the SDS011 dust sensor) as UART1 as well. Only one
+// of the two can be the hardware UART1; this link claims it, so the dust sensor will need
+// a PIO software serial port.
+#define CPUC_UART_TX_PIN 4
+#define CPUC_UART_RX_PIN 5
 // Serial2 drove an external WiFi module. Not fitted on this board:
 // GP8/GP9 are the RS-422 transceiver GM490_DI/GM490_DO.
 // The distance laser sensor is not fitted either, and its old UART pins

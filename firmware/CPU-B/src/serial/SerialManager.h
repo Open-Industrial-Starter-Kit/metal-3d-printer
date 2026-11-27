@@ -12,14 +12,17 @@ public:
     bool connectUSB();
     //bool connectUSBNonBlocking();
     bool connectCPUA();
+    bool connectCPUC();
 
     //disconnect
     void disconnectUSB();
     void disconnectCPUA();
+    void disconnectCPUC();
 
     //available bytes to read
     int availableFromUSB();
     int availableFromCPUA();
+    int availableFromCPUC();
 
     //CPU A Serial
     size_t CPUASerialWrite(const byte _byte);
@@ -34,6 +37,20 @@ public:
     size_t CPUASerialPrintln();
 
     int readFromCPUA();
+
+    //CPU C Serial
+    size_t CPUCSerialWrite(const byte _byte);
+    size_t CPUCSerialWrite(const char _char);
+
+    size_t CPUCSerialPrintln(const char* _char);
+    size_t CPUCSerialPrint(const char* _char);
+    size_t CPUCSerialPrintln(int _int);
+    size_t CPUCSerialPrint(int _int);
+    size_t CPUCSerialPrint(float _float);
+    size_t CPUCSerialPrintln(float _float);
+    size_t CPUCSerialPrintln();
+
+    int readFromCPUC();
 
     //USB Serial
     size_t USBSerialPrintln(const char* _char);
@@ -62,6 +79,7 @@ private:
     unsigned long connectionStartTime;
     HardwareSerial& USBSerial = Serial;
     HardwareSerial& CPUASerial = Serial1;
+    HardwareSerial& CPUCSerial = Serial2;
     
 };
 

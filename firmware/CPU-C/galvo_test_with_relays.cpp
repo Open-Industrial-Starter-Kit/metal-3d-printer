@@ -9,6 +9,7 @@
 #include "pico/stdlib.h"
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
+#include "hardware/uart.h"
 #include "xy2_100.pio.h"   // NEW: generated from modified PIO file with .side_set 2
 
 
@@ -24,6 +25,13 @@
 #define PIN_CLK   35 //for CPU-C of Metal 3D Printer Board
 #define PIN_SYNC  36 //for CPU-C of Metal 3D Printer Board   
 #define LED_PIN   2  //onboard LED for CPU-C of Metal 3D Printer Board
+
+//[2026-11-27] Link to CPU-B. UART0 on GP0 (TX) and GP1 (RX), reaching CPU-B's GP5 (RX) and
+// GP4 (TX) through the 10R series resistors R90/R91. Mirrors the CPU-B <-> CPU-A link.
+#define CPUB_UART        uart0
+#define CPUB_UART_TX_PIN 0
+#define CPUB_UART_RX_PIN 1
+#define CPUB_BAUD_RATE   115200
 
 //[2026-07-16] Relay pins for Metal 3D Printer Board
 #define RELAY1_PIN 19 //Relay 1 for Metal 3D Printer Board
@@ -153,6 +161,34 @@ inline uint32_t pack_y_frame(double y_mm, uint8_t c0=1, uint8_t c1=0, uint8_t c2
 
 
 
+// --- CPU-B link -------------------------------------------------------------------------
+// Transport only: bytes are forwarded verbatim in both directions, with no framing or
+// parsing, because the CPU-B <-> CPU-C protocol is not decided yet.
+
+static void cpub_link_init(void)
+{
+    uart_init(CPUB_UART, CPUB_BAUD_RATE);
+    gpio_set_function(CPUB_UART_TX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(CPUB_UART_RX_PIN, GPIO_FUNC_UART);
+    uart_set_hw_flow(CPUB_UART, false, false);
+    uart_set_format(CPUB_UART, 8, 1, UART_PARITY_NONE);
+    uart_set_fifo_enabled(CPUB_UART, true);
+}
+
+// Drains whatever CPU-B has sent and mirrors it to the USB CDC console.
+// Call this often: the UART FIFO is only 32 bytes deep, and at 115200 baud it fills in
+// under 3 ms, so polling once per galvo sweep would drop bytes.
+static void cpub_link_poll(void)
+{
+    while (uart_is_readable(CPUB_UART))
+        putchar(uart_getc(CPUB_UART));
+}
+
+static void cpub_link_write(const char *text)
+{
+    uart_puts(CPUB_UART, text);
+}
+
 int main() {
     stdio_init_all();
 
@@ -172,6 +208,10 @@ int main() {
     // Init LED
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, true);
+
+    //[2026-11-27] Bring up the CPU-B link before the galvo starts streaming
+    cpub_link_init();
+    cpub_link_write("CPUC: link up\r\n");
 
     //[2026-07-16] Init relay pins as outputs, start OFF
     gpio_init(RELAY1_PIN);
@@ -431,6 +471,8 @@ int main() {
             //pio->txf[sm_y] = y_frames[i];
 
             sleep_us(delaygalvo);//
+
+            cpub_link_poll();   //[2026-11-27] keep the CPU-B FIFO drained
            
         }
 
