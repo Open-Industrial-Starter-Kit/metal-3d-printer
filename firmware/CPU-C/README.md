@@ -138,6 +138,7 @@ CPU-C's command set, so the two can be extended independently.
 | `{"type":"command","commandType":"setGalvoPower","value":true}` | `"result":"success"` |
 | `{"type":"command","commandType":"setGalvoStreaming","value":false}` | `"result":"success"` |
 | `{"type":"command","commandType":"setGalvoPosition","x":125.0,"y":60.5}` | `"result":"success"` |
+| `{"type":"command","commandType":"setGalvoSpeeds","markSpeed":4000,"jumpSpeed":9000}` | the speeds and delays now in force |
 | `{"type":"command","commandType":"setLaserInterlock","value":true}` | `"result":"success"` |
 | `{"type":"command","commandType":"setLaserMainPower","value":true}` | `"result":"success"` |
 | `{"type":"command","commandType":"setLaserRemoteOn","value":true}` | `"result":"success"` |
@@ -321,6 +322,7 @@ never finalises -- and byte counting sidesteps it.
 | `loading` | a transfer is in progress |
 | `ready` | complete, not yet scanned |
 | `scanning` | being streamed to the PIO right now |
+| `paused` | stopped at an `M600` boundary, waiting for a `resumeLayer` |
 | `done` | fully streamed, safe to replace |
 
 `streamed` is true only in `done`, so a host can ask "has this layer been run?" without
@@ -328,10 +330,13 @@ tracking it.
 
 ### Overwriting
 
-`startLayerTransfer` replaces whatever is there -- except while `scanning`, where it is
-refused with `layerBusy` and the existing contents are left untouched. Pulling the buffer out
-from under the interpreter mid-move is the one thing that must not be possible.
-`clearLayer` resets it, and is refused the same way.
+`startLayerTransfer` replaces whatever is there -- except while `scanning` or `paused`,
+where it is refused with `layerBusy` and the existing contents are left untouched. Pulling the
+buffer out from under the interpreter mid-move is the one thing that must not be possible, and
+a `paused` buffer is protected for the same reason: the rest of it has yet to be read.
+`clearLayer` resets it, and is refused the same way. To replace a paused layer rather than
+finish it, `abortLayer` first -- that is the one command that gives up a part-scanned buffer
+on purpose.
 
 Capacity is **4 MB** of the 8 MB fitted, roughly 25x a typical layer. The other half is
 deliberately left free so a second buffer can be added later without moving anything. Errors:
@@ -376,6 +381,36 @@ At the end of the buffer the layer is marked `done` and:
 `abortLayer` stops immediately, gates the beam off and marks the layer `done` so it can be
 replaced. `getLayerInfo` gains `running` and `scanPos`, the interpreter's byte offset into
 the buffer, for progress.
+
+### Speeds
+
+One point leaves the PIO every 10 us, so speed is a step size, not a delay: 5000 mm/s is
+0.05 mm of travel per frame. Two speeds apply, and the interpreter picks between them per
+move -- `jump_speed` for a gated-off `G0`, `mark_speed` for a `G1`.
+
+A program can set its own feed with an `F` word in mm/min, grbl's units, and it stays in force
+until the next one:
+
+```gcode
+F300000        ; 5000 mm/s
+G1 X175 Y75
+```
+
+Or the host can set them in mm/s, along with the settling delays, and leave the file alone.
+Every field is optional, and the reply reports all five as they stand afterwards:
+
+```json
+{"target":"cpuc","type":"command","commandType":"setGalvoSpeeds",
+ "markSpeed":4000,"jumpSpeed":9000,
+ "jumpDelay":30,"markDelay":10,"laserOnDelay":5}
+```
+
+The three delays are in frames of 10 us: `jumpDelay` after a rapid, `markDelay` at the end of
+a mark, and `laserOnDelay` at the start of one. They exist because the mirrors lag the
+command -- a galvo asked to be somewhere takes a few hundred microseconds to settle there,
+and energy put down before it has is energy in the wrong place. An `F` word overrides
+`markSpeed` for the moves that follow it, so a file that sets its own feed wins over the
+command for as long as it is running.
 
 ### Beam control
 

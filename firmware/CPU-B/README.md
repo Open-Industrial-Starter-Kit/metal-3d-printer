@@ -31,6 +31,7 @@ the UART link to grblHAL on CPU-A, and the UART link to CPU-C (galvo and fiber l
   - [5.13 `abortFileTransfer`](#513-abortfiletransfer)
   - [5.13.1 `startFileDownload`](#5131-startfiledownload)
   - [5.13.2 `abortFileDownload`](#5132-abortfiledownload)
+  - [5.13.3 `sendFileToCPUC`](#5133-sendfiletocpuc)
   - [5.14 `startJob`](#514-startjob)
   - [5.15 `pauseJob`](#515-pausejob)
   - [5.16 `resumeJob`](#516-resumejob)
@@ -683,6 +684,47 @@ documented in **[../CPU-C/README.md](../CPU-C/README.md)**.
 **Behavior:**
 - Closes the active download session without affecting the execution file opened via openGcodeFile.
 - The same cleanup also happens automatically if download chunk activity times out.
+
+### 5.13.3 `sendFileToCPUC`
+
+**Request:**
+```json
+{"type":"command","commandType":"sendFileToCPUC","fileName":"demo.nc","start":true}
+```
+
+**Success:**
+```json
+{"result":"success","bytes":596838,"lines":34505,"chunks":353,"started":true}
+```
+
+**Failure:**
+```json
+{"result":"failure","error":"fileNotFound"}
+```
+
+**Behavior:**
+- Reads a G-code file off the SD card and pushes it into CPU-C's PSRAM over the 2 Mbaud link,
+  using the same `startLayerTransfer` + `lcl` chunk protocol a host would use. The difference
+  is that CPU-B both reads and sends, so the file never leaves the controller.
+- `start` is optional and defaults to false. With `start:true` CPU-B issues `startLayer` once
+  the last chunk is acknowledged, and the scan begins without another round trip to the host.
+- Blank lines and `;` comments are dropped, so the bounds metadata CPU-B prepends on upload
+  does not reach the interpreter. `bytes` counts what was actually sent, not the file size.
+- Two passes over the file: the first counts the bytes CPU-C should expect, the second sends
+  them. `startLayerTransfer` has to declare a total up front, and counting it the same way it
+  is later sent is what keeps the two from disagreeing.
+- Fails with `fileNotFound` if the card has no such file, and `fileEmpty` if nothing survives
+  the filter.
+- **CPU-B does not read CPU-C's acknowledgements.** It writes the chunks and reports its own
+  success, so `{"result":"success",...}` here means "CPU-B sent it", not "CPU-C stored it".
+  CPU-C's `bytesRemaining` acks and any refusal (`layerBusy` when a layer there is still
+  `scanning` or `paused`, `layerTooLarge`) arrive separately on the mirror with
+  `"from":"cpuc"`. A client that cares whether the layer landed should watch for
+  `"layerStored":"success"` on the mirror, or ask CPU-C with `getLayerInfo` afterwards.
+- Pacing is open-loop for the same reason: `CPUC_CHUNK_GAP_MS` between chunks, sized against
+  CPU-C's parse time rather than its acks. Closing that loop is worth doing before this
+  carries real build data.
+- Measured: 600 KB off the card and into PSRAM in about 7 s, the link being the slow part.
 
 ### 5.14 `startJob`
 
