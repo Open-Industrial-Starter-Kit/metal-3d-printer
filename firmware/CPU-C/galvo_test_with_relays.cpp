@@ -50,6 +50,15 @@
 #define GALVO_NEG_RLY_PIN      19   // PIO_15V_RLY  -> K7, -15 V to the scan head
 #define GALVO_POS_RLY_PIN      20   // PIO_PWR_RLY  -> K6, +15 V to the scan head
 
+// K6/K7 are driven ACTIVE-LOW: the GPIO pulls the TPM40V gate down to close the
+// relay, so a LOW pin energises the coil and feeds the head. Established on the
+// bench -- the head was live whenever the firmware believed it was off, and the
+// board came up with the rails already on because every relay pin is driven low
+// at boot. Written as a level rather than inline so the reported galvoPower
+// keeps meaning "head powered" whichever way the hardware is wired.
+#define GALVO_RLY_ACTIVE       0
+#define GALVO_RLY_INACTIVE     1
+
 // Raycus RFL-C200A control relays. These are individual relay controls, NOT a power-up
 // sequencer: the vendor's required order is interlock closed, then main power, then remote
 // on, and honouring that is the caller's job.
@@ -329,16 +338,23 @@ int main() {
     api_state.galvo_max_y_mm = Y_MAX_POS_MM;
     cpub_link_write("{\"from\":\"cpuc\",\"event\":\"linkUp\"}\r\n");
 
-    //[2026-11-27] Every relay starts as a driven-low output, so nothing is energised by
-    // merely powering the board and no coil is left floating.
-    static const uint relay_pins[] = {
-        GALVO_NEG_RLY_PIN, GALVO_POS_RLY_PIN,
+    //[2026-11-27] Every relay starts driven to its INACTIVE level, so nothing is energised
+    // by merely powering the board and no coil is left floating. The galvo pair is
+    // active-low (see GALVO_RLY_ACTIVE), so for those that level is HIGH -- driving them
+    // low here is what used to bring the scan head up with the board.
+    static const uint laser_relay_pins[] = {
         LASER_INTERLOCK_RLY_PIN, LASER_MAIN_POWER_RLY_PIN, LASER_REMOTE_ON_RLY_PIN,
     };
-    for (size_t i = 0; i < sizeof(relay_pins) / sizeof(relay_pins[0]); i++) {
-        gpio_init(relay_pins[i]);
-        gpio_set_dir(relay_pins[i], true);
-        gpio_put(relay_pins[i], 0);
+    for (size_t i = 0; i < sizeof(laser_relay_pins) / sizeof(laser_relay_pins[0]); i++) {
+        gpio_init(laser_relay_pins[i]);
+        gpio_set_dir(laser_relay_pins[i], true);
+        gpio_put(laser_relay_pins[i], 0);
+    }
+    static const uint galvo_relay_pins[] = { GALVO_NEG_RLY_PIN, GALVO_POS_RLY_PIN };
+    for (size_t i = 0; i < sizeof(galvo_relay_pins) / sizeof(galvo_relay_pins[0]); i++) {
+        gpio_init(galvo_relay_pins[i]);
+        gpio_set_dir(galvo_relay_pins[i], true);
+        gpio_put(galvo_relay_pins[i], GALVO_RLY_INACTIVE);
     }
 
     // Load programs
@@ -661,8 +677,10 @@ int main() {
             // energised unless something asks. Each is written only when it actually changes.
             if (galvo_power_applied != api_state.galvo_power) {
                 galvo_power_applied = api_state.galvo_power;
-                gpio_put(GALVO_NEG_RLY_PIN, galvo_power_applied);   // both rails together:
-                gpio_put(GALVO_POS_RLY_PIN, galvo_power_applied);   // never one without the other
+                const bool level = galvo_power_applied ? GALVO_RLY_ACTIVE
+                                                       : GALVO_RLY_INACTIVE;
+                gpio_put(GALVO_NEG_RLY_PIN, level);   // both rails together:
+                gpio_put(GALVO_POS_RLY_PIN, level);   // never one without the other
                 if (api_state.debugging_base)
                     printf("CPUC: galvo power %s\n", galvo_power_applied ? "ON" : "OFF");
             }
