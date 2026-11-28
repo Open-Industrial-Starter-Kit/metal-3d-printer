@@ -112,9 +112,20 @@ class PrusaSlicer:
         # model it declines to slice, a display geometry it rejects. Keep stderr
         # so the reason can be reported, and then verify the archive rather than
         # letting zipfile fail later on a missing or stale file with no context.
-        proc = subprocess.run(slicer_cmd, check=True,
-                              stdout=subprocess.DEVNULL,
+        proc = subprocess.run(slicer_cmd, stdout=subprocess.DEVNULL,
                               stderr=subprocess.PIPE, text=True)
+        if proc.returncode != 0:
+            # PrusaSlicer's own message is the only thing that explains these,
+            # and ``check=True`` would discard it: a CalledProcessError prints
+            # the command line, not the cause. The one that cost the most time
+            # to find was "Loading of a model file failed", which it returns for
+            # an STL whose facet normals are all zero -- a real file an operator
+            # can arrive with, from a converter that leaves them unset.
+            detail = (proc.stderr or "").strip()
+            raise RuntimeError(
+                f"PrusaSlicer failed (exit {proc.returncode}).\n"
+                + (detail or "It printed nothing to stderr.")
+                + f"\n\nModel: {slicing_data['model_file_path']}")
 
         archive = slicer._zip_tmp_file_path
         if not os.path.isfile(archive) or os.path.getsize(archive) == 0:

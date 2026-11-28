@@ -14,8 +14,11 @@ and adapted to this machine. GPL-3.0; the upstream licence is kept at
 | `olos/slicers_shared_methods.py` | 831 lines: per-zone exposure, the recoat routine, the init block, bounds clamping. |
 | `olos/shim.py` | The four OLOS server pieces the engine imports, and nothing else. |
 | `olos/binary.py` | Finds the PrusaSlicer CLI the engine shells out to. |
+| `params.py` | The slicing-parameter contract: all 230 keys the engine reads, and their defaults. |
+| `job.py` | Running a slice: measures the model, assembles the parameters, checks the output. |
 | `retarget.py` | Translates the engine's output into this machine's `M610`/`M611`/`M600` block dialect. |
 | `test_retarget.py` | Regression tests for that translation. `python3 -m slicer.test_retarget` |
+| `test_slice.py` | End-to-end: model in, routed blocks out. `python3 -m slicer.test_slice` |
 
 ## What had to change, and why
 
@@ -92,10 +95,9 @@ move during a scan. The bed is centred: bed 0..96 → field 77..173.
 
 - **No Slicer-tab UI.** `retarget.py` and the engine are callable, but
   `ui/pages/cam.py` is still the placeholder. Nothing in the app drives this.
-- **Never run end to end.** PrusaSlicer is not installed on the development
-  machine, so the engine has been imported and its G-code generators exercised,
-  but no model has been sliced. The retargeting is tested against output from
-  the real generators; the mask→path stage is not.
+- ~~**Never run end to end.**~~ It runs. A 20×20×5 mm box slices in 0.3 s;
+  two 15 mm cubes at 0.05 mm give 55 layers and 32,755 moves in 1.1 s, about
+  20 ms per layer. `test_slice.py` covers it and skips without PrusaSlicer.
 - **The field map is nominal.** `retarget.py` centres the bed in a 250 mm field
   on the same nominal linear mm scale CPU-C uses. There is no distortion table,
   and the field has not been calibrated against the bed.
@@ -103,3 +105,53 @@ move during a scan. The bed is centred: bed 0..96 → field 77..173.
   `slicers_shared_methods.py` (parking X −395.5, recoater −405, bed reference
   −238.5/−158) are upstream's numbers. They match this machine's envelope
   closely enough to be plausible, and have not been checked against it.
+
+## What running it for the first time changed
+
+Nothing here was found by reading the code. Each of these took a real slice.
+
+**PrusaSlicer's command line was wrong off Windows.** `--sw-renderer` does not
+exist in 2.9.7 — it answers `Unknown option`, prints its usage and exits 1.
+`--single-instance` is the dangerous one: its own help says the arguments are
+handed to a running GUI instance, so with PrusaSlicer open the request goes to
+that window, the process returns 0, and `--output` is never written. Both are
+gone. `olos/binary.py` keeps a per-platform flag hook, deliberately empty.
+
+**Its errors were being swallowed.** The engine ran with `check=True` and
+discarded stderr, so a refused model surfaced as a `CalledProcessError` printing
+a twenty-argument command line. The cause of the one that cost most time —
+`Loading of a model file failed`, returned for an STL whose facet normals are
+all zero — was on the discarded stream. PrusaSlicer accepts such a file for some
+geometries and not others: a 20×20×5 box loads, a 15×15×3 box does not. Operators
+do arrive with files like that, so the message is now carried through.
+
+**The SL1 archive is verified.** PrusaSlicer is a GUI binary with a CLI mode and
+has several ways to exit 0 having written nothing. The archive is checked for
+existence, size and zip-ness before the engine opens it.
+
+**The gantry's parking move was going to the mirrors.** Every layer ends with
+`G1 X0 Y0 F10000` — the gantry parking before the recoat — and the retargeter
+read the X/Y and mapped it into the field as `G1 X77 Y77 F10000`. So every layer
+the mirrors swept to the corner of the field for no reason, and the gantry never
+parked before the recoater threw. The classifier now takes the laser gate, and
+uses the same definition of a parking move the engine itself uses: within
+0.0001 mm of the work origin.
+
+**`layerHeight` defaults to 1 mm upstream.** That is kept, because this module's
+job is to reproduce OLOS faithfully, but it is not a usable LPBF layer — powder
+layers are 0.02–0.1 mm and the proven files on this machine step 0.075 mm.
+`params.LAYER_HEIGHT_MM_RANGE` is there so the UI does not present the inherited
+default as a suggestion.
+
+## Two things the engine does that look like bugs and are not
+
+**`M9`/`M2` are never emitted.** `slice_model` forces `visicut_style = True`, and
+the end-of-job write is gated on that being false. The program still ends safely
+— `M5`, then a return to the work origin — it just carries no program-end code.
+
+**Three post-processors are unreachable.** `visicut_style` also takes the early
+return in `generate_gcode_for_layer`, so `hard_gate_laser_motion` and
+`enforce_m5_guarded_long_travel` never run on this path. What that branch *does*
+guarantee is worth knowing, because the routing depends on it: exactly one
+`M3` … `M5` per layer, infill and contour inside the same pairing, and the park
+after the `M5`.

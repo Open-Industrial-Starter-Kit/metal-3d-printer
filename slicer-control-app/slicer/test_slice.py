@@ -40,8 +40,7 @@ BOX_MM = (20.0, 20.0, 5.0)
 LAYER_MM = 0.5
 
 
-def write_box_stl(path, w=BOX_MM[0], h=BOX_MM[1], d=BOX_MM[2]):
-    """A binary STL of an axis-aligned box sitting on z=0."""
+def _box_triangles(w, h, d):
     v = [(0, 0, 0), (w, 0, 0), (w, h, 0), (0, h, 0),
          (0, 0, d), (w, 0, d), (w, h, d), (0, h, d)]
     quads = [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
@@ -50,11 +49,34 @@ def write_box_stl(path, w=BOX_MM[0], h=BOX_MM[1], d=BOX_MM[2]):
     for a, b, c, dd in quads:
         tris.append((v[a], v[b], v[c]))
         tris.append((v[a], v[c], v[dd]))
+    return tris
+
+
+def _facet_normal(tri):
+    """The unit normal of one triangle, from its winding.
+
+    Not optional. PrusaSlicer refuses an STL whose facet normals are all zero
+    -- "Loading of a model file failed" -- and it does so for some geometries
+    and not others: a 20x20x5 box loads with zero normals where a 15x15x3 box
+    does not. Writing them correctly is the only way to have a fixture that is
+    valid rather than one that happens to pass.
+    """
+    (x1, y1, z1), (x2, y2, z2), (x3, y3, z3) = tri
+    ux, uy, uz = x2 - x1, y2 - y1, z2 - z1
+    vx, vy, vz = x3 - x1, y3 - y1, z3 - z1
+    nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+    length = (nx * nx + ny * ny + nz * nz) ** 0.5 or 1.0
+    return nx / length, ny / length, nz / length
+
+
+def write_box_stl(path, w=BOX_MM[0], h=BOX_MM[1], d=BOX_MM[2]):
+    """A binary STL of an axis-aligned box sitting on z=0."""
+    tris = _box_triangles(w, h, d)
     with open(path, "wb") as f:
         f.write(b"\0" * 80)
         f.write(struct.pack("<I", len(tris)))
         for t in tris:
-            f.write(struct.pack("<3f", 0.0, 0.0, 0.0))
+            f.write(struct.pack("<3f", *_facet_normal(t)))
             for pt in t:
                 f.write(struct.pack("<3f", *pt))
             f.write(struct.pack("<H", 0))
@@ -163,6 +185,40 @@ def test_overlaps_are_fractions_not_percentages():
 
 
 # ── the whole pipeline ───────────────────────────────────────────────────────
+
+@needs_prusa
+def test_prusaslicer_failure_carries_its_own_message():
+    """A model PrusaSlicer refuses must say why, in its words.
+
+    An STL with all-zero facet normals is the case that prompted this: plenty
+    of converters emit them, PrusaSlicer rejects some such files and accepts
+    others, and with ``check=True`` the only thing reaching the operator was a
+    CalledProcessError printing a 20-argument command line. The cause --
+    "Loading of a model file failed" -- was on a discarded stderr.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        stl = os.path.join(d, "zero_normals.stl")
+        tris = _box_triangles(15.0, 15.0, 3.0)
+        with open(stl, "wb") as f:
+            f.write(b"\0" * 80)
+            f.write(struct.pack("<I", len(tris)))
+            for t in tris:
+                f.write(struct.pack("<3f", 0.0, 0.0, 0.0))   # the defect
+                for pt in t:
+                    f.write(struct.pack("<3f", *pt))
+                f.write(struct.pack("<H", 0))
+        try:
+            slice_model(stl, os.path.join(d, "out.nc"),
+                        overrides={"layer_height": LAYER_MM, "layer_speed": 1000})
+        except RuntimeError as exc:
+            assert "PrusaSlicer failed" in str(exc), exc
+            assert "model file" in str(exc).lower(), \
+                f"PrusaSlicer's own message was lost: {exc}"
+        else:
+            raise AssertionError(
+                "PrusaSlicer accepted an all-zero-normal STL; this test's "
+                "premise no longer holds and it should be re-examined")
+
 
 @needs_prusa
 def test_box_slices_to_motion():

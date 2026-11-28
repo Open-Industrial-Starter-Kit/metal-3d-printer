@@ -158,25 +158,37 @@ def classify(line, laser_on=True):
     # layer's scan is wrapped in M3 ... M5, and everything outside that pairing
     # is the gantry moving the optics.
     #
-    # The gate alone is not enough, and assuming it was would have been a bad
-    # bug. ``hard_gate_laser_motion`` in slicers_shared_methods.py wraps *any*
-    # laser-off travel of 25 mm or more in S0/M5 ... M3, so a jump between two
-    # islands 30 mm apart on the bed sits outside the gate and is still very
-    # much a galvo jump. Treating "gate shut" as "stage" would hand those to the
-    # gantry: it would travel 30 mm mid-layer while the mirrors stayed put, and
-    # the rest of the scan would land offset by that much. A part smaller than
-    # 25 mm never shows it, which is the worst property a bug can have.
+    # The gate alone is not enough to decide this, so the rule is the narrow
+    # one: gate shut *and* heading for the work origin.
     #
-    # So the rule is the narrow one the engine itself uses. Both
-    # ``hard_gate_laser_motion`` and ``enforce_m5_guarded_long_travel`` single
-    # out a move to the work origin -- |X| and |Y| within 0.0001 -- as the
-    # parking move, and that is the only XY-only line in the stream that is not
-    # a scan path. It is emitted once per layer, immediately before the recoat.
+    # What the engine actually emits, measured: ``slice_model`` forces
+    # ``visicut_style`` true, which takes the early-return branch of
+    # ``generate_gcode_for_layer``. That branch gives exactly one M3 ... M5 per
+    # layer -- infill and contour inside the same pairing -- followed by
+    # "G1 X0 Y0 F<parking_feed>", the gantry parking before the recoat. So on
+    # that path the park is the only XY-only line outside the gate, and
+    # "gate shut means stage" would be sufficient.
     #
-    # Before this, each of those became "G1 X77 Y77 F10000" inside the galvo
-    # block: every layer the mirrors swept to the corner of the field for no
-    # reason, and the gantry never parked before the recoater threw. Measured on
-    # real engine output, not hypothesised.
+    # It is still not what this does, for two reasons. The branch that is *not*
+    # taken runs ``hard_gate_laser_motion``, which wraps any laser-off travel of
+    # 25 mm or more in S0/M5 ... M3 -- a jump between two islands 30 mm apart
+    # sits outside the gate while remaining a move the mirrors must make.
+    # ``generate_gcode_for_layer`` is a public function, and the galvo slicer is
+    # a copy of this one that is meant to be modified, so that structure is
+    # legal input even though nothing produces it today. And if it ever did
+    # arrive, the broad rule would hand those jumps to the gantry: it would
+    # travel 30 mm mid-layer while the mirrors stayed put, leaving the rest of
+    # the scan offset by that much, and a part under 25 mm across would never
+    # reveal it.
+    #
+    # The narrow rule is also not invented here -- ``hard_gate_laser_motion``
+    # and ``enforce_m5_guarded_long_travel`` both single out a move to within
+    # 0.0001 of the work origin as the parking move, and taking that definition
+    # verbatim keeps the three in agreement.
+    #
+    # Before this, the park became "G1 X77 Y77 F10000" inside the galvo block:
+    # every layer the mirrors swept to the corner of the field for no reason,
+    # and the gantry never parked before the recoater threw.
     if ("G0" in upper or "G1" in upper) and ({"X", "Y"} & set(words)):
         if not laser_on and _targets_work_origin(bare):
             return "stage"

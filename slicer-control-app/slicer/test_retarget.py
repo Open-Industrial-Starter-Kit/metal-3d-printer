@@ -208,11 +208,19 @@ def test_long_guarded_jump_stays_with_the_galvo():
     """A laser-off jump of 25 mm or more is still a galvo jump.
 
     ``hard_gate_laser_motion`` wraps any laser-off travel of 25 mm or more in
-    S0/M5 ... M3, so a jump between two islands that far apart sits *outside*
-    the M3/M5 gate while remaining a move the mirrors must make. Reading "gate
-    shut" as "stage" would send it to the gantry, which would travel mid-layer
-    and leave the rest of the scan offset. A part under 25 mm across never
-    exercises this, so it is asserted directly.
+    S0/M5 ... M3, so such a jump sits *outside* the M3/M5 gate while remaining
+    a move the mirrors must make. Reading "gate shut" as "stage" would send it
+    to the gantry, which would travel mid-layer and leave the rest of the scan
+    offset by the jump.
+
+    This structure is not what the PrusaSlicer path emits today: ``slice_model``
+    forces ``visicut_style`` true, and that branch of
+    ``generate_gcode_for_layer`` returns before ``hard_gate_laser_motion`` is
+    reached, giving one M3 ... M5 per layer with no mid-scan guards. It is
+    asserted anyway because ``generate_gcode_for_layer`` is public, the branch
+    that does produce it is one flag away, and the galvo slicer is a copy of
+    this engine intended to be modified. A part under 25 mm across would never
+    reveal the mistake.
     """
     far_apart = ("G92X0Y0\n"
                  "M3\n"
