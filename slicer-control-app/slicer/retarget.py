@@ -77,11 +77,43 @@ def _words(line):
             for m in _WORD.finditer(line)}
 
 
-def classify(line):
-    """Return 'stage', 'galvo', 'laser', 'drop' or 'blank' for one line.
+#: How close to the work origin a move has to be to count as the park. This is
+#: the engine's own tolerance, from ``hard_gate_laser_motion`` and
+#: ``enforce_m5_guarded_long_travel``, so the two agree on what a parking move
+#: is rather than each deciding for itself.
+_ORIGIN_EPS = 0.0001
+
+
+def _targets_work_origin(bare):
+    """True if this line commands both X and Y to the work origin (0, 0).
+
+    The engine pins the work origin at 0, 0 itself -- ``prusa_slicer.py`` sets
+    ``work_origin_x``/``_y`` to 0.0 before generating any layer -- so this does
+    not need to be configurable, and hard-coding it keeps the definition in one
+    place with the engine's.
+    """
+    seen = {}
+    for m in _WORD.finditer(bare):
+        letter = m.group(1).upper()
+        if letter in ("X", "Y"):
+            seen[letter] = float(m.group(2))
+    return (len(seen) == 2
+            and abs(seen["X"]) < _ORIGIN_EPS
+            and abs(seen["Y"]) < _ORIGIN_EPS)
+
+
+def classify(line, laser_on=True):
+    """Return 'stage', 'galvo', 'laser', 'feed', 'drop' or 'blank' for one line.
 
     'laser' is separated from 'galvo' because M3/M5 must stay with the scan but
     carry no coordinates to translate.
+
+    ``laser_on`` is whether the laser gate is open at this line, which the
+    caller tracks from the M3/M4/M5 it has already seen. It is the only thing
+    that disambiguates a bare X/Y move, and :func:`retarget` always passes the
+    real state. The default is ``True`` because that is what a line quoted on
+    its own, out of a scan, almost always is -- but a caller classifying a whole
+    program and leaving it at the default will misroute the travel moves.
     """
     bare = _strip(line)
     if not bare:
@@ -120,8 +152,34 @@ def classify(line):
     if _STAGE_AXES & set(words):
         return "stage"
 
-    # A motion word with only X/Y/F left is a scan path.
+    # A motion word with only X/Y/F left is where the two systems are genuinely
+    # ambiguous, because X and Y are the axis letters of both of them. The laser
+    # gate is what separates them, and it is structural in OLOS's output: every
+    # layer's scan is wrapped in M3 ... M5, and everything outside that pairing
+    # is the gantry moving the optics.
+    #
+    # The gate alone is not enough, and assuming it was would have been a bad
+    # bug. ``hard_gate_laser_motion`` in slicers_shared_methods.py wraps *any*
+    # laser-off travel of 25 mm or more in S0/M5 ... M3, so a jump between two
+    # islands 30 mm apart on the bed sits outside the gate and is still very
+    # much a galvo jump. Treating "gate shut" as "stage" would hand those to the
+    # gantry: it would travel 30 mm mid-layer while the mirrors stayed put, and
+    # the rest of the scan would land offset by that much. A part smaller than
+    # 25 mm never shows it, which is the worst property a bug can have.
+    #
+    # So the rule is the narrow one the engine itself uses. Both
+    # ``hard_gate_laser_motion`` and ``enforce_m5_guarded_long_travel`` single
+    # out a move to the work origin -- |X| and |Y| within 0.0001 -- as the
+    # parking move, and that is the only XY-only line in the stream that is not
+    # a scan path. It is emitted once per layer, immediately before the recoat.
+    #
+    # Before this, each of those became "G1 X77 Y77 F10000" inside the galvo
+    # block: every layer the mirrors swept to the corner of the field for no
+    # reason, and the gantry never parked before the recoater threw. Measured on
+    # real engine output, not hypothesised.
     if ("G0" in upper or "G1" in upper) and ({"X", "Y"} & set(words)):
+        if not laser_on and _targets_work_origin(bare):
+            return "stage"
         return "galvo"
 
     # A modal feedrate with no motion ("G1 F3000", "F3000") belongs to
@@ -173,10 +231,16 @@ def retarget(olos_gcode, field_mm=DEFAULT_FIELD_MM, bed_mm=DEFAULT_BED_MM,
     # Group consecutive lines of the same destination into runs.
     runs = []            # list of (dest, [lines])
     pending_feeds = []   # feedrates seen before any run was open
+    laser_on = False
     for raw in olos_gcode.splitlines():
-        kind = classify(raw)
+        kind = classify(raw, laser_on=laser_on)
         if kind in ("blank", "drop"):
             continue
+
+        # Track the gate before routing the line, so the M5 itself still lands
+        # in the scan run it closes rather than opening a stage run.
+        if kind == "laser":
+            laser_on = _strip(raw).upper().startswith(("M3", "M4"))
 
         if kind == "feed":
             # Sticky to the open run; otherwise held for the run it precedes.

@@ -24,17 +24,33 @@ from slicer.retarget import (retarget, classify, summarise,
 
 SETTINGS = {"visicut_style": True, "layer_height": 0.075}
 
+# One layer's scan, in the shape the engine really emits. Captured from a run
+# over a 20 x 20 x 5 mm box at 0.5 mm -- trimmed in length, untouched in
+# structure, which is what the routing depends on. What the earlier hand-written
+# version got wrong, and what each line is here to preserve:
+#
+#   * **One M3 ... M5 per layer**, not one per section. The hand-written version
+#     closed the gate between infill and contour, which the engine does not do,
+#     and that masked how the gate has to be read.
+#   * **G0 jumps carry S0 and live inside the gate.** "Laser off" is therefore
+#     not what separates a jump from a travel move.
+#   * **The layer ends with a park to the work origin**, after the M5 and before
+#     the recoat. That is the one XY-only line in the stream that belongs to the
+#     gantry, and routing it to the mirrors was a real bug.
+#   * **S words ride on the motion lines** (S55 here, from the first-zone
+#     exposure), and a continuation line carries no S at all.
 SCAN = ("G92X0Y0\n"
         "M3\n"
         "; infill\n"
-        "G0 X10.000 Y10.000\n"
-        "G1 X86.000 Y10.000 F3000\n"
-        "G1 X86.000 Y86.000\n"
-        "M5\n"
+        "G0X38.3700Y38.8000S0\n"
+        "G1X57.5633Y38.8000S55F2000\n"
+        "G0X57.5633Y39.0000S0\n"
+        "G1X38.3700Y39.0000S55F2000\n"
         "; contour\n"
-        "G0 X20.000 Y20.000\n"
-        "M3\n"
-        "G1 X76.000 Y20.000 F1200\n"
+        "G0X38.4000Y57.6000S0\n"
+        "G1X57.5333Y57.6000S55F2000\n"
+        "G1X57.5333Y38.4667\n"
+        "G1X38.4000Y38.4667\n"
         "M5\n"
         "G1X0Y0F10000\n")
 
@@ -142,10 +158,16 @@ def test_scan_coordinates_centre_the_bed_in_the_field():
     routed = retarget(two_layer_olos())
     galvo = [ls for m, ls in blocks(routed) if m == "M611"][0]
     joined = "\n".join(galvo)
-    assert f"X{10.0 + offset:.3f}" in joined, "bed X10 not mapped"
-    assert f"X{86.0 + offset:.3f}" in joined, "bed X86 not mapped"
+    # Two real coordinates from opposite sides of the part's footprint.
+    assert f"X{38.3700 + offset:.3f}" in joined, "bed X38.37 not mapped"
+    assert f"X{57.5633 + offset:.3f}" in joined, "bed X57.5633 not mapped"
     # The span must be preserved exactly -- an offset, never a scale.
-    assert (86.0 + offset) - (10.0 + offset) == 76.0
+    assert round((57.5633 + offset) - (38.3700 + offset), 4) == 19.1933
+
+    # The park never reaches a galvo block, so field 77.000 -- which is what
+    # bed 0 maps to -- must not appear in one. This is the assertion that would
+    # have caught the misrouted park.
+    assert f"X{offset:.3f}" not in joined, "the gantry park was mapped into the field"
 
 
 @check
@@ -153,9 +175,62 @@ def test_layer_break_between_scan_and_next_recoat():
     """M600 closes a scan only when stage work follows it."""
     routed = retarget(two_layer_olos())
     s = summarise(routed)
-    assert s == {"stage_blocks": 2, "galvo_blocks": 2, "layer_breaks": 1}, s
-    # The final scan is not followed by a recoat, so it gets no break.
-    assert not routed.rstrip().endswith("M600")
+    # Three stage blocks for two layers, because each layer ends by parking the
+    # gantry at the work origin and that park opens a stage run of its own:
+    #   init -> scan -> park+recoat -> scan -> park
+    assert s == {"stage_blocks": 3, "galvo_blocks": 2, "layer_breaks": 2}, s
+
+
+@check
+def test_gantry_park_does_not_reach_the_mirrors():
+    """The per-layer "G1 X0 Y0 F10000" is the gantry parking, not a scan path.
+
+    It is emitted once per layer, after the M5 and before the recoat. Routed to
+    the galvo it became "G1 X77 Y77 F10000": the mirrors swept to the corner of
+    the field every layer, and the gantry never parked before the recoater
+    threw.
+    """
+    routed = retarget(two_layer_olos())
+    for marker, lines in blocks(routed):
+        if marker != "M611":
+            continue
+        for line in lines:
+            assert "F10000" not in line, f"a parking move reached the galvo: {line!r}"
+
+    # And it has to actually be somewhere -- dropped is as wrong as misrouted.
+    stage = [l for m, ls in blocks(routed) if m == "M610" for l in ls]
+    assert any("X0" in l and "Y0" in l and "F10000" in l for l in stage), \
+        "the gantry park was dropped entirely"
+
+
+@check
+def test_long_guarded_jump_stays_with_the_galvo():
+    """A laser-off jump of 25 mm or more is still a galvo jump.
+
+    ``hard_gate_laser_motion`` wraps any laser-off travel of 25 mm or more in
+    S0/M5 ... M3, so a jump between two islands that far apart sits *outside*
+    the M3/M5 gate while remaining a move the mirrors must make. Reading "gate
+    shut" as "stage" would send it to the gantry, which would travel mid-layer
+    and leave the rest of the scan offset. A part under 25 mm across never
+    exercises this, so it is asserted directly.
+    """
+    far_apart = ("G92X0Y0\n"
+                 "M3\n"
+                 "G1X10.000Y10.000S55F2000\n"
+                 "S0\n"
+                 "M5\n"              # the guard the engine inserts
+                 "G0X80.000Y80.000\n"  # 99 mm jump, gate shut, still galvo
+                 "M3\n"
+                 "G1X86.000Y80.000S55F2000\n"
+                 "M5\n"
+                 "G1X0Y0F10000\n")
+    routed = retarget(far_apart)
+    offset = (DEFAULT_FIELD_MM - DEFAULT_BED_MM) / 2.0
+    galvo = "\n".join(l for m, ls in blocks(routed) if m == "M611" for l in ls)
+    assert f"X{80.0 + offset:.3f}" in galvo, \
+        "a guarded long jump was routed to the gantry"
+    assert summarise(routed)["galvo_blocks"] == 1, \
+        "a guarded long jump split the scan into separate galvo blocks"
 
 
 @check
