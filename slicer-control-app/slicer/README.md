@@ -15,12 +15,14 @@ and adapted to this machine. GPL-3.0; the upstream licence is kept at
 | `olos/shim.py` | The four OLOS server pieces the engine imports, and nothing else. |
 | `olos/binary.py` | Finds the PrusaSlicer CLI the engine shells out to. |
 | `params.py` | The slicing-parameter contract: all 230 keys the engine reads, and their defaults. |
-| `job.py` | Running a slice: measures the model, assembles the parameters, checks the output. |
+| `model.py` | Reading a model file: footprint, triangles for the viewer, whether it fits the bed. |
+| `job.py` | Running a slice: assembles the parameters, reports progress, checks the output. |
 | `schema.py` | The same parameters as a table the interface builds itself from: labels, groups, units, ranges, choices, help. |
 | `retarget.py` | Translates the engine's output into this machine's `M610`/`M611`/`M600` block dialect. |
 | `test_retarget.py` | Regression tests for that translation. `python3 -m slicer.test_retarget` |
 | `test_slice.py` | End-to-end: model in, routed blocks out. `python3 -m slicer.test_slice` |
 | `test_schema.py` | That the table, the defaults and the engine agree. `python3 -m slicer.test_schema` |
+| `test_model.py` | Reading models, and the bed-fit check. `python3 -m slicer.test_model` |
 
 ## What had to change, and why
 
@@ -214,3 +216,36 @@ same defaults, every choice offering its own default, no control for a key the
 engine ignores, nothing editable unreachable through the groups, and a built
 `slicing_data` satisfying every lookup the engine makes. Two generated tables
 describing the same thing is exactly where drift goes unnoticed.
+
+## Reading a model
+
+`model.py` is separate from `job.py` for a measurable reason: importing the
+engine costs `cv2`, `shapely` and six thousand lines of slicer, and the
+interface needs none of that to list a file and draw it. Importing
+`slicer.model` alone pulls in numpy and nothing else.
+
+**STL is parsed here**, binary and ASCII. The binary/ASCII decision is file
+length arithmetic — `84 + 50n` — not a `solid` prefix, because binary STLs
+routinely carry that word inside their 80-byte comment header and sniffing for
+it sends them down the text path to parse as zero vertices.
+
+**3MF, OBJ and AMF are measured by PrusaSlicer**, via `--info`. That costs a
+subprocess and means the file dialog can offer what the engine can actually
+slice, instead of refusing files it handles perfectly well. They arrive without
+triangles and so get no 3D preview; the alternative was writing three more mesh
+parsers. `--info` also reports `manifold` and `number_of_parts`, which is worth
+having for STL too — `load(path, inspect=True)` asks for it, and
+`Model.warnings()` turns a non-manifold mesh or a multi-part file into something
+the operator sees before printing rather than after.
+
+**The bed-fit check runs before the slice, and only warns.** The engine checks
+this too, in `_validate_region_on_bed`, but it raises part-way through — after
+PrusaSlicer has run and layers are being traced. It treats the bed as a circle
+of radius `min(width, height) / 2`, because this machine's bed is round.
+
+The difference that matters: the engine tests each layer's **actual geometry**
+against that circle, and all `model.py` has is the bounding box. A 70 mm disc on
+a 96 mm bed fits the circle exactly, and its bounding box corners reach 49.5 mm
+where the radius is 48. So the box overhanging is reported as a warning, never a
+refusal — a hard check there would reject parts that slice fine. A part wider
+than the bed is a refusal, because no placement saves it.
