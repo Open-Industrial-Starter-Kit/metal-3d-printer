@@ -37,6 +37,7 @@ from .shim import TempFilesManager
 from .shim import ImageToGcodeHelper
 from .shim import CoreConstants as constants
 from .binary import resolve_prusa_slicer
+from .binary import cli_platform_flags
 
 
 class PrusaSlicer:
@@ -75,7 +76,7 @@ class PrusaSlicer:
 
         slicer_cmd = [
             prusa_slicer_path,
-            "--sw-renderer",
+            *cli_platform_flags(),
             "--export-sla", slicing_data["model_file_path"],
             "--layer-height", str(slicing_data["layer_height"]),
             "--sla-archive-format", "SL1",
@@ -85,7 +86,6 @@ class PrusaSlicer:
             "--display-pixels-y", str(display_pixels_y),
             "--display-width", str(display_width),
             "--display-height", str(display_height),
-            "--single-instance",
             "--output", slicer._zip_tmp_file_path
         ]
 
@@ -106,8 +106,27 @@ class PrusaSlicer:
             f"--pad-enable={int(pad_enabled)}",
         ])
 
-        subprocess.run(slicer_cmd, check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Upstream discarded both streams and trusted the exit code. PrusaSlicer
+        # is a GUI binary with a CLI mode, and it has several ways to exit 0
+        # having written nothing -- an argument handed to a running instance, a
+        # model it declines to slice, a display geometry it rejects. Keep stderr
+        # so the reason can be reported, and then verify the archive rather than
+        # letting zipfile fail later on a missing or stale file with no context.
+        proc = subprocess.run(slicer_cmd, check=True,
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.PIPE, text=True)
+
+        archive = slicer._zip_tmp_file_path
+        if not os.path.isfile(archive) or os.path.getsize(archive) == 0:
+            raise RuntimeError(
+                "PrusaSlicer exited successfully but wrote no SL1 archive to "
+                f"{archive}.\n"
+                + ((proc.stderr or "").strip() or "It printed nothing to stderr."))
+        if not zipfile.is_zipfile(archive):
+            raise RuntimeError(
+                f"PrusaSlicer wrote {os.path.getsize(archive)} bytes to {archive}, "
+                "but it is not a zip archive.\n"
+                + ((proc.stderr or "").strip() or "It printed nothing to stderr."))
 
         with open(slicing_data["gcode_file_path"], "w") as gcode_file:
             z = 0

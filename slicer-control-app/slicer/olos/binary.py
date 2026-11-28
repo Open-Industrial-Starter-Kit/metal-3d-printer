@@ -110,3 +110,43 @@ def prusa_slicer_available():
         return True
     except PrusaSlicerNotFound:
         return False
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Platform flags
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# Upstream OLOS passes two flags that are wrong outside Windows, and both were
+# measured against PrusaSlicer 2.9.7 on macOS rather than reasoned about:
+#
+# ``--sw-renderer`` does not exist. PrusaSlicer answers "Unknown option
+# --sw-renderer", prints its usage text and exits 1 without writing an archive.
+# The engine runs with ``check=True``, so this surfaces as a CalledProcessError
+# -- loud, but with the real message buried in a suppressed stderr. It is a
+# Linux-only flag for forcing software GL, and the CLI slicing path needs no GL
+# at all.
+#
+# ``--single-instance`` is worse, because it can fail quietly. Its own help text
+# says the arguments "are sent to an existing instance of GUI PrusaSlicer, or an
+# existing PrusaSlicer window is activated" -- so with the app already open, a
+# slice request is handed to that window, the process returns 0, and ``--output``
+# is never written. The engine would then open an SL1 archive that does not
+# exist, or worse, a stale one from a previous run. Upstream used
+# ``prusa-slicer-console.exe``, where the flag means something different; here it
+# has no benefit and one silent-failure mode, so it is dropped everywhere.
+#
+# What remains is deliberately empty on every platform. The hook is kept because
+# the version-specific flag set is exactly the thing that will need adjusting
+# again, and a named function is a better place to notice that than a list
+# literal inside a 6000-line vendored file.
+
+_PLATFORM_FLAGS = {
+    "darwin": [],
+    "win32": [],
+    "linux": [],
+}
+
+
+def cli_platform_flags():
+    """Extra PrusaSlicer CLI flags for this platform. See the note above."""
+    return list(_PLATFORM_FLAGS.get(_platform_key(), []))
