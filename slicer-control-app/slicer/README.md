@@ -16,9 +16,11 @@ and adapted to this machine. GPL-3.0; the upstream licence is kept at
 | `olos/binary.py` | Finds the PrusaSlicer CLI the engine shells out to. |
 | `params.py` | The slicing-parameter contract: all 230 keys the engine reads, and their defaults. |
 | `job.py` | Running a slice: measures the model, assembles the parameters, checks the output. |
+| `schema.py` | The same parameters as a table the interface builds itself from: labels, groups, units, ranges, choices, help. |
 | `retarget.py` | Translates the engine's output into this machine's `M610`/`M611`/`M600` block dialect. |
 | `test_retarget.py` | Regression tests for that translation. `python3 -m slicer.test_retarget` |
 | `test_slice.py` | End-to-end: model in, routed blocks out. `python3 -m slicer.test_slice` |
+| `test_schema.py` | That the table, the defaults and the engine agree. `python3 -m slicer.test_schema` |
 
 ## What had to change, and why
 
@@ -93,8 +95,9 @@ move during a scan. The bed is centred: bed 0..96 → field 77..173.
 
 ## Not done yet
 
-- **No Slicer-tab UI.** `retarget.py` and the engine are callable, but
-  `ui/pages/cam.py` is still the placeholder. Nothing in the app drives this.
+- **No Slicer-tab UI.** The engine, the retargeting and the settings table are
+  all callable, but `ui/pages/cam.py` is still the placeholder. Nothing in the
+  app drives this yet.
 - ~~**Never run end to end.**~~ It runs. A 20×20×5 mm box slices in 0.3 s;
   two 15 mm cubes at 0.05 mm give 55 layers and 32,755 moves in 1.1 s, about
   20 ms per layer. `test_slice.py` covers it and skips without PrusaSlicer.
@@ -155,3 +158,59 @@ return in `generate_gcode_for_layer`, so `hard_gate_laser_motion` and
 guarantee is worth knowing, because the routing depends on it: exactly one
 `M3` … `M5` per layer, infill and contour inside the same pairing, and the park
 after the `M5`.
+
+## The settings table
+
+`schema.py` carries all 220 parameters as rows: label, group, type, unit, range,
+choices and help text. The interface is built by walking it, so the gantry and
+galvo panels are the same widget instantiated twice over the same rows — which
+is the only way 220 settings get an interface without being typed out twice and
+drifting apart.
+
+It is **extracted from OLOS's own interface**, not written: labels from the
+captions and `label=` attributes in `PrusaSettings.vue`, groups from the
+`q-expansion-item` each control sits in, units and ranges from the `suffix`,
+`min`, `max` and `step` attributes, choices from the `q-btn-toggle` option
+arrays (which carry both the engine's value and the text to show), and help from
+`PRINTING_SETTINGS_ASSISTANT_MESSAGES`. Hand-authoring 220 labels would mean
+inventing names for machine behaviour someone else already named, and getting
+some of them quietly wrong.
+
+Getting the extraction right took three passes, and each wrong pass was wrong in
+a way that would have shipped:
+
+- **Attributes were read from a line window** around each `v-model`, which
+  picked up neighbouring controls'. `bed_offset_x` came out labelled `mm/min`
+  and `grid_clearance` as `deg`. Attributes are now read from the control's own
+  tag only.
+- **The group stack never popped** on `</q-expansion-item>`, so controls sitting
+  between sections — `solid_mode_enabled` and the two engraving settings are at
+  the template root — were filed under whichever section closed last.
+- **Tooltips were taken by proximity**, which steals the previous control's
+  help. A wrong tooltip is worse than none, because it confidently describes a
+  different setting. They are now paired with the caption they belong to, plus
+  an exact name match against the constants table (`INFILL_POWER` →
+  `infill_power`). That is 36 of 196, correctly attributed, rather than 50-odd
+  with some lying.
+
+Three groups of keys needed more than extraction:
+
+- **14 are ours.** The bed, parking position, powder reservoir, recoater and
+  raster resolution. OLOS hardcodes these in its handler and never shows them,
+  which is reasonable for one fixed machine and useless here — they are exactly
+  the numbers that differ between its printer and this one.
+- **32 are exposed nowhere.** `surface_skin_*`, `internal_floor_support_*` and a
+  few derived values are read by the engine, defined in `constants.ts`, and
+  absent from the form. They sit under *Advanced*, marked as defaults that are
+  the only values they have ever run with.
+- **3 are hidden on purpose.** `is_hollowing_enabled`, `is_support_enabled` and
+  `is_pad_enabled` are inside `v-if="false"` sections upstream, so they are
+  always off. That is right for powder-bed fusion — loose powder supports the
+  part — and the detail settings behind those flags never reach the engine.
+  They are kept in the table with `hidden=True` so the reason is recorded.
+
+`test_schema.py` asserts the table, `params.py` and the engine agree: same keys,
+same defaults, every choice offering its own default, no control for a key the
+engine ignores, nothing editable unreachable through the groups, and a built
+`slicing_data` satisfying every lookup the engine makes. Two generated tables
+describing the same thing is exactly where drift goes unnoticed.
